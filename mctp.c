@@ -464,26 +464,27 @@ static int cmd_link_show(struct ctx *ctx, int argc, const char **argv)
 		struct rtattr		rta;
 		char			ifname[16];
 	} msg;
-	const char *ifname;
-	size_t ifnamelen;
+	const char *ifname = NULL;
+	size_t ifnamelen = 0;
 
 	if (argc > 1) {
+		// filter by ifname
 		ifname = argv[1];
-	} else {
-		// TODO: enumerate all MCTP ones
-		ifname = "lo";
-	}
+		ifnamelen = strlen(ifname);
 
-	ifnamelen = strlen(ifname);
-
-	if (ifnamelen > sizeof(msg.ifname)) {
-		warnx("interface name '%s' too long", ifname);
-		return -1;
+		if (ifnamelen > sizeof(msg.ifname)) {
+			warnx("interface name '%s' too long", ifname);
+			return -1;
+		}
 	}
 
 	memset(&msg, 0, sizeof(msg));
-	msg.nh.nlmsg_len = NLMSG_LENGTH(sizeof(msg.ifmsg) +
-				RTA_LENGTH(ifnamelen));
+	if (ifname) {
+		msg.nh.nlmsg_len = NLMSG_LENGTH(sizeof(msg.ifmsg) +
+					RTA_LENGTH(ifnamelen));
+	} else {
+		msg.nh.nlmsg_len = NLMSG_LENGTH(sizeof(msg.ifmsg));
+	}
 	msg.nh.nlmsg_type = RTM_GETLINK;
 	msg.nh.nlmsg_flags = NLM_F_REQUEST | NLM_F_DUMP;
 
@@ -491,9 +492,11 @@ static int cmd_link_show(struct ctx *ctx, int argc, const char **argv)
 	msg.ifmsg.ifi_type = 0;
 	msg.ifmsg.ifi_index = 0;
 
-	msg.rta.rta_type = IFLA_IFNAME;
-	msg.rta.rta_len = RTA_LENGTH(ifnamelen);
-	strncpy(RTA_DATA(&msg.rta), ifname, ifnamelen);
+	if (ifname) {
+		msg.rta.rta_type = IFLA_IFNAME;
+		msg.rta.rta_len = RTA_LENGTH(ifnamelen);
+		strncpy(RTA_DATA(&msg.rta), ifname, ifnamelen);
+	}
 
 	do_nlmsg(ctx, &msg.nh);
 	return 0;
@@ -535,21 +538,17 @@ static int cmd_addr_show(struct ctx *ctx, int argc, const char **argv)
 		struct rtattr		rta;
 		char			ifname[16];
 	} msg;
-	const char *ifname;
+	const char *ifname = NULL;
 	size_t ifnamelen;
 
 	if (argc > 1) {
+		// filter by ifname
 		ifname = argv[1];
-	} else {
-		// TODO: fetch all interfaces and filter by MCTP
-		ifname = "lo";
-	}
-
-	ifnamelen = strlen(ifname);
-
-	if (ifnamelen > sizeof(msg.ifname)) {
-		warnx("interface name '%s' too long", ifname);
-		return -1;
+		ifnamelen = strlen(ifname);
+		if (ifnamelen > sizeof(msg.ifname)) {
+			warnx("interface name '%s' too long", ifname);
+			return -1;
+		}
 	}
 
 	memset(&msg, 0, sizeof(msg));
@@ -561,9 +560,11 @@ static int cmd_addr_show(struct ctx *ctx, int argc, const char **argv)
 	msg.ifmsg.ifa_index = 1;
 	msg.ifmsg.ifa_family = AF_MCTP;
 
-	msg.rta.rta_type = IFA_LABEL;
-	msg.rta.rta_len = RTA_LENGTH(ifnamelen);
-	strncpy(RTA_DATA(&msg.rta), ifname, ifnamelen);
+	if (ifname) {
+		msg.rta.rta_type = IFA_LABEL;
+		msg.rta.rta_len = RTA_LENGTH(ifnamelen);
+		strncpy(RTA_DATA(&msg.rta), ifname, ifnamelen);
+	}
 
 	do_nlmsg(ctx, &msg.nh);
 
