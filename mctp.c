@@ -12,14 +12,12 @@
 #include <linux/netlink.h>
 #include <linux/rtnetlink.h>
 
+#include "mctp.h"
+
 #define max(a, b) ((a) > (b) ? (a) : (b))
 #define min(a, b) ((a) < (b) ? (a) : (b))
 
 #define ARRAY_SIZE(a) (sizeof(a)/sizeof((a)[0]))
-
-#ifndef AF_MCTP
-#define AF_MCTP 45
-#endif
 
 struct linkmap_entry {
 	int	ifindex;
@@ -31,6 +29,7 @@ struct ctx {
 	struct linkmap_entry	*linkmap;
 	int			linkmap_count;
 	int			linkmap_alloc;
+	const char* top_cmd; // main() argv[0]
 };
 
 static void hexdump(const char *buf, int len, const char *indent)
@@ -377,9 +376,6 @@ static int parse_getlink_dump(struct ctx *ctx, struct nlmsghdr *nlh, int len)
 
 		linkmap_add_entry(ctx, info, ifname_rta);
 	}
-
-
-
 	return 1;
 }
 
@@ -460,7 +456,7 @@ static int linkmap_lookup_name(struct ctx *ctx, const char *ifname)
 	return 0;
 }
 
-static int cmd_link(struct ctx *ctx, int argc, char **argv)
+static int cmd_link_show(struct ctx *ctx, int argc, const char **argv) 
 {
 	struct {
 		struct nlmsghdr		nh;
@@ -474,6 +470,7 @@ static int cmd_link(struct ctx *ctx, int argc, char **argv)
 	if (argc > 1) {
 		ifname = argv[1];
 	} else {
+		// TODO: enumerate all MCTP ones
 		ifname = "lo";
 	}
 
@@ -499,11 +496,38 @@ static int cmd_link(struct ctx *ctx, int argc, char **argv)
 	strncpy(RTA_DATA(&msg.rta), ifname, ifnamelen);
 
 	do_nlmsg(ctx, &msg.nh);
-
-	return EXIT_SUCCESS;
+	return 0;
 }
 
-static int cmd_addr_show(struct ctx *ctx, int argc, char **argv)
+static int cmd_link(struct ctx *ctx, int argc, const char **argv)
+{
+	const char* subcmd;
+
+	if (argc == 2 && !strcmp(argv[1], "help")) {
+		fprintf(stderr, "%s link\n", ctx->top_cmd);
+		fprintf(stderr, "%s link show [ifname]\n", ctx->top_cmd);
+		fprintf(stderr, "%s link set [ifname]    {unimplemented}\n", ctx->top_cmd);
+		return 255;
+	}
+
+	if (argc == 1) {
+		return cmd_link_show(ctx, 0, NULL);
+	}
+
+	subcmd = argv[1];
+	argc--;
+	argv++;
+
+	if (!strcmp(subcmd, "show")) {
+		return cmd_link_show(ctx, argc, argv);
+	} else if (!strcmp(subcmd, "set")) {
+		// TODO
+	}
+
+	return -1;
+}
+
+static int cmd_addr_show(struct ctx *ctx, int argc, const char **argv)
 {
 	struct {
 		struct nlmsghdr		nh;
@@ -517,6 +541,7 @@ static int cmd_addr_show(struct ctx *ctx, int argc, char **argv)
 	if (argc > 1) {
 		ifname = argv[1];
 	} else {
+		// TODO: fetch all interfaces and filter by MCTP
 		ifname = "lo";
 	}
 
@@ -545,7 +570,7 @@ static int cmd_addr_show(struct ctx *ctx, int argc, char **argv)
 	return 0;
 }
 
-static int cmd_addr_add(struct ctx *ctx, int argc, char **argv)
+static int cmd_addr_add(struct ctx *ctx, int argc, const char **argv)
 {
 	struct {
 		struct nlmsghdr		nh;
@@ -605,9 +630,16 @@ static int cmd_addr_add(struct ctx *ctx, int argc, char **argv)
 	return 0;
 }
 
-static int cmd_addr(struct ctx *ctx, int argc, char **argv)
+static int cmd_addr(struct ctx *ctx, int argc, const char **argv)
 {
-	const char *subcmd;
+	const char* subcmd;
+	if (argc == 2 && !strcmp(argv[1], "help")) {
+		fprintf(stderr, "%s address\n", ctx->top_cmd);
+		fprintf(stderr, "%s address show [IFNAME]\n", ctx->top_cmd);
+		fprintf(stderr, "%s address add <eid> dev <IFNAME>\n", ctx->top_cmd);
+		fprintf(stderr, "%s address remove <eid> dev <IFNAME>  {unimplemented}\n", ctx->top_cmd);
+		return 255;
+	}
 
 	if (argc == 1)
 		return cmd_addr_show(ctx, 0, NULL);
@@ -625,36 +657,63 @@ static int cmd_addr(struct ctx *ctx, int argc, char **argv)
 	return -1;
 }
 
+static int cmd_help(struct ctx * ctx, int argc, const char** argv);
+
 struct command {
 	const char *name;
-	int (*fn)(struct ctx *, int, char **);
+	int (*fn)(struct ctx *, int, const char **);
 } commands[] = {
 	{ "link", cmd_link },
-	{ "addr", cmd_addr },
+	{ "address", cmd_addr },
+	{ "help", cmd_help },
 };
+
+static int cmd_help(struct ctx * ctx, int argc, const char** argv) 
+{
+	for (size_t i = 0; i < ARRAY_SIZE(commands); i++) {
+		if (commands[i].fn != cmd_help) {
+			const char * help_args[] = { commands[i].name, "help" };
+			commands[i].fn(ctx, 2, help_args);
+			fprintf(stderr, "\n");
+		}
+	}
+	// TODO: pass 255 out as a program exit code
+	return 255;
+}
+
+
+static void print_usage(const char* top_cmd) {
+	fprintf(stderr, "usage: %s <command> [args]\n", top_cmd);
+	fprintf(stderr, "Commands: ");
+	for (size_t i = 0; i < ARRAY_SIZE(commands); i++) {
+		fprintf(stderr, "%s%s", (i>0 ? ", " : ""), commands[i].name);
+	}
+	fprintf(stderr, "\n");
+}
 
 int main(int argc, char **argv)
 {
 	struct ctx _ctx, *ctx = &_ctx;
 	struct sockaddr_nl addr;
-	const char *cmdname;
-	struct command *cmd;
+	const char *cmdname = NULL;
+	struct command *cmd = NULL;
 	unsigned int i;
 	int rc, opt;
-
-	if (argc < 2) {
-		fprintf(stderr, "usage: %s <command> [args]\n", argv[0]);
-		return EXIT_FAILURE;
-	}
 
 	ctx->linkmap = NULL;
 	ctx->linkmap_alloc = 0;
 	ctx->linkmap_count = 0;
+	ctx->top_cmd = "mctp";
+
+	if (argc < 2) {
+		print_usage(ctx->top_cmd);
+		return 255;
+	}
 
 	cmdname = argv[1];
 
 	for (i = 0; i < ARRAY_SIZE(commands); i++) {
-		if (!strcmp(argv[1], commands[i].name)) {
+		if (!strncmp(cmdname, commands[i].name, strlen(cmdname))) {
 			cmd = &commands[i];
 			break;
 		}
@@ -689,7 +748,7 @@ int main(int argc, char **argv)
 	argc--;
 	argv++;
 
-	rc = cmd->fn(ctx, argc, argv);
+	rc = cmd->fn(ctx, argc, (const char**)argv);
 
 	free(ctx->linkmap);
 
