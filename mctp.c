@@ -199,6 +199,30 @@ static void dump_rtnlmsg_ifaddr(struct ifaddrmsg *msg, size_t len)
 			(void *)(msg + 1), len - sizeof(*msg));
 }
 
+static void dump_rtnlmsg_route(struct rtmsg *msg, size_t len)
+{
+	if (len < sizeof(*msg)) {
+		printf("not enough data for a rtmsg\n");
+		return;
+	}
+
+	printf("rtmsg:\n");
+	printf("  family:   %d\n", msg->rtm_family);
+	printf("  dst_len:  %d\n", msg->rtm_dst_len);
+	printf("  src_len:  %d\n", msg->rtm_src_len);
+	printf("  tos:      %d\n", msg->rtm_tos);
+	printf("  table:    %d\n", msg->rtm_table);
+	printf("  protocol: %d\n", msg->rtm_protocol);
+	printf("  scope:    %d\n", msg->rtm_scope);
+	printf("  type:     %d\n", msg->rtm_type);
+	printf("  flags:    0x%08x\n", msg->rtm_flags);
+
+	printf("  Attribute dump:\n");
+	hexdump((void *)(msg + 1), len - sizeof(*msg), "    ");
+
+}
+
+
 static void dump_nlmsg_hdr(struct nlmsghdr *hdr, const char *indent)
 {
 	printf("%slen:   %d\n", indent, hdr->nlmsg_len);
@@ -236,12 +260,16 @@ static void dump_rtnlmsg(struct nlmsghdr *msg)
 	case RTM_NEWADDR:
 		dump_rtnlmsg_ifaddr(payload, len);
 		break;
+	case RTM_NEWROUTE:
+		dump_rtnlmsg_route(payload, len);
+		break;
 	case NLMSG_NOOP:
 	case NLMSG_ERROR:
 	case NLMSG_DONE:
 		break;
 	default:
 		printf("unknown nlmsg type\n");
+		hexdump((void *)msg, len, "    ");
 	}
 }
 
@@ -654,7 +682,56 @@ static int cmd_addr(struct ctx *ctx, int argc, const char **argv)
 	else if (!strcmp(subcmd, "add"))
 		return cmd_addr_add(ctx, argc, argv);
 
-	warnx("unknown addr command '%s'", subcmd);
+	warnx("unknown address command '%s'", subcmd);
+	return -1;
+}
+
+static int cmd_route_show(struct ctx *ctx, int argc, const char **argv)
+{
+	struct {
+		struct nlmsghdr		nh;
+		struct rtmsg	 rtmsg;
+		// struct rtattr		rta;
+	} msg;
+
+	memset(&msg, 0, sizeof(msg));
+	msg.nh.nlmsg_len = NLMSG_LENGTH(sizeof(msg.rtmsg));
+
+	msg.nh.nlmsg_type = RTM_GETROUTE;
+	msg.nh.nlmsg_flags = NLM_F_REQUEST | NLM_F_DUMP;
+
+	msg.rtmsg.rtm_family = AF_MCTP;
+
+	do_nlmsg(ctx, &msg.nh);
+
+	return 0;
+
+}
+
+static int cmd_route(struct ctx *ctx, int argc, const char **argv)
+{
+	const char* subcmd;
+	if (argc == 2 && !strcmp(argv[1], "help")) {
+		fprintf(stderr, "%s route\n", ctx->top_cmd);
+		fprintf(stderr, "%s route show [net <network>]\n", ctx->top_cmd);
+		fprintf(stderr, "%s route add  {unimplemented}\n", ctx->top_cmd);
+		fprintf(stderr, "%s route del  {unimplemented}\n", ctx->top_cmd);
+		return 255;
+	}
+
+	if (argc == 1)
+		return cmd_route_show(ctx, 0, NULL);
+
+	subcmd = argv[1];
+	argv++;
+	argc--;
+
+	if (!strcmp(subcmd, "show"))
+		return cmd_route_show(ctx, argc, argv);
+	// else if (!strcmp(subcmd, "add"))
+	// 	return cmd_route_add(ctx, argc, argv);
+
+	warnx("unknown route command '%s'", subcmd);
 	return -1;
 }
 
@@ -666,6 +743,7 @@ struct command {
 } commands[] = {
 	{ "link", cmd_link },
 	{ "address", cmd_addr },
+	{ "route", cmd_route },
 	{ "help", cmd_help },
 };
 
@@ -681,7 +759,6 @@ static int cmd_help(struct ctx * ctx, int argc, const char** argv)
 	// TODO: pass 255 out as a program exit code
 	return 255;
 }
-
 
 static void print_usage(const char* top_cmd) {
 	fprintf(stderr, "usage: %s <command> [args]\n", top_cmd);
@@ -706,7 +783,7 @@ int main(int argc, char **argv)
 	ctx->linkmap_count = 0;
 	ctx->top_cmd = "mctp";
 
-	if (argc < 2) {
+	if (argc < 2 || !strcmp(argv[1], "") ) {
 		print_usage(ctx->top_cmd);
 		return 255;
 	}
