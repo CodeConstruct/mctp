@@ -279,6 +279,44 @@ static void dump_rtnlmsgs(struct nlmsghdr *msg, size_t len)
 		dump_rtnlmsg(msg);
 }
 
+/* Receive and handle a NLMSG_ERROR and return the error code */
+static int handle_nlmsg_ack(struct ctx *ctx) {
+	char resp[4096];
+	struct nlmsghdr *msg;
+	int rc;
+	size_t len;
+
+	rc = recvfrom(ctx->sd, resp, sizeof(resp), 0, NULL, NULL);
+	if (rc < 0)
+		err(EXIT_FAILURE, "recvfrom");
+	len = rc;
+	msg = (void*)resp;
+
+	for (; NLMSG_OK(msg, len); msg = NLMSG_NEXT(msg, len)) {
+		if (msg->nlmsg_type == NLMSG_ERROR) {
+			struct nlmsgerr *err = (void *)(msg + 1);
+			if (err->error) {
+				rc = err->error;
+				warnx("Error: %s", strerror(-err->error));
+				// TODO: handle extended ack
+				size_t ext_len = msg->nlmsg_len - sizeof(*msg) - sizeof(*err);
+				if (ext_len > 0) {
+					hexdump((void *)(err + 1), ext_len, "extack    ");
+				}
+			}
+		} else {
+			warnx("Unexpected message instead of status return:");
+			dump_rtnlmsg(msg);
+		}
+	}
+	return rc;
+}
+
+/*
+ * Note that only rtnl_doit_func() handlers like RTM_NEWADDR 
+ * will automatically return a response to NLM_F_ACK, other requests
+ * shouldn't have it set.
+ */
 static int send_nlmsg(struct ctx *ctx, struct nlmsghdr *msg)
 {
 	struct sockaddr_nl addr;
@@ -297,6 +335,9 @@ static int send_nlmsg(struct ctx *ctx, struct nlmsghdr *msg)
 		warnx("sendto: short send (%d, expected %d)",
 				rc, msg->nlmsg_len);
 
+	if (msg->nlmsg_flags & NLM_F_ACK) {
+		return handle_nlmsg_ack(ctx);
+	}
 	return 0;
 }
 
@@ -642,7 +683,8 @@ static int cmd_addr_add(struct ctx *ctx, int argc, const char **argv)
 	eid = tmp & 0xff;
 
 	msg.nh.nlmsg_type = RTM_NEWADDR;
-	msg.nh.nlmsg_flags = NLM_F_REQUEST;
+	// request an error status since there's no other reply
+	msg.nh.nlmsg_flags = NLM_F_REQUEST | NLM_F_ACK;
 
 	msg.ifmsg.ifa_index = ifindex;
 	msg.ifmsg.ifa_family = AF_MCTP;
