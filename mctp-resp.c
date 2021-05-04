@@ -42,7 +42,7 @@ int main(void)
 				"unknown address length %d, exp %zd",
 				addrlen, sizeof(addr));
 
-		printf("message from (net %d, eid %d): 0x%02x",
+		printf("message from (net %d, eid %d): 0x%02x\n",
 				addr.smctp_network, addr.smctp_addr.s_addr,
 				c);
 	}
