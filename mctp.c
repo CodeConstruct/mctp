@@ -34,8 +34,7 @@ struct ctx {
 	const char* top_cmd; // main() argv[0]
 };
 
-static void hexdump(const char *buf, int len, const char *indent)
-{
+static void hexdump(const char *buf, int len, const char *indent) {
 	const int row_len = 16;
 	int i, j;
 
@@ -64,6 +63,7 @@ static void hexdump(const char *buf, int len, const char *indent)
 enum attrgroup {
 	RTA_GROUP_IFLA,
 	RTA_GROUP_IFA,
+	RTA_GROUP_NDA,
 };
 
 static const char *ifla_attrnames[] = {
@@ -139,12 +139,31 @@ static const char *ifa_attrnames[] = {
 	[IFA_TARGET_NETNSID] = "IFA_TARGET_NETNSID",
 };
 
+static const char *nda_attrnames[] = {
+	[NDA_UNSPEC] = "NDA_UNSPEC",
+	[NDA_DST] = "NDA_DST",
+	[NDA_LLADDR] = "NDA_LLADDR",
+	[NDA_CACHEINFO] = "NDA_CACHEINFO",
+	[NDA_PROBES] = "NDA_PROBES",
+	[NDA_VLAN] = "NDA_VLAN",
+	[NDA_PORT] = "NDA_PORT",
+	[NDA_VNI] = "NDA_VNI",
+	[NDA_IFINDEX] = "NDA_IFINDEX",
+	[NDA_MASTER] = "NDA_MASTER",
+	[NDA_LINK_NETNSID] = "NDA_LINK_NETNSID",
+	[NDA_SRC_VNI] = "NDA_SRC_VNI",
+	[NDA_PROTOCOL] = "NDA_PROTOCOL",
+	[NDA_NH_ID] = "NDA_NH_ID",
+	[NDA_FDB_EXT_ATTRS] = "NDA_FDB_EXT_ATTRS",
+};
+
 static struct {
 	size_t count;
 	const char **names;
 } attrnames[] = {
 	[RTA_GROUP_IFLA] = { ARRAY_SIZE(ifla_attrnames), ifla_attrnames },
 	[RTA_GROUP_IFA]  = { ARRAY_SIZE(ifa_attrnames), ifa_attrnames },
+	[RTA_GROUP_NDA]  = { ARRAY_SIZE(nda_attrnames), nda_attrnames },
 };
 
 static const char *rtattr_name(enum attrgroup group, unsigned int type)
@@ -198,6 +217,24 @@ static void dump_rtnlmsg_ifaddr(struct ifaddrmsg *msg, size_t len)
 	printf("  index:  %d\n", msg->ifa_index);
 
 	dump_rtnlmsg_attrs(RTA_GROUP_IFA,
+			(void *)(msg + 1), len - sizeof(*msg));
+}
+
+static void dump_rtnlmsg_neighbour(struct ndmsg *msg, size_t len)
+{
+	if (len < sizeof(*msg)) {
+		printf("not enough data for a ndmsg\n");
+		return;
+	}
+
+	printf("ndmsg:\n");
+	printf("  family:  %d\n", msg->ndm_family);
+	printf("  ifindex: %d\n", msg->ndm_ifindex);
+	printf("  state:   0x%08x\n", msg->ndm_state);
+	printf("  flags:   0x%08x\n", msg->ndm_flags);
+	printf("  type:    %d\n", msg->ndm_type);
+
+	dump_rtnlmsg_attrs(RTA_GROUP_NDA,
 			(void *)(msg + 1), len - sizeof(*msg));
 }
 
@@ -263,6 +300,9 @@ static void dump_rtnlmsg(struct nlmsghdr *msg)
 	case RTM_NEWROUTE:
 		dump_rtnlmsg_route(payload, len);
 		break;
+	case RTM_NEWNEIGH:
+		dump_rtnlmsg_neighbour(payload, len);
+		break;
 	case NLMSG_NOOP:
 	case NLMSG_ERROR:
 	case NLMSG_DONE:
@@ -313,7 +353,7 @@ static int handle_nlmsg_ack(struct ctx *ctx) {
 }
 
 /*
- * Note that only rtnl_doit_func() handlers like RTM_NEWADDR 
+ * Note that only rtnl_doit_func() handlers like RTM_NEWADDR
  * will automatically return a response to NLM_F_ACK, other requests
  * shouldn't have it set.
  */
@@ -525,7 +565,7 @@ static int linkmap_lookup_name(struct ctx *ctx, const char *ifname)
 	return 0;
 }
 
-static int cmd_link_show(struct ctx *ctx, int argc, const char **argv) 
+static int cmd_link_show(struct ctx *ctx, int argc, const char **argv)
 {
 	struct {
 		struct nlmsghdr		nh;
@@ -567,8 +607,7 @@ static int cmd_link_show(struct ctx *ctx, int argc, const char **argv)
 		strncpy(RTA_DATA(&msg.rta), ifname, ifnamelen);
 	}
 
-	do_nlmsg(ctx, &msg.nh);
-	return 0;
+	return do_nlmsg(ctx, &msg.nh);
 }
 
 static int cmd_link(struct ctx *ctx, int argc, const char **argv)
@@ -626,7 +665,7 @@ static int cmd_addr_show(struct ctx *ctx, int argc, const char **argv)
 	msg.nh.nlmsg_type = RTM_GETADDR;
 	msg.nh.nlmsg_flags = NLM_F_REQUEST | NLM_F_DUMP;
 
-	msg.ifmsg.ifa_index = 1;
+	msg.ifmsg.ifa_index = 1; // TODO: check this, could be 0?
 	msg.ifmsg.ifa_family = AF_MCTP;
 
 	if (ifname) {
@@ -635,9 +674,7 @@ static int cmd_addr_show(struct ctx *ctx, int argc, const char **argv)
 		strncpy(RTA_DATA(&msg.rta), ifname, ifnamelen);
 	}
 
-	do_nlmsg(ctx, &msg.nh);
-
-	return 0;
+	return do_nlmsg(ctx, &msg.nh);
 }
 
 static int cmd_addr_add(struct ctx *ctx, int argc, const char **argv)
@@ -744,10 +781,7 @@ static int cmd_route_show(struct ctx *ctx, int argc, const char **argv)
 
 	msg.rtmsg.rtm_family = AF_MCTP;
 
-	do_nlmsg(ctx, &msg.nh);
-
-	return 0;
-
+	return do_nlmsg(ctx, &msg.nh);
 }
 
 static int cmd_route(struct ctx *ctx, int argc, const char **argv)
@@ -778,8 +812,41 @@ static int cmd_route(struct ctx *ctx, int argc, const char **argv)
 }
 
 static int cmd_neigh_show(struct ctx *ctx, int argc, const char **argv) {
-	err(EXIT_FAILURE, "neigh show is unimplemented");
+	struct {
+		struct nlmsghdr		nh;
+		struct ndmsg		ndmsg;
+	} msg = {0};
+	const char* linkstr = NULL;
+	int ifindex = 0;
 
+	if (!(argc <= 1 || argc == 3)) {
+		warnx("show: invalid arguments");
+		return -1;
+	}
+	if (argc == 3) {
+		if (strcmp(argv[1], "dev")) {
+			warnx("show: invalid arguments");
+			return -1;
+		}
+		linkstr = argv[2];
+	}
+
+	if (linkstr) {
+		get_linkmap(ctx);
+		ifindex = linkmap_lookup_name(ctx, linkstr);
+		if (!ifindex) {
+			warnx("invalid device %s", linkstr);
+			return -1;
+		}
+	}
+
+	msg.nh.nlmsg_len = NLMSG_LENGTH(sizeof(msg.ndmsg));
+	msg.nh.nlmsg_type = RTM_GETNEIGH;
+	msg.nh.nlmsg_flags = NLM_F_REQUEST | NLM_F_DUMP;
+	msg.ndmsg.ndm_family = AF_MCTP;
+	msg.ndmsg.ndm_ifindex = ifindex;
+
+	return do_nlmsg(ctx, &msg.nh);
 }
 
 
@@ -910,7 +977,7 @@ static int cmd_neigh(struct ctx *ctx, int argc, const char **argv) {
 	const char* subcmd;
 	if (argc == 2 && !strcmp(argv[1], "help")) {
 		fprintf(stderr, "%s neigh\n", ctx->top_cmd);
-		fprintf(stderr, "%s neigh show [net <network>]   {unimplemented}\n", ctx->top_cmd);
+		fprintf(stderr, "%s neigh show [dev <network>]\n", ctx->top_cmd);
 		fprintf(stderr, "%s neigh add <eid> dev <device> lladdr <physaddr>\n", ctx->top_cmd);
 		fprintf(stderr, "%s neigh del  {unimplemented}\n", ctx->top_cmd);
 		return 255;
@@ -965,7 +1032,7 @@ struct command {
 	{ "help", cmd_help, 0 },
 };
 
-static int cmd_help(struct ctx * ctx, int argc, const char** argv) 
+static int cmd_help(struct ctx * ctx, int argc, const char** argv)
 {
 	struct command *cm;
 	size_t i;
