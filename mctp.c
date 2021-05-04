@@ -1,16 +1,18 @@
-
 #include <ctype.h>
 #include <err.h>
+#include <errno.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdbool.h>
 
 #include <sys/socket.h>
 
 #include <linux/if.h>
 #include <linux/netlink.h>
 #include <linux/rtnetlink.h>
+#include <linux/netdevice.h>
 
 #include "mctp.h"
 
@@ -219,9 +221,7 @@ static void dump_rtnlmsg_route(struct rtmsg *msg, size_t len)
 
 	printf("  Attribute dump:\n");
 	hexdump((void *)(msg + 1), len - sizeof(*msg), "    ");
-
 }
-
 
 static void dump_nlmsg_hdr(struct nlmsghdr *hdr, const char *indent)
 {
@@ -549,8 +549,8 @@ static int cmd_link_show(struct ctx *ctx, int argc, const char **argv)
 
 	memset(&msg, 0, sizeof(msg));
 	if (ifname) {
-		msg.nh.nlmsg_len = NLMSG_LENGTH(sizeof(msg.ifmsg) +
-					RTA_LENGTH(ifnamelen));
+		msg.nh.nlmsg_len = NLMSG_LENGTH(sizeof(msg.ifmsg)) +
+					RTA_SPACE(ifnamelen);
 	} else {
 		msg.nh.nlmsg_len = NLMSG_LENGTH(sizeof(msg.ifmsg));
 	}
@@ -693,8 +693,8 @@ static int cmd_addr_add(struct ctx *ctx, int argc, const char **argv)
 	msg.rta.rta_len = RTA_LENGTH(sizeof(eid));
 	memcpy(RTA_DATA(&msg.rta), &eid, sizeof(eid));
 
-	msg.nh.nlmsg_len = NLMSG_LENGTH(sizeof(msg.ifmsg) +
-			RTA_SPACE(sizeof(eid)));
+	msg.nh.nlmsg_len = NLMSG_LENGTH(sizeof(msg.ifmsg)) +
+			RTA_SPACE(sizeof(eid));
 
 	send_nlmsg(ctx, &msg.nh);
 
@@ -777,24 +777,202 @@ static int cmd_route(struct ctx *ctx, int argc, const char **argv)
 	return -1;
 }
 
+static int cmd_neigh_show(struct ctx *ctx, int argc, const char **argv) {
+	err(EXIT_FAILURE, "neigh show is unimplemented");
+
+}
+
+
+// Accepts colon separated hex bytes
+static int parse_hex_addr(const char* in, char* out, size_t *out_len) {
+	int rc = -1;
+	size_t out_pos = 0;
+	while (1) {
+		if (*in == '\0') {
+			rc = 0;
+			break;
+		}
+		else if (*in == ':') {
+			in++;
+			if (*in == ':' || *in == '\0' || out_pos == 0) {
+				// can't have repeated ':' or ':' at start or end.
+				break;
+			}
+		} else {
+			char* endp;
+			int tmp;
+			tmp = strtoul(in, &endp, 16);
+			if (endp == in || tmp > 0xff) {
+				break;
+			}
+			if (out_pos >= *out_len) {
+				break;
+			}
+			*out = tmp & 0xff;
+			out++;
+			out_pos++;
+			in = endp;
+		}
+	}
+
+	if (rc) {
+		*out_len = 0;
+	} else {
+		*out_len = out_pos;
+	}
+	return rc;
+}
+
+static int cmd_neigh_add(struct ctx *ctx, int argc, const char **argv) {
+	struct {
+		struct nlmsghdr		nh;
+		struct ndmsg		ndmsg;
+		uint8_t			rta_buff[RTA_SPACE(1) + RTA_SPACE(MAX_ADDR_LEN)];
+	} msg;
+	struct rtattr *rta;
+	const char *linkstr, *eidstr, *lladdrstr;
+	int rc;
+	unsigned long tmp;
+	uint8_t eid;
+	char* endp;
+	int ifindex;
+	char llbuf[MAX_ADDR_LEN];
+	size_t llbuf_len, rta_len;
+
+	rc = 0;
+	if (argc != 6) {
+		rc = -EINVAL;
+	} else {
+		if (strcmp(argv[2], "dev")) {
+			rc = -EINVAL;
+		}
+		if (strcmp(argv[4], "lladdr")) {
+			rc = -EINVAL;
+		}
+	}
+	if (rc) {
+		warnx("add: invalid arguments");
+		return -1;
+	}
+
+	eidstr = argv[1];
+	linkstr = argv[3];
+	lladdrstr = argv[5];
+
+	get_linkmap(ctx);
+
+	ifindex = linkmap_lookup_name(ctx, linkstr);
+	if (!ifindex) {
+		warnx("invalid device %s", linkstr);
+		return -1;
+	}
+
+	tmp = strtoul(eidstr, &endp, 0);
+	if (endp == eidstr || tmp > 0xff) {
+		warnx("invalid address %s", eidstr);
+		return -1;
+	}
+	eid = tmp & 0xff;
+
+	llbuf_len = sizeof(llbuf);
+	rc = parse_hex_addr(lladdrstr, llbuf, &llbuf_len);
+	if (rc) {
+		warnx("invalid lladdr %s", lladdrstr);
+		return rc;
+	}
+
+	msg.nh.nlmsg_type = RTM_NEWNEIGH;
+	// request an error status since there's no other reply
+	msg.nh.nlmsg_flags = NLM_F_REQUEST | NLM_F_ACK;
+
+	msg.ndmsg.ndm_ifindex = ifindex;
+	msg.ndmsg.ndm_family = AF_MCTP;
+
+	rta_len = sizeof(msg.rta_buff);
+	rta = (void*)msg.rta_buff;
+	rta->rta_type = NDA_DST;
+	rta->rta_len = RTA_LENGTH(sizeof(eid));
+	memcpy(RTA_DATA(rta), &eid, sizeof(eid));
+	rta = RTA_NEXT(rta, rta_len);
+	rta->rta_type = NDA_LLADDR;
+	rta->rta_len = RTA_LENGTH(llbuf_len);
+	memcpy(RTA_DATA(rta), llbuf, llbuf_len);
+
+	msg.nh.nlmsg_len = NLMSG_LENGTH(sizeof(msg.ndmsg)) +
+			RTA_SPACE(sizeof(eid)) + RTA_SPACE(llbuf_len);
+
+	rc = send_nlmsg(ctx, &msg.nh);
+
+	return rc;
+}
+
+static int cmd_neigh(struct ctx *ctx, int argc, const char **argv) {
+	const char* subcmd;
+	if (argc == 2 && !strcmp(argv[1], "help")) {
+		fprintf(stderr, "%s neigh\n", ctx->top_cmd);
+		fprintf(stderr, "%s neigh show [net <network>]   {unimplemented}\n", ctx->top_cmd);
+		fprintf(stderr, "%s neigh add <eid> dev <device> lladdr <physaddr>\n", ctx->top_cmd);
+		fprintf(stderr, "%s neigh del  {unimplemented}\n", ctx->top_cmd);
+		return 255;
+	}
+
+	if (argc == 1)
+		return cmd_neigh_show(ctx, 0, NULL);
+
+	subcmd = argv[1];
+	argv++;
+	argc--;
+
+	if (!strcmp(subcmd, "show"))
+		return cmd_neigh_show(ctx, argc, argv);
+	else if (!strcmp(subcmd, "add"))
+	 	return cmd_neigh_add(ctx, argc, argv);
+
+	warnx("unknown route command '%s'", subcmd);
+	return -1;
+}
+
+static int cmd_testhex(struct ctx *ctx, int argc, const char **argv) {
+	if (argc < 2 || !strcmp(argv[1], "help")) {
+		fprintf(stderr, "testhex aa:bb:12:23:...   limited to 5 output len\n");
+		return 255;
+	}
+
+	char buf[5];
+	size_t lenbuf = sizeof(buf);
+	int rc = parse_hex_addr(argv[1], buf, &lenbuf);
+	if (rc) {
+		warnx("Bad hex");
+	} else {
+		hexdump(buf, lenbuf, "output    ");
+	}
+	return 0;
+}
+
+
 static int cmd_help(struct ctx * ctx, int argc, const char** argv);
 
 struct command {
 	const char *name;
 	int (*fn)(struct ctx *, int, const char **);
+	bool hidden;
 } commands[] = {
-	{ "link", cmd_link },
-	{ "address", cmd_addr },
-	{ "route", cmd_route },
-	{ "help", cmd_help },
+	{ "link", cmd_link, 0 },
+	{ "address", cmd_addr, 0 },
+	{ "route", cmd_route, 0 },
+	{ "neighbour", cmd_neigh, 0 },
+	{ "testhex", cmd_testhex, 1 },
+	{ "help", cmd_help, 0 },
 };
 
 static int cmd_help(struct ctx * ctx, int argc, const char** argv) 
 {
-	for (size_t i = 0; i < ARRAY_SIZE(commands); i++) {
-		if (commands[i].fn != cmd_help) {
-			const char * help_args[] = { commands[i].name, "help" };
-			commands[i].fn(ctx, 2, help_args);
+	struct command *cm;
+	size_t i;
+	for (i = 0, cm = commands; i < ARRAY_SIZE(commands); i++, cm++) {
+		if (!cm->hidden && cm->fn != cmd_help) {
+			const char * help_args[] = { cm->name, "help" };
+			cm->fn(ctx, 2, help_args);
 			fprintf(stderr, "\n");
 		}
 	}
@@ -806,7 +984,9 @@ static void print_usage(const char* top_cmd) {
 	fprintf(stderr, "usage: %s <command> [args]\n", top_cmd);
 	fprintf(stderr, "Commands: ");
 	for (size_t i = 0; i < ARRAY_SIZE(commands); i++) {
-		fprintf(stderr, "%s%s", (i>0 ? ", " : ""), commands[i].name);
+		if (!commands[i].hidden) {
+			fprintf(stderr, "%s%s", (i>0 ? ", " : ""), commands[i].name);
+		}
 	}
 	fprintf(stderr, "\n");
 }
