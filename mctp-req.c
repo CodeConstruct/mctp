@@ -35,10 +35,13 @@ int main(void)
 
 	/* receive response */
 	addrlen = sizeof(addr);
-	rc = recvfrom(sd, &r, sizeof(r), 0,
+	rc = recvfrom(sd, &r, sizeof(r), MSG_TRUNC,
 			(struct sockaddr *)&addr, &addrlen);
-	if (rc != sizeof(r))
+	if (rc < 0)
 		err(EXIT_FAILURE, "recvfrom");
+	else if (rc != sizeof(c))
+		errx(EXIT_FAILURE, "unexpected length: got %d, exp %zd",
+				rc, sizeof(c));
 
 	if (addrlen != sizeof(addr))
 		errx(EXIT_FAILURE, "unknown recv address length %d, exp %zd)",
