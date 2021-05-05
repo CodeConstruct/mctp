@@ -24,7 +24,7 @@ int main(void)
 	addr.smctp_type = 1;
 	addr.smctp_tag = MCTP_TAG_OWNER;
 
-	c = 1;
+	c = 0xaa;
 
 	rc = sendto(sd, &c, sizeof(c), 0,
 			(struct sockaddr *)&addr, sizeof(addr));
