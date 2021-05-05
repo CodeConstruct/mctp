@@ -42,9 +42,15 @@ int main(void)
 				"unknown address length %d, exp %zd",
 				addrlen, sizeof(addr));
 
-		printf("message from (net %d, eid %d): 0x%02x\n",
+		printf("message from (net %d, eid %d): 0x%02x, responding\n",
 				addr.smctp_network, addr.smctp_addr.s_addr,
 				c);
+
+		rc = sendto(sd, &c, sizeof(c), 0,
+				(struct sockaddr *)&addr, sizeof(addr));
+
+		if (rc != sizeof(c))
+			err(EXIT_FAILURE, "sendto");
 	}
 
 	return EXIT_SUCCESS;

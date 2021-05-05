@@ -5,7 +5,7 @@ CFLAGS ?= -Wall -Wextra -Werror -Wno-unused-parameter -ggdb
 prefix ?= /usr/local
 bindir ?= $(prefix)/bin
 
-binaries = mctp-socket mctp mctp-req mctp-resp
+binaries = mctp-socket mctp mctp-req mctp-echo
 
 .PHONY: all
 all: $(binaries)
