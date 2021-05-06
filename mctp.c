@@ -34,7 +34,8 @@ struct ctx {
 	const char* top_cmd; // main() argv[0]
 };
 
-static void hexdump(const char *buf, int len, const char *indent) {
+static void hexdump(void *b, int len, const char *indent) {
+	char* buf = b;
 	const int row_len = 16;
 	int i, j;
 
@@ -185,6 +186,21 @@ static void dump_rtnlmsg_attrs(enum attrgroup group,
 	}
 }
 
+/* Pointer returned on match, optionally returns ret_len */
+static void* get_rtnlmsg_attr(int rta_type, struct rtattr *rta, size_t len,
+	size_t *ret_len)
+{
+	for (; RTA_OK(rta, len); rta = RTA_NEXT(rta, len)) {
+		if (rta->rta_type == rta_type) {
+			if (ret_len) {
+				*ret_len = RTA_PAYLOAD(rta);
+			}
+			return RTA_DATA(rta);
+		}
+	}
+	return NULL;
+}
+
 static void dump_rtnlmsg_ifinfo(struct ifinfomsg *msg, size_t len)
 {
 	if (len < sizeof(*msg)) {
@@ -240,10 +256,15 @@ static void dump_rtnlmsg_neighbour(struct ndmsg *msg, size_t len)
 
 static void dump_rtnlmsg_route(struct rtmsg *msg, size_t len)
 {
+	void *rd, *rd_metric;
+	size_t rta_len, metric_len;
+	struct rtattr *rta;
 	if (len < sizeof(*msg)) {
 		printf("not enough data for a rtmsg\n");
 		return;
 	}
+	rta = (void *)(msg + 1);
+	rta_len = len - sizeof(*msg);
 
 	printf("rtmsg:\n");
 	printf("  family:   %d\n", msg->rtm_family);
@@ -255,9 +276,39 @@ static void dump_rtnlmsg_route(struct rtmsg *msg, size_t len)
 	printf("  scope:    %d\n", msg->rtm_scope);
 	printf("  type:     %d\n", msg->rtm_type);
 	printf("  flags:    0x%08x\n", msg->rtm_flags);
+	printf(" attributes:\n");
 
-	printf("  Attribute dump:\n");
-	hexdump((void *)(msg + 1), len - sizeof(*msg), "    ");
+	rd = get_rtnlmsg_attr(RTA_DST, rta, rta_len, NULL);
+	if (rd)
+		printf("  dst_start: %d\n", *((uint8_t*)rd));
+	else
+		printf("  dst_start missing\n");
+
+	rd = get_rtnlmsg_attr(RTA_TABLE, rta, rta_len, NULL);
+	if (rd)
+		printf("  net:       %d\n", *((uint32_t*)rd));
+	else
+		printf("  net missing\n");
+
+	rd = get_rtnlmsg_attr(RTA_OIF, rta, rta_len, NULL);
+	if (rd)
+		printf("  ifindex:   %d\n", *((uint32_t*)rd));
+	else
+		printf("  ifindex missing\n");
+
+	rd = NULL;
+	rd_metric = get_rtnlmsg_attr(RTA_METRICS, rta, rta_len, &metric_len);
+	if (rd_metric) {
+		rd = get_rtnlmsg_attr(RTAX_MTU, rd_metric, metric_len, NULL);
+	}
+	if (rd)
+		printf("  mtu:       %d\n", *((uint32_t*)rd));
+	else
+		printf("  mtu missing\n");
+
+
+	printf("  dump:\n");
+	hexdump(rta, rta_len, "    ");
 }
 
 static void dump_nlmsg_hdr(struct nlmsghdr *hdr, const char *indent)
@@ -309,7 +360,7 @@ static void dump_rtnlmsg(struct nlmsghdr *msg)
 		break;
 	default:
 		printf("unknown nlmsg type\n");
-		hexdump((void *)msg, len, "    ");
+		hexdump(msg, len, "    ");
 	}
 }
 
@@ -341,7 +392,7 @@ static int handle_nlmsg_ack(struct ctx *ctx) {
 				// TODO: handle extended ack
 				size_t ext_len = msg->nlmsg_len - sizeof(*msg) - sizeof(*err);
 				if (ext_len > 0) {
-					hexdump((void *)(err + 1), ext_len, "extack    ");
+					hexdump(err + 1, ext_len, "extack    ");
 				}
 			}
 		} else {
@@ -784,13 +835,32 @@ static int cmd_route_show(struct ctx *ctx, int argc, const char **argv)
 	return do_nlmsg(ctx, &msg.nh);
 }
 
+// static int cmd_route_add(struct ctx *ctx, int argc, const char **argv)
+// {
+// 	struct {
+// 		struct nlmsghdr		nh;
+// 		struct rtmsg	 rtmsg;
+// 		// struct rtattr		rta;
+// 	} msg;
+
+// 	memset(&msg, 0, sizeof(msg));
+// 	msg.nh.nlmsg_len = NLMSG_LENGTH(sizeof(msg.rtmsg));
+
+// 	msg.nh.nlmsg_type = RTM_GETROUTE;
+// 	msg.nh.nlmsg_flags = NLM_F_REQUEST | NLM_F_DUMP;
+
+// 	msg.rtmsg.rtm_family = AF_MCTP;
+
+// 	return do_nlmsg(ctx, &msg.nh);
+// }
+
 static int cmd_route(struct ctx *ctx, int argc, const char **argv)
 {
 	const char* subcmd;
 	if (argc == 2 && !strcmp(argv[1], "help")) {
 		fprintf(stderr, "%s route\n", ctx->top_cmd);
 		fprintf(stderr, "%s route show [net <network>]\n", ctx->top_cmd);
-		fprintf(stderr, "%s route add  {unimplemented}\n", ctx->top_cmd);
+		fprintf(stderr, "%s route add <eid> via <dev>\n", ctx->top_cmd);
 		fprintf(stderr, "%s route del  {unimplemented}\n", ctx->top_cmd);
 		return 255;
 	}
