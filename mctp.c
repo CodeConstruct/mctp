@@ -412,7 +412,7 @@ static int display_neighbour(struct ctx *ctx, void *p, size_t len)
 
 	eid = 0;
 	get_rtnlmsg_attr_u8(NDA_DST, rta, rta_len, &eid);
-	lladdr = get_rtnlmsg_attr(NDA_DST, rta, rta_len, &lladdr_len);
+	lladdr = get_rtnlmsg_attr(NDA_LLADDR, rta, rta_len, &lladdr_len);
 	printf("eid %d dev %s lladdr ", eid, linkmap_lookup_byindex(ctx, msg->ndm_ifindex));
 	print_hex_addr(lladdr, lladdr_len);
 	printf("\n");
