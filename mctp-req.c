@@ -3,12 +3,16 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <string.h>
 #include <err.h>
 #include <sys/socket.h>
 
 #include "mctp.h"
 
-int main(void)
+static const int DEFAULT_NET = 1;
+static const mctp_eid_t DEFAULT_EID = 8;
+
+static int mctp_req(unsigned int net, mctp_eid_t eid)
 {
 	struct _sockaddr_mctp addr;
 	socklen_t addrlen;
@@ -19,9 +23,11 @@ int main(void)
 	if (sd < 0)
 		err(EXIT_FAILURE, "socket");
 
+	printf("sending to (net %d, eid %d)\n", net, eid);
+
 	addr.smctp_family = AF_MCTP;
-	addr.smctp_network = 1;
-	addr.smctp_addr.s_addr = 8;
+	addr.smctp_network = net;
+	addr.smctp_addr.s_addr = eid;
 	addr.smctp_type = 1;
 	addr.smctp_tag = MCTP_TAG_OWNER;
 
@@ -56,5 +62,43 @@ int main(void)
 				"payload mismatch; sent 0x%x, received 0x%x",
 				c, r);
 
-	return EXIT_SUCCESS;
+	return 0;
+}
+
+static void usage(void)
+{
+	fprintf(stderr, "mctp-req [<eid> net <net>]\n");
+	fprintf(stderr, "default eid %d net %d\n", DEFAULT_EID, DEFAULT_NET);
+}
+
+int main(int argc, char ** argv)
+{
+	unsigned int net = DEFAULT_NET;
+	mctp_eid_t eid = DEFAULT_EID;
+	char *endp, *eidstr, *netstr;
+	unsigned int tmp;
+
+	if (argc == 1) {
+		// use defaults
+	} else if (argc == 4 && !(strcmp(argv[2], "net"))) {
+
+		eidstr = argv[1];
+		netstr = argv[3];
+
+		tmp = strtoul(eidstr, &endp, 0);
+		if (endp == eidstr || tmp > 0xff) {
+			errx(EXIT_FAILURE, "Bad eid");
+		}
+		eid = tmp;
+
+		net = strtoul(netstr, &endp, 0);
+		if (endp == netstr) {
+			errx(EXIT_FAILURE, "Bad net");
+		}
+	} else {
+		usage();
+		return 255;
+	}
+
+	return mctp_req(net, eid);
 }
