@@ -31,6 +31,7 @@ struct linkmap_entry {
 
 struct ctx {
 	int			sd;
+	bool			verbose;
 	struct linkmap_entry	*linkmap;
 	int			linkmap_count;
 	int			linkmap_alloc;
@@ -458,9 +459,11 @@ static int do_nlmsg(struct ctx *ctx, struct nlmsghdr *msg)
 				sizeof(addr));
 	}
 
-	printf("%d bytes from {%d,%d}\n", rc, addr.nl_family, addr.nl_pid);
-
-	dump_rtnlmsgs((struct nlmsghdr *)resp, rc);
+	if (ctx->verbose) {
+		printf("%d bytes from {%d,%d}\n", rc,
+				addr.nl_family, addr.nl_pid);
+		dump_rtnlmsgs((struct nlmsghdr *)resp, rc);
+	}
 
 	return 0;
 }
@@ -602,7 +605,10 @@ static int get_linkmap(struct ctx *ctx)
 	}
 
 	free(buf);
-	linkmap_dump(ctx);
+
+	if (ctx->verbose)
+		linkmap_dump(ctx);
+
 	return rc;
 }
 
@@ -1133,6 +1139,7 @@ static void print_usage(const char* top_cmd) {
 
 struct option options[] = {
 	{ .name = "help", .has_arg = no_argument, .val = 'h' },
+	{ .name = "verbose", .has_arg = no_argument, .val = 'v' },
 	{ 0 },
 };
 
@@ -1149,14 +1156,18 @@ int main(int argc, char **argv)
 	ctx->linkmap_alloc = 0;
 	ctx->linkmap_count = 0;
 	ctx->top_cmd = "mctp";
+	ctx->verbose = false;
 
 	/* parse initial option arguments, until the subcommand */
 	for (;;) {
-		c = getopt_long(argc, argv, "+h", options, NULL);
+		c = getopt_long(argc, argv, "+hv", options, NULL);
 		if (c == -1)
 			break;
 
 		switch (c) {
+		case 'v':
+			ctx->verbose = true;
+			break;
 		case 'h':
 			cmd_help(ctx, 0, NULL);
 			return 255;
