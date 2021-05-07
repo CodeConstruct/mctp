@@ -27,4 +27,19 @@ struct _sockaddr_mctp {
 #define MCTP_TAG_OWNER 0x08
 
 
+/* From if_link.h */
+enum {
+	IFLA_MCTP_UNSPEC,
+	IFLA_MCTP_NET,
+	__IFLA_MCTP_MAX,
+};
+
+enum {
+	RTA_MCTP_NET,
+	__RTA_MCT_MAX,
+};
+
+#define IFLA_MCTP_MAX (__IFLA_MCTP_MAX - 1)
+
+
 #endif /* _MCTP_H */
