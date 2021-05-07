@@ -436,23 +436,38 @@ static int send_nlmsg(struct ctx *ctx, struct nlmsghdr *msg)
 	return 0;
 }
 
-static int do_nlmsg(struct ctx *ctx, struct nlmsghdr *msg)
+static int do_nlmsg(struct ctx *ctx, struct nlmsghdr *msg,
+		struct nlmsghdr **respp)
 {
+	struct nlmsghdr *respbuf;
 	struct sockaddr_nl addr;
 	socklen_t addrlen;
-	char resp[4096];
+	size_t resplen;
 	int rc;
 
 	rc = send_nlmsg(ctx, msg);
 	if (rc)
 		return rc;
 
-	addrlen = sizeof(addr);
-	rc = recvfrom(ctx->sd, resp, sizeof(resp), 0,
-			(struct sockaddr *)&addr, &addrlen);
-
+	rc = recvfrom(ctx->sd, NULL, 0, MSG_PEEK|MSG_TRUNC, NULL, 0);
 	if (rc < 0)
-		err(EXIT_FAILURE, "recvfrom");
+		err(EXIT_FAILURE, "recvfrom(MSG_PEEK)");
+
+	if (!rc)
+		return -1;
+
+	resplen = rc;
+	respbuf = malloc(resplen);
+	addrlen = sizeof(addr);
+
+	rc = recvfrom(ctx->sd, respbuf, resplen, MSG_TRUNC,
+			(struct sockaddr *)&addr, &addrlen);
+	if (rc < 0)
+		err(EXIT_FAILURE, "recvfrom()");
+
+	if ((size_t)rc > resplen)
+		warnx("recvfrom: extra message data? (got %d, exp %zd)",
+				rc, resplen);
 
 	if (addrlen != sizeof(addr)) {
 		warn("recvfrom: weird addrlen? (%d, expecting %zd)", addrlen,
@@ -460,10 +475,15 @@ static int do_nlmsg(struct ctx *ctx, struct nlmsghdr *msg)
 	}
 
 	if (ctx->verbose) {
-		printf("%d bytes from {%d,%d}\n", rc,
+		printf("%zd bytes from {%d,%d}\n", resplen,
 				addr.nl_family, addr.nl_pid);
-		dump_rtnlmsgs((struct nlmsghdr *)resp, rc);
+		dump_rtnlmsgs(respbuf, rc);
 	}
+
+	if (respp)
+		*respp = respbuf;
+	else
+		free(respbuf);
 
 	return 0;
 }
@@ -667,7 +687,7 @@ static int cmd_link_show(struct ctx *ctx, int argc, const char **argv)
 		strncpy(RTA_DATA(&msg.rta), ifname, ifnamelen);
 	}
 
-	return do_nlmsg(ctx, &msg.nh);
+	return do_nlmsg(ctx, &msg.nh, NULL);
 }
 
 static int cmd_link(struct ctx *ctx, int argc, const char **argv)
@@ -734,7 +754,7 @@ static int cmd_addr_show(struct ctx *ctx, int argc, const char **argv)
 		strncpy(RTA_DATA(&msg.rta), ifname, ifnamelen);
 	}
 
-	return do_nlmsg(ctx, &msg.nh);
+	return do_nlmsg(ctx, &msg.nh, NULL);
 }
 
 static int cmd_addr_add(struct ctx *ctx, int argc, const char **argv)
@@ -841,7 +861,7 @@ static int cmd_route_show(struct ctx *ctx, int argc, const char **argv)
 
 	msg.rtmsg.rtm_family = AF_MCTP;
 
-	return do_nlmsg(ctx, &msg.nh);
+	return do_nlmsg(ctx, &msg.nh, NULL);
 }
 
 // static int cmd_route_add(struct ctx *ctx, int argc, const char **argv)
@@ -925,7 +945,7 @@ static int cmd_neigh_show(struct ctx *ctx, int argc, const char **argv) {
 	msg.ndmsg.ndm_family = AF_MCTP;
 	msg.ndmsg.ndm_ifindex = ifindex;
 
-	return do_nlmsg(ctx, &msg.nh);
+	return do_nlmsg(ctx, &msg.nh, NULL);
 }
 
 
