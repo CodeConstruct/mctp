@@ -1,3 +1,10 @@
+/* SPDX-License-Identifier: GPL-2.0 */
+/*
+ * mctp-echo: MCTP echo server, for testing.
+ *
+ * Copyright (c) 2021 Code Construct
+ * Copyright (c) 2021 Google
+ */
 
 #include <stdint.h>
 #include <stdio.h>
