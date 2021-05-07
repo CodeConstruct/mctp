@@ -1,6 +1,9 @@
+#define _GNU_SOURCE
+
 #include <ctype.h>
 #include <err.h>
 #include <errno.h>
+#include <getopt.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -1128,6 +1131,11 @@ static void print_usage(const char* top_cmd) {
 	fprintf(stderr, "\n");
 }
 
+struct option options[] = {
+	{ .name = "help", .has_arg = no_argument, .val = 'h' },
+	{ 0 },
+};
+
 int main(int argc, char **argv)
 {
 	struct ctx _ctx, *ctx = &_ctx;
@@ -1135,12 +1143,32 @@ int main(int argc, char **argv)
 	const char *cmdname = NULL;
 	struct command *cmd = NULL;
 	unsigned int i;
-	int rc, opt;
+	int rc, c, opt;
 
 	ctx->linkmap = NULL;
 	ctx->linkmap_alloc = 0;
 	ctx->linkmap_count = 0;
 	ctx->top_cmd = "mctp";
+
+	/* parse initial option arguments, until the subcommand */
+	for (;;) {
+		c = getopt_long(argc, argv, "+h", options, NULL);
+		if (c == -1)
+			break;
+
+		switch (c) {
+		case 'h':
+			cmd_help(ctx, 0, NULL);
+			return 255;
+		default:
+			print_usage(ctx->top_cmd);
+			return 255;
+		}
+	}
+
+	/* consume option arguments */
+	argc -= optind - 1;
+	argv += optind - 1;
 
 	if (argc < 2 || !strcmp(argv[1], "") ) {
 		print_usage(ctx->top_cmd);
