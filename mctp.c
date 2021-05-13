@@ -1239,6 +1239,8 @@ static int cmd_route_add(struct ctx *ctx, int argc, const char **argv)
 	}
 	msg.nh.nlmsg_type = RTM_NEWROUTE;
 
+	// TODO add mtu, metric
+
 	rc = send_nlmsg(ctx, &msg.nh);
 	return rc;
 }
@@ -1247,8 +1249,6 @@ static int cmd_route_del(struct ctx *ctx, int argc, const char **argv)
 {
 	struct mctp_rtalter_msg msg;
 	const char *eidstr, *linkstr;
-	struct rtattr *rta;
-	size_t rta_len;
 	int rc = 0;
 
 	if (argc != 4) {
@@ -1265,7 +1265,7 @@ static int cmd_route_del(struct ctx *ctx, int argc, const char **argv)
 	eidstr = argv[1];
 	linkstr = argv[3];
 
-	rc = fill_rtalter_args(ctx, &msg, &rta, &rta_len, eidstr, linkstr);
+	rc = fill_rtalter_args(ctx, &msg, NULL, NULL, eidstr, linkstr);
 	if (rc) {
 		return -1;
 	}
@@ -1353,21 +1353,63 @@ static int cmd_neigh_show(struct ctx *ctx, int argc, const char **argv)
 	return 0;
 }
 
+struct mctp_neighalter_msg {
+	struct nlmsghdr		nh;
+	struct ndmsg		ndmsg;
+	uint8_t			rta_buff[RTA_SPACE(1) + RTA_SPACE(MAX_ADDR_LEN)];
+} msg;
 
-static int cmd_neigh_add(struct ctx *ctx, int argc, const char **argv)
-{
-	struct {
-		struct nlmsghdr		nh;
-		struct ndmsg		ndmsg;
-		uint8_t			rta_buff[RTA_SPACE(1) + RTA_SPACE(MAX_ADDR_LEN)];
-	} msg;
+static int fill_neighalter_args(struct ctx *ctx,
+		struct mctp_neighalter_msg *msg,
+		struct rtattr **prta, size_t *prta_len,
+		const char *eidstr, const char *linkstr) {
 	struct rtattr *rta;
-	const char *linkstr, *eidstr, *lladdrstr;
-	int rc;
 	unsigned long tmp;
 	uint8_t eid;
 	char* endp;
 	int ifindex;
+	size_t rta_len;
+
+	get_linkmap(ctx);
+	ifindex = linkmap_lookup_byname(ctx, linkstr);
+	if (!ifindex) {
+		warnx("invalid device %s", linkstr);
+		return -1;
+	}
+
+	tmp = strtoul(eidstr, &endp, 0);
+	if (endp == eidstr || tmp > 0xff) {
+		warnx("invalid address %s", eidstr);
+		return -1;
+	}
+	eid = tmp & 0xff;
+
+	memset(msg, 0x0, sizeof(*msg));
+	msg->nh.nlmsg_flags = NLM_F_REQUEST | NLM_F_ACK;
+	msg->ndmsg.ndm_ifindex = ifindex;
+	msg->ndmsg.ndm_family = AF_MCTP;
+
+	msg->nh.nlmsg_len = NLMSG_LENGTH(sizeof(msg->ndmsg));
+	rta_len = sizeof(msg->rta_buff);
+	rta = (void*)msg->rta_buff;
+
+	msg->nh.nlmsg_len += put_rtnlmsg_attr(&rta, &rta_len,
+		NDA_DST, &eid, sizeof(eid));
+
+
+	if (prta)
+		*prta = rta;
+	if (prta_len)
+		*prta_len = rta_len;
+	return 0;
+}
+
+static int cmd_neigh_add(struct ctx *ctx, int argc, const char **argv)
+{
+	struct mctp_neighalter_msg msg;
+	struct rtattr *rta;
+	const char *linkstr, *eidstr, *lladdrstr;
+	int rc;
 	char llbuf[MAX_ADDR_LEN];
 	size_t llbuf_len, rta_len;
 
@@ -1391,20 +1433,6 @@ static int cmd_neigh_add(struct ctx *ctx, int argc, const char **argv)
 	linkstr = argv[3];
 	lladdrstr = argv[5];
 
-	get_linkmap(ctx);
-	ifindex = linkmap_lookup_byname(ctx, linkstr);
-	if (!ifindex) {
-		warnx("invalid device %s", linkstr);
-		return -1;
-	}
-
-	tmp = strtoul(eidstr, &endp, 0);
-	if (endp == eidstr || tmp > 0xff) {
-		warnx("invalid address %s", eidstr);
-		return -1;
-	}
-	eid = tmp & 0xff;
-
 	llbuf_len = sizeof(llbuf);
 	rc = parse_hex_addr(lladdrstr, llbuf, &llbuf_len);
 	if (rc) {
@@ -1412,28 +1440,49 @@ static int cmd_neigh_add(struct ctx *ctx, int argc, const char **argv)
 		return rc;
 	}
 
+	rc = fill_neighalter_args(ctx, &msg, &rta, &rta_len,
+		eidstr, linkstr);
+	if (rc) {
+		return -1;
+	}
+
 	msg.nh.nlmsg_type = RTM_NEWNEIGH;
-	// request an error status since there's no other reply
-	msg.nh.nlmsg_flags = NLM_F_REQUEST | NLM_F_ACK;
-
-	msg.ndmsg.ndm_ifindex = ifindex;
-	msg.ndmsg.ndm_family = AF_MCTP;
-
-	rta_len = sizeof(msg.rta_buff);
-	rta = (void*)msg.rta_buff;
-	rta->rta_type = NDA_DST;
-	rta->rta_len = RTA_LENGTH(sizeof(eid));
-	memcpy(RTA_DATA(rta), &eid, sizeof(eid));
-	rta = RTA_NEXT(rta, rta_len);
-	rta->rta_type = NDA_LLADDR;
-	rta->rta_len = RTA_LENGTH(llbuf_len);
-	memcpy(RTA_DATA(rta), llbuf, llbuf_len);
-
-	msg.nh.nlmsg_len = NLMSG_LENGTH(sizeof(msg.ndmsg)) +
-			RTA_SPACE(sizeof(eid)) + RTA_SPACE(llbuf_len);
-
+	msg.nh.nlmsg_len += put_rtnlmsg_attr(&rta, &rta_len,
+		NDA_LLADDR, llbuf, llbuf_len);
 	rc = send_nlmsg(ctx, &msg.nh);
+	return rc;
+}
 
+static int cmd_neigh_del(struct ctx *ctx, int argc, const char **argv)
+{
+	struct mctp_neighalter_msg msg;
+	const char *linkstr, *eidstr;
+	int rc;
+
+	rc = 0;
+	if (argc != 4) {
+		rc = -EINVAL;
+	} else {
+		if (strcmp(argv[2], "dev")) {
+			rc = -EINVAL;
+		}
+	}
+	if (rc) {
+		warnx("add: invalid arguments");
+		return -1;
+	}
+
+	eidstr = argv[1];
+	linkstr = argv[3];
+
+	rc = fill_neighalter_args(ctx, &msg, NULL, NULL,
+		eidstr, linkstr);
+	if (rc) {
+		return -1;
+	}
+
+	msg.nh.nlmsg_type = RTM_DELNEIGH;
+	rc = send_nlmsg(ctx, &msg.nh);
 	return rc;
 }
 
@@ -1443,7 +1492,7 @@ static int cmd_neigh(struct ctx *ctx, int argc, const char **argv) {
 		fprintf(stderr, "%s neigh\n", ctx->top_cmd);
 		fprintf(stderr, "%s neigh show [dev <network>]\n", ctx->top_cmd);
 		fprintf(stderr, "%s neigh add <eid> dev <device> lladdr <physaddr>\n", ctx->top_cmd);
-		fprintf(stderr, "%s neigh del  {unimplemented}\n", ctx->top_cmd);
+		fprintf(stderr, "%s neigh del <eid> dev <device>\n", ctx->top_cmd);
 		return 255;
 	}
 
@@ -1458,6 +1507,8 @@ static int cmd_neigh(struct ctx *ctx, int argc, const char **argv) {
 		return cmd_neigh_show(ctx, argc, argv);
 	else if (!strcmp(subcmd, "add"))
 	 	return cmd_neigh_add(ctx, argc, argv);
+	else if (!strcmp(subcmd, "del"))
+		return cmd_neigh_del(ctx, argc, argv);
 
 	warnx("unknown route command '%s'", subcmd);
 	return -1;
