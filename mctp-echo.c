@@ -49,7 +49,7 @@ int main(void)
 				"unknown address length %d, exp %zd",
 				addrlen, sizeof(addr));
 
-		printf("message from (net %d, eid %d), type %d: 0x%02x, responding\n",
+		printf("echo: message from (net %d, eid %d), type %d: 0x%02x, responding\n",
 				addr.smctp_network, addr.smctp_addr.s_addr,
 				addr.smctp_type,
 				c);

@@ -36,7 +36,7 @@ static int mctp_req(unsigned int net, mctp_eid_t eid)
 	addr.smctp_type = 1;
 	addr.smctp_tag = MCTP_TAG_OWNER;
 
-	printf("sending to (net %d, eid %d), type %d\n",
+	printf("req:  sending to (net %d, eid %d), type %d\n",
 		net, eid, addr.smctp_type);
 
 	c = 0xaa;
@@ -61,7 +61,7 @@ static int mctp_req(unsigned int net, mctp_eid_t eid)
 		errx(EXIT_FAILURE, "unknown recv address length %d, exp %zd)",
 				addrlen, sizeof(addr));
 
-	printf("message from (net %d, eid %d) type %d: 0x%02x\n",
+	printf("req:  message from (net %d, eid %d) type %d: 0x%02x\n",
 			addr.smctp_network, addr.smctp_addr.s_addr,
 			addr.smctp_type,
 			r);
