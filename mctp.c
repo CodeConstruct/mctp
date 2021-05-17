@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0 */
 /*
+
  * mctp: userspace utility for managing the kernel MCTP stack.
  *
  * Copyright (c) 2021 Code Construct
@@ -318,9 +319,8 @@ static size_t put_rtnlmsg_attr(struct rtattr **prta, size_t *rta_len,
 
 static int display_ifinfo(struct ctx *ctx, void *p, size_t len) {
 	struct ifinfomsg *msg = p;
-	size_t rta_len, nest_len;
-	struct rtattr *rta, *rd_nest;
-
+	size_t rta_len, nest_len, mctp_len;
+	struct rtattr *rta, *rt_nest, *rt_mctp;
 	char* name;
 	uint8_t *addr;
 	size_t name_len, addr_len;
@@ -339,10 +339,16 @@ static int display_ifinfo(struct ctx *ctx, void *p, size_t len) {
 	name = get_rtnlmsg_attr(IFLA_IFNAME, rta, rta_len, &name_len);
 	addr = get_rtnlmsg_attr(IFLA_ADDRESS, rta, rta_len, &addr_len);
 	get_rtnlmsg_attr_u32(IFLA_MTU, rta, rta_len, &mtu);
-	rd_nest = get_rtnlmsg_attr(IFLA_PROTINFO, rta, rta_len, &nest_len);
-	if (rd_nest) {
-		get_rtnlmsg_attr_u32(IFLA_MCTP_NET, rd_nest, nest_len, &net);
+	rt_mctp = NULL;
+	rt_nest = get_rtnlmsg_attr(IFLA_AF_SPEC, rta, rta_len, &nest_len);
+	if (rt_nest) {
+		rt_mctp = get_rtnlmsg_attr(AF_MCTP, rt_nest, nest_len, &mctp_len);
 	}
+	if (!rt_mctp) {
+		// Ignore other interfaces
+		return 0;
+	}
+	get_rtnlmsg_attr_u32(IFLA_MCTP_NET, rt_mctp, mctp_len, &net);
 	// not sure if will be NULL terminated, handle either
 	name_len = strnlen(name, name_len);
 	printf("dev %*s address ", (int)name_len, name);
@@ -732,7 +738,7 @@ static int do_nlmsg(struct ctx *ctx, struct nlmsghdr *msg,
 }
 
 static void linkmap_add_entry(struct ctx *ctx, struct ifinfomsg *info,
-		struct rtattr *ifname_rta)
+		const char *ifname, size_t ifname_len)
 {
 	struct linkmap_entry *entry;
 	void *tmp;
@@ -750,8 +756,11 @@ static void linkmap_add_entry(struct ctx *ctx, struct ifinfomsg *info,
 	}
 
 	entry = &ctx->linkmap[idx];
-	strncpy(entry->ifname, RTA_DATA(ifname_rta),
-			min(RTA_PAYLOAD(ifname_rta), IFNAMSIZ));
+	if (ifname_len > IFNAMSIZ) {
+		errx(EXIT_FAILURE, "linkmap, too long ifname '%*s'",
+			(int)ifname_len, ifname);
+	}
+	snprintf(entry->ifname, IFNAMSIZ, "%*s", (int)ifname_len, ifname);
 	entry->ifindex = info->ifi_index;
 }
 
@@ -771,8 +780,10 @@ static int parse_getlink_dump(struct ctx *ctx, struct nlmsghdr *nlh, int len)
 	struct ifinfomsg *info;
 
 	for (; NLMSG_OK(nlh, len); nlh = NLMSG_NEXT(nlh, len)) {
-		struct rtattr *rta, *ifname_rta;
-		int rlen;
+		struct rtattr *rta, *rt_nest;
+		char *ifname;
+		size_t ifname_len, rlen, nlen;
+		bool is_mctp;
 
 		if (nlh->nlmsg_type == NLMSG_DONE)
 			return 0;
@@ -789,21 +800,24 @@ static int parse_getlink_dump(struct ctx *ctx, struct nlmsghdr *nlh, int len)
 
 		rta = (void *)(info + 1);
 		rlen = NLMSG_PAYLOAD(nlh, sizeof(*info));
-		ifname_rta = NULL;
 
-		for (; RTA_OK(rta, rlen); rta = RTA_NEXT(rta, rlen)) {
-			if (rta->rta_type == IFLA_IFNAME) {
-				ifname_rta = rta;
-				break;
-			}
+		is_mctp = false;
+		rt_nest = get_rtnlmsg_attr(IFLA_AF_SPEC, rta, rlen, &nlen);
+		if (rt_nest) {
+			is_mctp = get_rtnlmsg_attr(AF_MCTP, rt_nest, nlen, NULL);
 		}
-
-		if (!ifname_rta) {
-			printf("no ifname?\n");
+		if (!is_mctp) {
+			/* Skip non-MCTP interfaces */
 			continue;
 		}
 
-		linkmap_add_entry(ctx, info, ifname_rta);
+		ifname = get_rtnlmsg_attr(IFLA_IFNAME, rta, rlen, &ifname_len);
+		if (!ifname) {
+			printf("no ifname?\n");
+			continue;
+		}
+		ifname_len = strnlen(ifname, ifname_len);
+		linkmap_add_entry(ctx, info, ifname, ifname_len);
 	}
 	return 1;
 }
@@ -935,10 +949,6 @@ static int cmd_link_show(struct ctx *ctx, int argc, const char **argv)
 	}
 	msg.nh.nlmsg_type = RTM_GETLINK;
 	msg.nh.nlmsg_flags = NLM_F_REQUEST | NLM_F_DUMP;
-
-	msg.ifmsg.ifi_family = AF_MCTP;
-	msg.ifmsg.ifi_type = 0;
-	msg.ifmsg.ifi_index = 0;
 
 	if (ifname) {
 		msg.rta.rta_type = IFLA_IFNAME;
