@@ -957,38 +957,33 @@ static int cmd_link_show(struct ctx *ctx, int argc, const char **argv)
 	struct {
 		struct nlmsghdr		nh;
 		struct ifinfomsg	ifmsg;
-		struct rtattr		rta;
-		char			ifname[16];
 	} msg = {0};
-	const char *ifname = NULL;
-	size_t ifnamelen = 0;
+	const char *linkstr = NULL;
+	int ifindex;
 	size_t len;
 	int rc;
 
-	if (argc > 1) {
-		// filter by ifname
-		ifname = argv[1];
-		ifnamelen = strlen(ifname);
+	if (argc > 2)
+		errx(EXIT_FAILURE, "Bad arguments to 'link show'");
 
-		if (ifnamelen > sizeof(msg.ifname)) {
-			warnx("interface name '%s' too long", ifname);
+	if (argc == 2) {
+		// check ifname exists
+		linkstr = argv[1];
+		ifindex = linkmap_lookup_byname(ctx, linkstr);
+		if (!ifindex) {
+			warnx("invalid device %s", linkstr);
 			return -1;
 		}
 	}
 
-	if (ifname) {
-		msg.nh.nlmsg_len = NLMSG_LENGTH(sizeof(msg.ifmsg)) +
-					RTA_SPACE(ifnamelen);
-	} else {
-		msg.nh.nlmsg_len = NLMSG_LENGTH(sizeof(msg.ifmsg));
-	}
 	msg.nh.nlmsg_type = RTM_GETLINK;
-	msg.nh.nlmsg_flags = NLM_F_REQUEST | NLM_F_DUMP;
+	msg.nh.nlmsg_flags = NLM_F_REQUEST;
+	msg.nh.nlmsg_len = NLMSG_LENGTH(sizeof(msg.ifmsg));
 
-	if (ifname) {
-		msg.rta.rta_type = IFLA_IFNAME;
-		msg.rta.rta_len = RTA_LENGTH(ifnamelen);
-		strncpy(RTA_DATA(&msg.rta), ifname, ifnamelen);
+	if (linkstr) {
+		msg.ifmsg.ifi_index = ifindex;
+	} else {
+		msg.nh.nlmsg_flags |= NLM_F_DUMP;
 	}
 
 	rc = do_nlmsg(ctx, &msg.nh, &resp, &len);
