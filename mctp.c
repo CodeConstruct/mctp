@@ -681,7 +681,20 @@ static int send_nlmsg(struct ctx *ctx, struct nlmsghdr *msg)
 	return 0;
 }
 
-/* respp is optional for returned buffer, length is set in resp_lenp */
+/* Returns if the last message is NLMSG_DONE, or isn't multipart */
+static bool nlmsgs_are_done(struct nlmsghdr *msg, size_t len)
+{
+	bool done = false;
+	for (; NLMSG_OK(msg, len); msg = NLMSG_NEXT(msg, len)) {
+		if (done)
+			warnx("received message after NLMSG_DONE");
+		done = (msg->nlmsg_type == NLMSG_DONE)
+			|| !(msg->nlmsg_flags & NLM_F_MULTI);
+	}
+	return done;
+}
+
+/* respp is optional for returned buffer, length is set in resp+lenp */
 static int do_nlmsg(struct ctx *ctx, struct nlmsghdr *msg,
 		struct nlmsghdr **respp, size_t *resp_lenp)
 {
@@ -739,12 +752,7 @@ static int do_nlmsg(struct ctx *ctx, struct nlmsghdr *msg,
 					sizeof(addr));
 		}
 
-		if (rc < (int)sizeof(struct nlmsghdr)) {
-			warnx("short netlink response?");
-		} else {
-			done = (resp->nlmsg_type == NLMSG_DONE);
-		}
-
+		done = nlmsgs_are_done(resp, rc);
 		pos = min(newlen, pos+rc);
 	}
 
