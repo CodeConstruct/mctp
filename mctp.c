@@ -681,55 +681,82 @@ static int send_nlmsg(struct ctx *ctx, struct nlmsghdr *msg)
 	return 0;
 }
 
-/* respp is optional for returned buffer, length is set in resp+lenp */
+/* respp is optional for returned buffer, length is set in resp_lenp */
 static int do_nlmsg(struct ctx *ctx, struct nlmsghdr *msg,
 		struct nlmsghdr **respp, size_t *resp_lenp)
 {
-	struct nlmsghdr *respbuf;
+	void *respbuf;
+	struct nlmsghdr *resp;
 	struct sockaddr_nl addr;
 	socklen_t addrlen;
-	size_t resplen;
+	size_t newlen, readlen, pos;
+	bool done;
 	int rc;
 
 	rc = send_nlmsg(ctx, msg);
 	if (rc)
 		return rc;
 
-	rc = recvfrom(ctx->sd, NULL, 0, MSG_PEEK|MSG_TRUNC, NULL, 0);
-	if (rc < 0)
-		err(EXIT_FAILURE, "recvfrom(MSG_PEEK)");
+	pos = 0;
+	respbuf = NULL;
+	done = false;
 
-	if (!rc)
-		return -1;
+	// read all the responses into a single buffer
+	while (!done) {
+		rc = recvfrom(ctx->sd, NULL, 0, MSG_PEEK|MSG_TRUNC, NULL, 0);
+		if (rc < 0)
+			err(EXIT_FAILURE, "recvfrom(MSG_PEEK)");
 
-	resplen = rc;
-	respbuf = malloc(resplen);
-	addrlen = sizeof(addr);
+		if (rc == 0) {
+			if (pos == 0) {
+				warnx("No response to message");
+				return -1;
+			} else {
+				// No more datagrams
+				break;
+			}
+		}
 
-	rc = recvfrom(ctx->sd, respbuf, resplen, MSG_TRUNC,
-			(struct sockaddr *)&addr, &addrlen);
-	if (rc < 0)
-		err(EXIT_FAILURE, "recvfrom()");
+		readlen = rc;
+		newlen = pos + readlen;
+		respbuf = realloc(respbuf, newlen);
+		if (!respbuf)
+			err(EXIT_FAILURE, "allocation of %zu failed", newlen);
+		resp = respbuf + pos;
 
-	if ((size_t)rc > resplen)
-		warnx("recvfrom: extra message data? (got %d, exp %zd)",
-				rc, resplen);
+		addrlen = sizeof(addr);
+		rc = recvfrom(ctx->sd, resp, readlen, MSG_TRUNC,
+				(struct sockaddr *)&addr, &addrlen);
+		if (rc < 0)
+			err(EXIT_FAILURE, "recvfrom()");
 
-	if (addrlen != sizeof(addr)) {
-		warn("recvfrom: weird addrlen? (%d, expecting %zd)", addrlen,
-				sizeof(addr));
+		if ((size_t)rc > readlen)
+			warnx("recvfrom: extra message data? (got %d, exp %zd)",
+					rc, readlen);
+
+		if (addrlen != sizeof(addr)) {
+			warn("recvfrom: weird addrlen? (%d, expecting %zd)", addrlen,
+					sizeof(addr));
+		}
+
+		if (rc < (int)sizeof(struct nlmsghdr)) {
+			warnx("short netlink response?");
+		} else {
+			done = (resp->nlmsg_type == NLMSG_DONE);
+		}
+
+		pos = min(newlen, pos+rc);
 	}
 
 	if (ctx->verbose) {
-		printf("/---------- %zd bytes from {%d,%d}\n", resplen,
-				addr.nl_family, addr.nl_pid);
-		dump_rtnlmsgs(ctx, respbuf, rc);
+		printf("/---------- %zd bytes total from kernel\n", pos);
+		dump_rtnlmsgs(ctx, respbuf, pos);
 		printf("\\----------------------------\n");
 	}
 
 	if (respp) {
 		*respp = respbuf;
-		*resp_lenp = rc;
+		*resp_lenp = pos;
 	} else {
 		free(respbuf);
 	}
