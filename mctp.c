@@ -92,7 +92,7 @@ static void print_hex_addr(const uint8_t *data, size_t len)
 }
 
 // Accepts colon separated hex bytes
-static int parse_hex_addr(const char* in, char* out, size_t *out_len)
+static int parse_hex_addr(const char* in, uint8_t *out, size_t *out_len)
 {
 	int rc = -1;
 	size_t out_pos = 0;
@@ -307,7 +307,7 @@ static bool get_rtnlmsg_attr_u8(int rta_type, struct rtattr *rta, size_t len,
 
 /* Returns the space used */
 static size_t put_rtnlmsg_attr(struct rtattr **prta, size_t *rta_len,
-	unsigned short type, void* value, size_t val_len)
+	unsigned short type, const void* value, size_t val_len)
 {
 	struct rtattr *rta = *prta;
 	rta->rta_type = type;
@@ -1450,7 +1450,7 @@ static int cmd_neigh_add(struct ctx *ctx, int argc, const char **argv)
 	struct rtattr *rta;
 	const char *linkstr, *eidstr, *lladdrstr;
 	int rc;
-	char llbuf[MAX_ADDR_LEN];
+	uint8_t llbuf[MAX_ADDR_LEN];
 	size_t llbuf_len, rta_len;
 
 	rc = 0;
@@ -1560,7 +1560,7 @@ static int cmd_testhex(struct ctx *ctx, int argc, const char **argv) {
 		return 255;
 	}
 
-	char buf[5];
+	uint8_t buf[5];
 	size_t lenbuf = sizeof(buf);
 	int rc = parse_hex_addr(argv[1], buf, &lenbuf);
 	if (rc) {
