@@ -983,6 +983,7 @@ static int cmd_link_show(struct ctx *ctx, int argc, const char **argv)
 	if (linkstr) {
 		msg.ifmsg.ifi_index = ifindex;
 	} else {
+		// NLM_F_DUMP prevents filtering on ifindex
 		msg.nh.nlmsg_flags |= NLM_F_DUMP;
 	}
 
@@ -995,6 +996,149 @@ static int cmd_link_show(struct ctx *ctx, int argc, const char **argv)
 	return 0;
 }
 
+static int do_link_set(struct ctx *ctx, int ifindex, bool have_updown, bool up,
+		uint32_t mtu, uint32_t net, const uint8_t* busown, size_t busown_len) {
+	struct {
+		struct nlmsghdr		nh;
+		struct ifinfomsg	ifmsg;
+		/* Space for all attributes */
+		uint8_t			rta_buff[200];
+	} msg = {0};
+	struct rtattr *rta;
+	size_t rta_len;
+
+	msg.nh.nlmsg_type = RTM_NEWLINK;
+	msg.nh.nlmsg_flags = NLM_F_REQUEST | NLM_F_ACK;
+	msg.ifmsg.ifi_index = ifindex;
+
+	msg.nh.nlmsg_len = NLMSG_LENGTH(sizeof(msg.ifmsg));
+	rta_len = sizeof(msg.rta_buff);
+	rta = (void*)msg.rta_buff;
+
+	if (have_updown) {
+		msg.ifmsg.ifi_change |= IFF_UP;
+		if (up)
+			msg.ifmsg.ifi_flags |= IFF_UP;
+	}
+
+	if (mtu)
+		msg.nh.nlmsg_len += put_rtnlmsg_attr(&rta, &rta_len,
+			IFLA_MTU, &mtu, sizeof(mtu));
+
+	if (net || busown ) {
+		/* Nested
+		IFLA_AF_SPEC
+			AF_MCTP
+				IFLA_MCTP_NET
+				IFLA_MCTP_BUSOWNER
+		*/
+		struct rtattr *rta1, *rta2;
+		size_t rta_len1, rta_len2, space1, space2;
+		uint8_t buff1[100], buff2[100];
+
+		rta2 = (void*)buff2;
+		rta_len2 = sizeof(buff2);
+		space2 = 0;
+		if (net)
+			space2 += put_rtnlmsg_attr(&rta2, &rta_len2,
+				IFLA_MCTP_NET, &net, sizeof(net));
+		if (busown)
+			space2 += put_rtnlmsg_attr(&rta2, &rta_len2,
+				IFLA_MCTP_BUSOWNER, busown, busown_len);
+		rta1 = (void*)buff1;
+		rta_len1 = sizeof(buff1);
+		space1 = put_rtnlmsg_attr(&rta1, &rta_len1,
+			AF_MCTP|NLA_F_NESTED, buff2, space2);
+		msg.nh.nlmsg_len += put_rtnlmsg_attr(&rta, &rta_len,
+			IFLA_AF_SPEC|NLA_F_NESTED, buff1, space1);
+	}
+
+	return send_nlmsg(ctx, &msg.nh);
+}
+
+static int cmd_link_set(struct ctx *ctx, int argc, const char **argv) {
+	bool have_updown = false, up;
+	int i;
+	int ifindex, mtu = 0, net = 0;
+	const char *curr, *linkstr, *mtustr = NULL, *netstr = NULL, *busownstr = NULL;
+	char *endp;
+	uint8_t busown_buff[MAX_ADDR_LEN];
+	uint8_t *busown = NULL;
+	size_t busown_len;
+	const char **next = NULL;
+	int rc;
+
+	if (argc < 3)
+		errx(EXIT_FAILURE, "Bad arguments to 'link set'");
+
+	linkstr = argv[1];
+	ifindex = linkmap_lookup_byname(ctx, linkstr);
+	if (!ifindex) {
+		warnx("invalid device %s", linkstr);
+		return -1;
+	}
+
+	for (i = 2; i < argc; i++) {
+		curr = argv[i];
+		if (next) {
+			*next = curr;
+			next = NULL;
+			continue;
+		}
+
+		if (!strcmp(curr, "up")) {
+			have_updown = true;
+			up = true;
+		} else if (!strcmp(curr, "down")) {
+			have_updown = true;
+			up = false;
+		} else if (!strcmp(curr, "mtu")) {
+			next = &mtustr;
+		} else if (!strcmp(curr, "network") || !strcmp(curr, "net")) {
+			next = &netstr;
+		} else if (!strcmp(curr, "bus-owner")) {
+			next = &busownstr;
+		} else {
+			warnx("Unknown link set command '%s'", curr);
+			return -1;
+		}
+	}
+
+	if (next) {
+		warnx("Bad link set arguments");
+		return -1;
+	}
+
+	if (mtustr) {
+		mtu = strtoul(mtustr, &endp, 0);
+		if (endp == mtustr || mtu <= 0) {
+			warnx("invalid mtu %s", mtustr);
+			return -1;
+		}
+	}
+
+	if (netstr) {
+		net = strtoul(netstr, &endp, 0);
+		if (endp == netstr || net <= 0) {
+			warnx("invalid net %s", netstr);
+			return -1;
+		}
+	}
+
+	if (busownstr) {
+		busown_len = sizeof(busown_buff);
+		rc = parse_hex_addr(busownstr, busown_buff, &busown_len);
+		if (rc) {
+			warnx("invalid bus-owner %s", busownstr);
+			return rc;
+		}
+		busown = busown_buff;
+	}
+
+	return do_link_set(ctx, ifindex, have_updown, up, mtu, net, busown, busown_len);
+
+}
+
 static int cmd_link(struct ctx *ctx, int argc, const char **argv)
 {
 	const char* subcmd;
@@ -1002,9 +1146,11 @@ static int cmd_link(struct ctx *ctx, int argc, const char **argv)
 	if (argc == 2 && !strcmp(argv[1], "help")) {
 		fprintf(stderr, "%s link\n", ctx->top_cmd);
 		fprintf(stderr, "%s link show [ifname]\n", ctx->top_cmd);
-		fprintf(stderr, "%s link set [ifname]    {unimplemented}\n", ctx->top_cmd);
+		fprintf(stderr, "%s link set <ifname> [up|down] [mtu <mtu>] [network <net>] [bus-owner <physaddr>]\n", ctx->top_cmd);
 		return 255;
 	}
+
+	get_linkmap(ctx);
 
 	if (argc == 1) {
 		return cmd_link_show(ctx, 0, NULL);
@@ -1017,7 +1163,9 @@ static int cmd_link(struct ctx *ctx, int argc, const char **argv)
 	if (!strcmp(subcmd, "show")) {
 		return cmd_link_show(ctx, argc, argv);
 	} else if (!strcmp(subcmd, "set")) {
-		// TODO
+		return cmd_link_set(ctx, argc, argv);
+	} else {
+		warnx("Unknown link command '%s'", subcmd);
 	}
 
 	return -1;
@@ -1128,9 +1276,7 @@ static int cmd_addr_add(struct ctx *ctx, int argc, const char **argv)
 	msg.nh.nlmsg_len = NLMSG_LENGTH(sizeof(msg.ifmsg)) +
 			RTA_SPACE(sizeof(eid));
 
-	send_nlmsg(ctx, &msg.nh);
-
-	return 0;
+	return send_nlmsg(ctx, &msg.nh);
 }
 
 static int cmd_addr(struct ctx *ctx, int argc, const char **argv)

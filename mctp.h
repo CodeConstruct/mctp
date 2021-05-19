@@ -38,6 +38,7 @@ struct _sockaddr_mctp {
 enum {
 	IFLA_MCTP_UNSPEC,
 	IFLA_MCTP_NET,
+	IFLA_MCTP_BUSOWNER,
 	__IFLA_MCTP_MAX,
 };
 
