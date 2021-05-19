@@ -1,7 +1,7 @@
 
 INSTALL = install
 CC ?= gcc
-CFLAGS ?= -Wall -Wextra -Werror -Wno-unused-parameter -ggdb
+CFLAGS ?= -Wall -Wextra -Wno-unused-parameter -ggdb
 prefix ?= /usr/local
 bindir ?= $(prefix)/bin
 

@@ -37,6 +37,7 @@
 struct linkmap_entry {
 	int	ifindex;
 	char	ifname[IFNAMSIZ+1];
+	int	net;
 };
 
 struct ctx {
@@ -53,6 +54,7 @@ typedef int (*display_fn_t)(struct ctx *ctx, void* msg, size_t len);
 
 static int linkmap_lookup_byname(struct ctx *ctx, const char *ifname);
 static const char* linkmap_lookup_byindex(struct ctx *ctx, int index);
+static int linkmap_net_byindex(struct ctx *ctx, int index);
 
 static void hexdump(void *b, int len, const char *indent) {
 	char* buf = b;
@@ -390,7 +392,10 @@ static int display_ifaddr(struct ctx *ctx, void *p, size_t len) {
 
 	eid = 0;
 	get_rtnlmsg_attr_u8(IFA_LOCAL, rta, rta_len, &eid);
-	printf("eid %d dev %s\n", eid, linkmap_lookup_byindex(ctx, msg->ifa_index));
+	printf("eid %d net %d dev %s\n", eid,
+		linkmap_net_byindex(ctx, msg->ifa_index),
+		linkmap_lookup_byindex(ctx, msg->ifa_index));
+
 	return 0;
 }
 
@@ -432,7 +437,9 @@ static int display_neighbour(struct ctx *ctx, void *p, size_t len)
 	eid = 0;
 	get_rtnlmsg_attr_u8(NDA_DST, rta, rta_len, &eid);
 	lladdr = get_rtnlmsg_attr(NDA_LLADDR, rta, rta_len, &lladdr_len);
-	printf("eid %d dev %s lladdr ", eid, linkmap_lookup_byindex(ctx, msg->ndm_ifindex));
+	printf("eid %d net %d dev %s lladdr ", eid,
+		linkmap_net_byindex(ctx, msg->ndm_ifindex),
+		linkmap_lookup_byindex(ctx, msg->ndm_ifindex));
 	print_hex_addr(lladdr, lladdr_len);
 	printf("\n");
 	return 0;
@@ -773,7 +780,7 @@ static int do_nlmsg(struct ctx *ctx, struct nlmsghdr *msg,
 }
 
 static void linkmap_add_entry(struct ctx *ctx, struct ifinfomsg *info,
-		const char *ifname, size_t ifname_len)
+		const char *ifname, size_t ifname_len, int net)
 {
 	struct linkmap_entry *entry;
 	void *tmp;
@@ -797,6 +804,7 @@ static void linkmap_add_entry(struct ctx *ctx, struct ifinfomsg *info,
 	}
 	snprintf(entry->ifname, IFNAMSIZ, "%*s", (int)ifname_len, ifname);
 	entry->ifindex = info->ifi_index;
+	entry->net = net;
 }
 
 static void linkmap_dump(struct ctx *ctx)
@@ -806,7 +814,8 @@ static void linkmap_dump(struct ctx *ctx)
 	printf("linkmap\n");
 	for (i = 0; i < ctx->linkmap_count; i++) {
 		struct linkmap_entry *entry = &ctx->linkmap[i];
-		printf("  %d: %s\n", entry->ifindex, entry->ifname);
+		printf("  %d: %s, net %d\n", entry->ifindex, entry->ifname,
+			entry->net);
 	}
 }
 
@@ -815,10 +824,10 @@ static int parse_getlink_dump(struct ctx *ctx, struct nlmsghdr *nlh, int len)
 	struct ifinfomsg *info;
 
 	for (; NLMSG_OK(nlh, len); nlh = NLMSG_NEXT(nlh, len)) {
-		struct rtattr *rta, *rt_nest;
+		struct rtattr *rta, *rt_nest, *rt_mctp;
 		char *ifname;
-		size_t ifname_len, rlen, nlen;
-		bool is_mctp;
+		size_t ifname_len, rlen, nlen, mlen;
+		uint32_t net;
 
 		if (nlh->nlmsg_type == NLMSG_DONE)
 			return 0;
@@ -836,13 +845,17 @@ static int parse_getlink_dump(struct ctx *ctx, struct nlmsghdr *nlh, int len)
 		rta = (void *)(info + 1);
 		rlen = NLMSG_PAYLOAD(nlh, sizeof(*info));
 
-		is_mctp = false;
+		rt_mctp = false;
 		rt_nest = get_rtnlmsg_attr(IFLA_AF_SPEC, rta, rlen, &nlen);
 		if (rt_nest) {
-			is_mctp = get_rtnlmsg_attr(AF_MCTP, rt_nest, nlen, NULL);
+			rt_mctp = get_rtnlmsg_attr(AF_MCTP, rt_nest, nlen, &mlen);
 		}
-		if (!is_mctp) {
+		if (!rt_mctp) {
 			/* Skip non-MCTP interfaces */
+			continue;
+		}
+		if (!get_rtnlmsg_attr_u32(IFLA_MCTP_NET, rt_mctp, mlen, &net)) {
+			warnx("Missing IFLA_MCTP_NET");
 			continue;
 		}
 
@@ -852,7 +865,7 @@ static int parse_getlink_dump(struct ctx *ctx, struct nlmsghdr *nlh, int len)
 			continue;
 		}
 		ifname_len = strnlen(ifname, ifname_len);
-		linkmap_add_entry(ctx, info, ifname, ifname_len);
+		linkmap_add_entry(ctx, info, ifname, ifname_len, net);
 	}
 	return 1;
 }
@@ -949,6 +962,20 @@ static const char* linkmap_lookup_byindex(struct ctx *ctx, int index)
 	}
 
 	return NULL;
+}
+
+static int linkmap_net_byindex(struct ctx *ctx, int index)
+{
+	int i;
+
+	for (i = 0; i < ctx->linkmap_count; i++) {
+		struct linkmap_entry *entry = &ctx->linkmap[i];
+		if (entry->ifindex == index) {
+			return entry->net;
+		}
+	}
+
+	return 0;
 }
 
 static int cmd_link_show(struct ctx *ctx, int argc, const char **argv)
