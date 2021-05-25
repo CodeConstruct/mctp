@@ -28,6 +28,7 @@
 #include <linux/netdevice.h>
 
 #include "mctp.h"
+#include "mctp-util.h"
 
 #define max(a, b) ((a) > (b) ? (a) : (b))
 #define min(a, b) ((a) < (b) ? (a) : (b))
@@ -55,84 +56,6 @@ typedef int (*display_fn_t)(struct ctx *ctx, void* msg, size_t len);
 static int linkmap_lookup_byname(struct ctx *ctx, const char *ifname);
 static const char* linkmap_lookup_byindex(struct ctx *ctx, int index);
 static int linkmap_net_byindex(struct ctx *ctx, int index);
-
-static void hexdump(void *b, int len, const char *indent) {
-	char* buf = b;
-	const int row_len = 16;
-	int i, j;
-
-	for (i = 0; i < len; i += row_len) {
-		char hbuf[row_len * strlen("00 ") + 1];
-		char cbuf[row_len + strlen("|") + 1];
-
-		for (j = 0; (j < row_len) && ((i+j) < len); j++) {
-			unsigned char c = buf[i + j];
-
-			sprintf(hbuf + j * 3, "%02x ", c);
-
-			if (!isprint(c))
-				c = '.';
-
-			sprintf(cbuf + j, "%c", c);
-		}
-
-		strcat(cbuf, "|");
-
-		printf("%s%08x  %*s |%s\n", indent, i,
-				(int)(0 - sizeof(hbuf) + 1), hbuf, cbuf);
-	}
-}
-
-static void print_hex_addr(const uint8_t *data, size_t len)
-{
-	for (size_t i = 0; i < len; i++) {
-		if (i > 0) {
-			putchar(':');
-		}
-		printf("%02x", data[i]);
-	}
-}
-
-// Accepts colon separated hex bytes
-static int parse_hex_addr(const char* in, uint8_t *out, size_t *out_len)
-{
-	int rc = -1;
-	size_t out_pos = 0;
-	while (1) {
-		if (*in == '\0') {
-			rc = 0;
-			break;
-		}
-		else if (*in == ':') {
-			in++;
-			if (*in == ':' || *in == '\0' || out_pos == 0) {
-				// can't have repeated ':' or ':' at start or end.
-				break;
-			}
-		} else {
-			char* endp;
-			int tmp;
-			tmp = strtoul(in, &endp, 16);
-			if (endp == in || tmp > 0xff) {
-				break;
-			}
-			if (out_pos >= *out_len) {
-				break;
-			}
-			*out = tmp & 0xff;
-			out++;
-			out_pos++;
-			in = endp;
-		}
-	}
-
-	if (rc) {
-		*out_len = 0;
-	} else {
-		*out_len = out_pos;
-	}
-	return rc;
-}
 
 
 enum attrgroup {
@@ -339,6 +262,11 @@ static int display_ifinfo(struct ctx *ctx, void *p, size_t len) {
 	mtu = 0;
 	net = 0;
 	name = get_rtnlmsg_attr(IFLA_IFNAME, rta, rta_len, &name_len);
+	if (!name) {
+		warnx("Missing interface name");
+		name = "???";
+		name_len = strlen(name);
+	}
 	addr = get_rtnlmsg_attr(IFLA_ADDRESS, rta, rta_len, &addr_len);
 	get_rtnlmsg_attr_u32(IFLA_MTU, rta, rta_len, &mtu);
 	rt_mctp = NULL;
@@ -350,11 +278,17 @@ static int display_ifinfo(struct ctx *ctx, void *p, size_t len) {
 		// Ignore other interfaces
 		return 0;
 	}
-	get_rtnlmsg_attr_u32(IFLA_MCTP_NET, rt_mctp, mctp_len, &net);
+	if (!get_rtnlmsg_attr_u32(IFLA_MCTP_NET, rt_mctp, mctp_len, &net)) {
+		warnx("No network attribute from %*s", (int)name_len, name);
+	}
 	// not sure if will be NULL terminated, handle either
 	name_len = strnlen(name, name_len);
 	printf("dev %*s address ", (int)name_len, name);
-	print_hex_addr(addr, addr_len);
+	if (addr) {
+		print_hex_addr(addr, addr_len);
+	} else {
+		printf("(none)");
+	}
 	printf(" net %d mtu %d\n", net, mtu);
 	return 0;
 }
@@ -440,7 +374,11 @@ static int display_neighbour(struct ctx *ctx, void *p, size_t len)
 	printf("eid %d net %d dev %s lladdr ", eid,
 		linkmap_net_byindex(ctx, msg->ndm_ifindex),
 		linkmap_lookup_byindex(ctx, msg->ndm_ifindex));
-	print_hex_addr(lladdr, lladdr_len);
+	if (lladdr) {
+		print_hex_addr(lladdr, lladdr_len);
+	} else {
+		printf("(none)");
+	}
 	printf("\n");
 	return 0;
 }
@@ -484,12 +422,12 @@ static int display_route(struct ctx *ctx, void *p, size_t len)
 	ifindex = 0;
 	mtu = 0;
 	get_rtnlmsg_attr_u8(RTA_DST, rta, rta_len, &dst);
-	get_rtnlmsg_attr_u32(RTA_TABLE, rta, rta_len, &net);
 	get_rtnlmsg_attr_u32(RTA_OIF, rta, rta_len, &ifindex);
 	rd_nest = get_rtnlmsg_attr(RTA_METRICS, rta, rta_len, &nest_len);
 	if (rd_nest) {
 		get_rtnlmsg_attr_u32(RTAX_MTU, rd_nest, nest_len, &mtu);
 	}
+	net = linkmap_net_byindex(ctx, ifindex);
 
 	printf("eid min %d max %d net %d dev %s mtu %d\n",
 		dst, dst + msg->rtm_dst_len,
@@ -1024,7 +962,7 @@ static int cmd_link_show(struct ctx *ctx, int argc, const char **argv)
 }
 
 static int do_link_set(struct ctx *ctx, int ifindex, bool have_updown, bool up,
-		uint32_t mtu, uint32_t net, const uint8_t* busown, size_t busown_len) {
+		uint32_t mtu, bool have_net, uint32_t net) {
 	struct {
 		struct nlmsghdr		nh;
 		struct ifinfomsg	ifmsg;
@@ -1052,12 +990,12 @@ static int do_link_set(struct ctx *ctx, int ifindex, bool have_updown, bool up,
 		msg.nh.nlmsg_len += put_rtnlmsg_attr(&rta, &rta_len,
 			IFLA_MTU, &mtu, sizeof(mtu));
 
-	if (net || busown ) {
+	if (have_net) {
 		/* Nested
 		IFLA_AF_SPEC
 			AF_MCTP
 				IFLA_MCTP_NET
-				IFLA_MCTP_BUSOWNER
+				... future device properties
 		*/
 		struct rtattr *rta1, *rta2;
 		size_t rta_len1, rta_len2, space1, space2;
@@ -1066,12 +1004,9 @@ static int do_link_set(struct ctx *ctx, int ifindex, bool have_updown, bool up,
 		rta2 = (void*)buff2;
 		rta_len2 = sizeof(buff2);
 		space2 = 0;
-		if (net)
+		if (have_net)
 			space2 += put_rtnlmsg_attr(&rta2, &rta_len2,
 				IFLA_MCTP_NET, &net, sizeof(net));
-		if (busown)
-			space2 += put_rtnlmsg_attr(&rta2, &rta_len2,
-				IFLA_MCTP_BUSOWNER, busown, busown_len);
 		rta1 = (void*)buff1;
 		rta_len1 = sizeof(buff1);
 		space1 = put_rtnlmsg_attr(&rta1, &rta_len1,
@@ -1084,16 +1019,12 @@ static int do_link_set(struct ctx *ctx, int ifindex, bool have_updown, bool up,
 }
 
 static int cmd_link_set(struct ctx *ctx, int argc, const char **argv) {
-	bool have_updown = false, up;
+	bool have_updown = false, up, have_net = false;
 	int i;
 	int ifindex, mtu = 0, net = 0;
-	const char *curr, *linkstr, *mtustr = NULL, *netstr = NULL, *busownstr = NULL;
+	const char *curr, *linkstr, *mtustr = NULL, *netstr = NULL;
 	char *endp;
-	uint8_t busown_buff[MAX_ADDR_LEN];
-	uint8_t *busown = NULL;
-	size_t busown_len;
 	const char **next = NULL;
-	int rc;
 
 	if (argc < 3)
 		errx(EXIT_FAILURE, "Bad arguments to 'link set'");
@@ -1122,9 +1053,8 @@ static int cmd_link_set(struct ctx *ctx, int argc, const char **argv) {
 		} else if (!strcmp(curr, "mtu")) {
 			next = &mtustr;
 		} else if (!strcmp(curr, "network") || !strcmp(curr, "net")) {
+			have_net = true;
 			next = &netstr;
-		} else if (!strcmp(curr, "bus-owner")) {
-			next = &busownstr;
 		} else {
 			warnx("Unknown link set command '%s'", curr);
 			return -1;
@@ -1146,23 +1076,13 @@ static int cmd_link_set(struct ctx *ctx, int argc, const char **argv) {
 
 	if (netstr) {
 		net = strtoul(netstr, &endp, 0);
-		if (endp == netstr || net <= 0) {
+		if (endp == netstr) {
 			warnx("invalid net %s", netstr);
 			return -1;
 		}
 	}
 
-	if (busownstr) {
-		busown_len = sizeof(busown_buff);
-		rc = parse_hex_addr(busownstr, busown_buff, &busown_len);
-		if (rc) {
-			warnx("invalid bus-owner %s", busownstr);
-			return rc;
-		}
-		busown = busown_buff;
-	}
-
-	return do_link_set(ctx, ifindex, have_updown, up, mtu, net, busown, busown_len);
+	return do_link_set(ctx, ifindex, have_updown, up, mtu, have_net, net);
 
 }
 
