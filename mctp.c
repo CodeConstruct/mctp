@@ -247,10 +247,11 @@ static int display_ifinfo(struct ctx *ctx, void *p, size_t len) {
 	size_t rta_len, nest_len, mctp_len;
 	struct rtattr *rta, *rt_nest, *rt_mctp;
 	char* name;
+	const char* updown;
 	uint8_t *addr;
 	size_t name_len, addr_len;
-	uint32_t mtu;
-	uint32_t net;
+	uint32_t mtu = 0;
+	uint32_t net = 0;
 
 	if (len < sizeof(*msg)) {
 		printf("not enough data for an ifinfomsg\n");
@@ -259,16 +260,17 @@ static int display_ifinfo(struct ctx *ctx, void *p, size_t len) {
 	rta = (void *)(msg + 1);
 	rta_len = len - sizeof(*msg);
 
-	mtu = 0;
-	net = 0;
 	name = get_rtnlmsg_attr(IFLA_IFNAME, rta, rta_len, &name_len);
 	if (!name) {
 		warnx("Missing interface name");
 		name = "???";
 		name_len = strlen(name);
 	}
+
 	addr = get_rtnlmsg_attr(IFLA_ADDRESS, rta, rta_len, &addr_len);
 	get_rtnlmsg_attr_u32(IFLA_MTU, rta, rta_len, &mtu);
+
+	// Nested IFLA_MCTP_NET
 	rt_mctp = NULL;
 	rt_nest = get_rtnlmsg_attr(IFLA_AF_SPEC, rta, rta_len, &nest_len);
 	if (rt_nest) {
@@ -281,6 +283,8 @@ static int display_ifinfo(struct ctx *ctx, void *p, size_t len) {
 	if (!get_rtnlmsg_attr_u32(IFLA_MCTP_NET, rt_mctp, mctp_len, &net)) {
 		warnx("No network attribute from %*s", (int)name_len, name);
 	}
+
+	updown = msg->ifi_flags & IFF_UP ? "up" : "down";
 	// not sure if will be NULL terminated, handle either
 	name_len = strnlen(name, name_len);
 	printf("dev %*s address ", (int)name_len, name);
@@ -289,7 +293,7 @@ static int display_ifinfo(struct ctx *ctx, void *p, size_t len) {
 	} else {
 		printf("(none)");
 	}
-	printf(" net %d mtu %d\n", net, mtu);
+	printf(" net %d mtu %d %s\n", net, mtu, updown);
 	return 0;
 }
 
