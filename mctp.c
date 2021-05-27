@@ -287,7 +287,8 @@ static int display_ifinfo(struct ctx *ctx, void *p, size_t len) {
 	updown = msg->ifi_flags & IFF_UP ? "up" : "down";
 	// not sure if will be NULL terminated, handle either
 	name_len = strnlen(name, name_len);
-	printf("dev %*s address ", (int)name_len, name);
+	printf("dev %*s index %d address 0x",
+		(int)name_len, name, msg->ifi_index);
 	if (addr) {
 		print_hex_addr(addr, addr_len);
 	} else {
@@ -375,7 +376,7 @@ static int display_neighbour(struct ctx *ctx, void *p, size_t len)
 	eid = 0;
 	get_rtnlmsg_attr_u8(NDA_DST, rta, rta_len, &eid);
 	lladdr = get_rtnlmsg_attr(NDA_LLADDR, rta, rta_len, &lladdr_len);
-	printf("eid %d net %d dev %s lladdr ", eid,
+	printf("eid %d net %d dev %s lladdr 0x", eid,
 		linkmap_net_byindex(ctx, msg->ndm_ifindex),
 		linkmap_lookup_byindex(ctx, msg->ndm_ifindex));
 	if (lladdr) {
