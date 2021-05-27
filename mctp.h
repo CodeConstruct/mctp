@@ -15,6 +15,10 @@
 
 #include <stdint.h>
 
+#ifndef MAX_ADDR_LEN
+#define MAX_ADDR_LEN 32
+#endif
+
 typedef uint8_t			mctp_eid_t;
 
 struct _mctp_addr {
@@ -34,11 +38,12 @@ struct _sockaddr_mctp_ext {
 		sa_family_t			smctp_family; /* = AF_MCTP */
 		int					smctp_network;
 		struct _mctp_addr	smctp_addr;
-		uint8_t				smcp_tag;
+		uint8_t				smctp_type;
+		uint8_t				smctp_tag;
 		/* extended addressing */
 		int					smctp_ifindex;
 		uint8_t				smctp_halen;
-		unsigned char		smctp_haddr[32/*MAX_ADDR_LEN*/];
+		unsigned char		smctp_haddr[MAX_ADDR_LEN];
 };
 
 #define MCTP_NET_ANY 0
