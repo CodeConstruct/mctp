@@ -69,6 +69,8 @@ int main(void)
 				addr.smctp_type,
 				buf[0]);
 
+		addr.smctp_tag &= ~MCTP_TAG_OWNER;
+
 		rc = sendto(sd, buf, len, 0,
 				(struct sockaddr *)&addr, sizeof(addr));
 
