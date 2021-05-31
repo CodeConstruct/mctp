@@ -292,11 +292,10 @@ static int display_ifinfo(struct ctx *ctx, void *p, size_t len) {
 	name_len = strnlen(name, name_len);
 	printf("dev %*s index %d address 0x",
 		(int)name_len, name, msg->ifi_index);
-	if (addr) {
+	if (addr && addr_len)
 		print_hex_addr(addr, addr_len);
-	} else {
+	else
 		printf("(no-addr)");
-	}
 	printf(" net %d mtu %d %s\n", net, mtu, updown);
 	return 0;
 }
@@ -382,11 +381,10 @@ static int display_neighbour(struct ctx *ctx, void *p, size_t len)
 	printf("eid %d net %d dev %s lladdr 0x", eid,
 		linkmap_net_byindex(ctx, msg->ndm_ifindex),
 		linkmap_lookup_byindex(ctx, msg->ndm_ifindex));
-	if (lladdr) {
+	if (lladdr && lladdr_len)
 		print_hex_addr(lladdr, lladdr_len);
-	} else {
+	else
 		printf("(no-addr)");
-	}
 	printf("\n");
 	return 0;
 }
