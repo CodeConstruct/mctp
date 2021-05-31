@@ -195,6 +195,9 @@ static void* get_rtnlmsg_attr(int rta_type, struct rtattr *rta, size_t len,
 			return RTA_DATA(rta);
 		}
 	}
+	if (ret_len) {
+		*ret_len = 0;
+	}
 	return NULL;
 }
 
@@ -292,7 +295,7 @@ static int display_ifinfo(struct ctx *ctx, void *p, size_t len) {
 	if (addr) {
 		print_hex_addr(addr, addr_len);
 	} else {
-		printf("(none)");
+		printf("(no-addr)");
 	}
 	printf(" net %d mtu %d %s\n", net, mtu, updown);
 	return 0;
@@ -382,7 +385,7 @@ static int display_neighbour(struct ctx *ctx, void *p, size_t len)
 	if (lladdr) {
 		print_hex_addr(lladdr, lladdr_len);
 	} else {
-		printf("(none)");
+		printf("(no-addr)");
 	}
 	printf("\n");
 	return 0;
