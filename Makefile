@@ -4,8 +4,10 @@ CFLAGS ?= -Wall -Wextra -Wno-unused-parameter -ggdb
 prefix ?= /usr/local
 bindir ?= $(prefix)/bin
 
-SD_LIBS := $(shell pkg-config --libs libsystemd)
+SD_LIBS := -Wl,-Bstatic $(shell pkg-config --libs libsystemd) -Wl,-Bdynamic -lcap -lrt -lpthread
 SD_CFLAGS := $(shell pkg-config --cflags libsystemd)
+
+LDLIBS += -Wl,--gc-sections
 
 binaries = mctp mctp-req mctp-echo
 
