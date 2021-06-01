@@ -80,10 +80,12 @@ static int mctp_req(unsigned int net, mctp_eid_t eid,
 		errx(EXIT_FAILURE, "unexpected length: got %d, exp %zd",
 				rc, len);
 
-	if (!(addrlen == sizeof(struct _sockaddr_mctp_ext)) ||
-		(addrlen == sizeof(struct _sockaddr_mctp)))
-		errx(EXIT_FAILURE, "unknown recv address length %d, exp %zd)",
-				addrlen, sizeof(addr));
+	if (!(addrlen == sizeof(struct _sockaddr_mctp_ext) ||
+		addrlen == sizeof(struct _sockaddr_mctp)))
+		errx(EXIT_FAILURE, "unknown recv address length %d, exp %zu or %zu)",
+				addrlen, sizeof(struct _sockaddr_mctp_ext),
+				sizeof(struct _sockaddr_mctp));
+
 
 	printf("req:  message from (net %d, eid %d) type %d: 0x%02x..\n",
 			addr.smctp_network, addr.smctp_addr.s_addr,
