@@ -63,11 +63,11 @@ int main(void)
 				"unknown address length %d, exp %zd",
 				addrlen, sizeof(addr));
 
-		printf("echo: message from (net %d, eid %d), tag %d, type %d: 0x%02x ..., responding\n",
+		printf("echo: message from (net %d, eid %d), tag %d, type %d: len %zd, 0x%02x ..., responding\n",
 				addr.smctp_network, addr.smctp_addr.s_addr,
 				addr.smctp_tag,
 				addr.smctp_type,
-				buf[0]);
+				len, buf[0]);
 
 		addr.smctp_tag &= ~MCTP_TAG_OWNER;
 
