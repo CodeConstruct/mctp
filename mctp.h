@@ -13,6 +13,11 @@
 #define AF_MCTP 45
 #endif
 
+/* MCTP serial line discipline */
+#ifndef N_MCTP
+#define N_MCTP	28
+#endif
+
 #include <stdint.h>
 
 #ifndef MAX_ADDR_LEN

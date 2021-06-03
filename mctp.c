@@ -12,6 +12,7 @@
 #include <ctype.h>
 #include <err.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <getopt.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -19,7 +20,9 @@
 #include <string.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include <unistd.h>
 
+#include <sys/ioctl.h>
 #include <sys/socket.h>
 
 #include <linux/if.h>
@@ -640,6 +643,34 @@ static int cmd_link_set(struct ctx *ctx, int argc, const char **argv) {
 
 }
 
+static int cmd_link_serial(struct ctx *ctx, int argc, const char **argv)
+{
+	const char *tty;
+	int fd, rc, i;
+
+	if (argc != 2) {
+		fprintf(stderr, "%s link serial: no device specified\n",
+				ctx->top_cmd);
+		return 255;
+	}
+
+	tty = argv[1];
+
+	fd = open(tty, O_RDWR);
+	if (fd < 0)
+		err(EXIT_FAILURE, "Can't open tty %s", tty);
+
+	i = N_MCTP;
+
+	rc = ioctl(fd, TIOCSETD, &i);
+	if (rc)
+		err(EXIT_FAILURE, "Can't set tty line discipline");
+
+	pause();
+
+        return 0;
+}
+
 static int cmd_link(struct ctx *ctx, int argc, const char **argv)
 {
 	const char* subcmd;
@@ -663,6 +694,8 @@ static int cmd_link(struct ctx *ctx, int argc, const char **argv)
 		return cmd_link_show(ctx, argc, argv);
 	} else if (!strcmp(subcmd, "set")) {
 		return cmd_link_set(ctx, argc, argv);
+	} else if (!strcmp(subcmd, "serial")) {
+		return cmd_link_serial(ctx, argc, argv);
 	} else {
 		warnx("Unknown link command '%s'", subcmd);
 	}
