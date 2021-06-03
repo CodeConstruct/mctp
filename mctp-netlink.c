@@ -537,7 +537,7 @@ static int linkmap_add_entry(mctp_nl *nl, struct ifinfomsg *info,
 
 	if (nl->linkmap_count > nl->linkmap_alloc) {
 		newsz = max(nl->linkmap_alloc * 2, 1);
-		tmp = reallocarray(nl->linkmap, newsz, sizeof(*nl->linkmap));
+		tmp = realloc(nl->linkmap, newsz * sizeof(*nl->linkmap));
 		if (!tmp) {
 			warnx("Error allocating linkmap memory");
 			return -1;
