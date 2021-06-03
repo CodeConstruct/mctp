@@ -5,7 +5,7 @@
 
 #include "mctp-util.h"
 
-void hexdump(void *b, int len, const char *indent) {
+void mctp_hexdump(void *b, int len, const char *indent) {
     char* buf = b;
     const int row_len = 16;
     int i, j;

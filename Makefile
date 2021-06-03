@@ -4,17 +4,21 @@ CFLAGS ?= -Wall -Wextra -Wno-unused-parameter -ggdb
 prefix ?= /usr/local
 bindir ?= $(prefix)/bin
 
+ifdef STATIC_LIBSYSTEMD
 SD_LIBS := -Wl,-Bstatic $(shell pkg-config --libs libsystemd) -Wl,-Bdynamic -lcap -lrt -lpthread
+else
+SD_LIBS := $(shell pkg-config --libs libsystemd)
+endif
 SD_CFLAGS := $(shell pkg-config --cflags libsystemd)
 
 LDLIBS += -Wl,--gc-sections
 
-binaries = mctp mctp-req mctp-echo
-
-extras = mctp-util.o
+utils = mctp mctp-req mctp-echo
+extras = mctp-util.o mctp-netlink.o
+binaries = mctpd $(utils)
 
 .PHONY: all
-all: $(binaries)
+all: $(utils)
 
 .PHONY: clean
 clean:
