@@ -25,11 +25,11 @@ static const size_t DEFAULT_LEN = 1;
 /* lladdrlen != -1 to ignore ifindex/lladdr */
 static int mctp_req(unsigned int net, mctp_eid_t eid,
 	unsigned int ifindex, uint8_t *lladdr, int lladdrlen,
-	size_t len)
+	uint8_t *data, size_t len)
 {
 	struct _sockaddr_mctp_ext addr;
+	unsigned char *buf, *rxbuf;
 	socklen_t addrlen;
-	unsigned char *buf;
 	int rc, sd;
 	size_t i;
 
@@ -47,11 +47,16 @@ static int mctp_req(unsigned int net, mctp_eid_t eid,
 	printf("req:  sending to (net %d, eid %d), type %d\n",
 		net, eid, addr.smctp_type);
 
-	buf = malloc(len);
-	if (!buf)
+	rxbuf = malloc(len);
+	if (!rxbuf)
 		err(EXIT_FAILURE, "malloc");
-	for (i = 0; i < len; i++)
-		buf[i] = i & 0xff;
+	if (data) {
+		buf = data;
+	} else {
+		buf = rxbuf;
+		for (i = 0; i < len; i++)
+			buf[i] = i & 0xff;
+	}
 
 	/* extended addressing */
 	if (lladdrlen != -1) {
@@ -72,7 +77,7 @@ static int mctp_req(unsigned int net, mctp_eid_t eid,
 
 	/* receive response */
 	addrlen = sizeof(addr);
-	rc = recvfrom(sd, buf, len, MSG_TRUNC,
+	rc = recvfrom(sd, rxbuf, len, MSG_TRUNC,
 			(struct sockaddr *)&addr, &addrlen);
 	if (rc < 0)
 		err(EXIT_FAILURE, "recvfrom");
@@ -90,7 +95,7 @@ static int mctp_req(unsigned int net, mctp_eid_t eid,
 	printf("req:  message from (net %d, eid %d) type %d: 0x%02x..\n",
 			addr.smctp_network, addr.smctp_addr.s_addr,
 			addr.smctp_type,
-			buf[0]);
+			rxbuf[0]);
 	if (addrlen == sizeof(struct _sockaddr_mctp_ext)) {
 		printf("      ext ifindex %d ha[0]=0x%02x len %hhu\n",
 			addr.smctp_ifindex,
@@ -98,11 +103,12 @@ static int mctp_req(unsigned int net, mctp_eid_t eid,
 	}
 
 	for (i = 0; i < len; i++) {
-		if (buf[i] != (i & 0xff))
+		uint8_t exp = data ? data[i] : i & 0xff;
+		if (rxbuf[i] != exp)
 			errx(EXIT_FAILURE,
 				"payload mismatch at byte 0x%zx; "
 					"sent 0x%02x, received 0x%02x",
-				i, (unsigned char)(i & 0xff), buf[i]);
+				i, exp, rxbuf[i]);
 	}
 
 	return 0;
@@ -117,13 +123,13 @@ static void usage(void)
 
 int main(int argc, char ** argv)
 {
+	uint8_t *data, lladdr[MAX_ADDR_LEN];
+	int lladdrlen = -1, datalen = -1;
 	unsigned int net = DEFAULT_NET;
 	mctp_eid_t eid = DEFAULT_EID;
 	size_t len = DEFAULT_LEN, sz;
 	char *endp, *optname, *optval;
 	unsigned int tmp, ifindex;
-	int lladdrlen = -1;
-	uint8_t lladdr[MAX_ADDR_LEN];
 	bool valid_parse;
 	int i;
 
@@ -132,6 +138,8 @@ int main(int argc, char ** argv)
 		usage();
 		return 255;
 	}
+
+	data = NULL;
 
 	for (i = 1; i < argc; i += 2) {
 		optname = argv[i];
@@ -154,6 +162,16 @@ int main(int argc, char ** argv)
 			if (tmp > 64 * 1024)
 				errx(EXIT_FAILURE, "Bad len");
 			len = tmp;
+		} else if (!strcmp(optname, "data")) {
+			sz = (strlen(optval) + 2) / 3;
+			data = malloc(sz);
+			if (!data)
+				err(EXIT_FAILURE, "malloc");
+			if (parse_hex_addr(optval, data, &sz)) {
+				errx(EXIT_FAILURE, "Bad data");
+			}
+			datalen = sz;
+			valid_parse = true;
 		} else if (!strcmp(optname, "lladdr")) {
 			sz = sizeof(lladdr);
 			if (parse_hex_addr(optval, lladdr, &sz)) {
@@ -171,5 +189,8 @@ int main(int argc, char ** argv)
 		}
 	}
 
-	return mctp_req(net, eid, ifindex, lladdr, lladdrlen, len);
+	if (data)
+		len = datalen;
+
+	return mctp_req(net, eid, ifindex, lladdr, lladdrlen, data, len);
 }
