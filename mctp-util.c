@@ -2,6 +2,7 @@
 #include <string.h>
 #include <ctype.h>
 #include <stdlib.h>
+#include <errno.h>
 
 #include "mctp-util.h"
 
@@ -40,6 +41,32 @@ void print_hex_addr(const uint8_t *data, size_t len)
         }
         printf("%02x", data[i]);
     }
+}
+
+int write_hex_addr(const uint8_t *data, size_t len, char* dest, size_t dest_len)
+{
+    size_t l;
+    if (dest_len < len*3) {
+        snprintf(dest, dest_len, "XXXX");
+        return -EINVAL;
+    }
+
+    dest[0] = '\0';
+    for (size_t i = 0; i < len; i++) {
+        if (i > 0) {
+            l = snprintf(dest, dest_len, ":");
+            if (l >= dest_len)
+                return -EPROTO;
+            dest_len -= l;
+            dest += l;
+        }
+        l = snprintf(dest, dest_len, "%02x", data[i]);
+        if (l >= dest_len)
+            return -EPROTO;
+        dest_len -= l;
+        dest += l;
+    }
+    return 0;
 }
 
 // Accepts colon separated hex bytes

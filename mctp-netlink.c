@@ -19,17 +19,17 @@
 #include "mctp-util.h"
 
 struct linkmap_entry {
-	int ifindex;
-	char    ifname[IFNAMSIZ+1];
-	int net;
+	int	ifindex;
+	char	ifname[IFNAMSIZ+1];
+	int	net;
 };
 
 struct mctp_nl {
-	int         sd;
-	struct linkmap_entry    *linkmap;
-	int         linkmap_count;
-	int         linkmap_alloc;
-	bool        verbose;
+	int	sd;
+	struct linkmap_entry *linkmap;
+	int	linkmap_count;
+	int	linkmap_alloc;
+	bool	verbose;
 };
 
 #define max(a, b) ((a) > (b) ? (a) : (b))
