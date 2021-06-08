@@ -27,8 +27,8 @@ struct linkmap_entry {
 struct mctp_nl {
 	int	sd;
 	struct linkmap_entry *linkmap;
-	int	linkmap_count;
-	int	linkmap_alloc;
+	size_t	linkmap_count;
+	size_t	linkmap_alloc;
 	bool	verbose;
 };
 
@@ -469,7 +469,7 @@ static int fill_linkmap(mctp_nl *nl)
 
 void mctp_nl_linkmap_dump(const mctp_nl *nl)
 {
-	int i;
+	size_t i;
 
 	printf("linkmap\n");
 	for (i = 0; i < nl->linkmap_count; i++) {
@@ -481,7 +481,7 @@ void mctp_nl_linkmap_dump(const mctp_nl *nl)
 
 int mctp_nl_ifindex_byname(const mctp_nl *nl, const char *ifname)
 {
-	int i;
+	size_t i;
 
 	for (i = 0; i < nl->linkmap_count; i++) {
 		struct linkmap_entry *entry = &nl->linkmap[i];
@@ -494,7 +494,7 @@ int mctp_nl_ifindex_byname(const mctp_nl *nl, const char *ifname)
 
 const char* mctp_nl_if_byindex(const mctp_nl *nl, int index)
 {
-	int i;
+	size_t i;
 
 	for (i = 0; i < nl->linkmap_count; i++) {
 		struct linkmap_entry *entry = &nl->linkmap[i];
@@ -508,7 +508,7 @@ const char* mctp_nl_if_byindex(const mctp_nl *nl, int index)
 
 int mctp_nl_net_byindex(const mctp_nl *nl, int index)
 {
-	int i;
+	size_t i;
 
 	for (i = 0; i < nl->linkmap_count; i++) {
 		struct linkmap_entry *entry = &nl->linkmap[i];
@@ -518,6 +518,39 @@ int mctp_nl_net_byindex(const mctp_nl *nl, int index)
 	}
 
 	return 0;
+}
+
+int *mctp_nl_net_list(const mctp_nl *nl, size_t *ret_num_nets)
+{
+	size_t i, j;
+	int *nets = NULL;
+
+	*ret_num_nets = 0;
+	// allocation may be oversized, that's OK
+	nets = malloc(sizeof(int) * nl->linkmap_count);
+	if (!nets) {
+		warnx("Allocation failed");
+		return NULL;
+	}
+	for (j = 0; j < nl->linkmap_count; j++) {
+		nets[j] = -1;
+	}
+
+	for (i = 0; i < nl->linkmap_count; i++) {
+		for (j = 0; j < nl->linkmap_count; j++) {
+			if (nets[j] == nl->linkmap[i].net) {
+				// Already added
+				break;
+			}
+			if (nets[j] == -1) {
+				// End of the list, add it
+				nets[j] = nl->linkmap[i].net;
+				(*ret_num_nets)++;
+				break;
+			}
+		}
+	}
+	return nets;
 }
 
 static int linkmap_add_entry(mctp_nl *nl, struct ifinfomsg *info,
@@ -530,6 +563,11 @@ static int linkmap_add_entry(mctp_nl *nl, struct ifinfomsg *info,
 
 	if (ifname_len > IFNAMSIZ) {
 		warnx("linkmap, too long ifname '%*s'", (int)ifname_len, ifname);
+		return -1;
+	}
+
+	if (net < 0) {
+		warnx("Can't have negative network ID %d for %*s", net, (int)ifname_len, ifname);
 		return -1;
 	}
 
