@@ -40,6 +40,10 @@ static mctp_eid_t eid_alloc_max = 0xfe;
 // arbitrary sanity, also ensures net_eids.peeridx fits int32
 static size_t MAX_PEER_SIZE = 1000000;
 
+static const uint8_t RQDI_REQ = 1<<7;
+static const uint8_t RQDI_RESP = 0;
+static const uint8_t RQDI_MASK = 0xc0;
+
 struct dest_phys {
 	int ifindex;
 	const uint8_t *hwaddr;
@@ -52,6 +56,10 @@ struct net_eids {
 	int net;
 	// EID mappings, an index into ctx->peers. Value -1 is unused.
 	int32_t peeridx[0xff];
+
+	mctp_eid_t eid_busowner;
+	uint8_t hwaddr_busowner[MAX_ADDR_LEN];
+	uint8_t hwaddr_len_busowner;
 };
 typedef struct net_eids net_eids;
 
@@ -215,6 +223,8 @@ int read_message(ctx *ctx, int sd, uint8_t **ret_buf, size_t *ret_buf_size,
 	ssize_t len;
 	uint8_t* buf = NULL;
 	size_t buf_size;
+	// struct iovec v;
+	// struct msghdr msg = {0};
 
 	len = recvfrom(sd, NULL, 0, MSG_PEEK | MSG_TRUNC, NULL, 0);
 	if (len < 0) {
@@ -233,6 +243,13 @@ int read_message(ctx *ctx, int sd, uint8_t **ret_buf, size_t *ret_buf_size,
 	addrlen = sizeof(struct _sockaddr_mctp_ext);
 	memset(ret_addr, 0x0, addrlen);
 	// skip the initial prefix byte
+	// msg.msg_name = ret_addr;
+	// msg.msg_namelen = sizeof(struct _sockaddr_mctp_ext);
+	// msg.msg_iov = &v;
+	// msg.msg_iovlen = 1;
+	// v.iov_base = buf+1;
+	// v.iov_len = buf_size-1
+	// len = recvmsg(sd, &msg, MSG_TRUNC);
 	len = recvfrom(sd, buf+1, buf_size-1, MSG_TRUNC, (struct sockaddr *)ret_addr,
 		&addrlen);
 	if (len < 0) {
@@ -244,13 +261,17 @@ int read_message(ctx *ctx, int sd, uint8_t **ret_buf, size_t *ret_buf_size,
 		rc = -EPROTO;
 		goto out;
 	}
-	if (addrlen == sizeof(struct _sockaddr_mctp)) {
-		// TODO: fatal? but sendto() would have failed earlier anyway
-		warnx("Kernel doesn't support MCTP extended addressing");
-	} else if (addrlen != sizeof(struct _sockaddr_mctp_ext)) {
+	if (addrlen != sizeof(struct _sockaddr_mctp_ext)) {
 		warnx("Unexpected address size %u.", addrlen);
 		rc = -EPROTO;
 		goto out;
+	}
+
+	if (ctx->verbose) {
+		warnx("read_message got from %s type 0x%02x, len %zu",
+			ext_addr_tostr(ret_addr),
+			ret_addr->smctp_type,
+			buf_size);
 	}
 
 	// populate it for good measure
@@ -268,6 +289,52 @@ out:
 	return rc;
 }
 
+int handle_control_set_endpoint_id(ctx *ctx,
+	int sd, struct _sockaddr_mctp_ext *addr,
+	const uint8_t *buf, const size_t buf_size)
+{
+	struct mctp_ctrl_cmd_set_eid *req = NULL;
+	struct mctp_ctrl_resp_set_eid respi, *resp = &respi;
+	size_t resp_len, send_len;
+	uint8_t *send_ptr = NULL;
+	ssize_t len;
+
+	if (buf_size < sizeof(*req)) {
+		warnx("short Set Endpoint ID message");
+		return -ENOMSG;
+	}
+
+	req = (void*)buf;
+
+	resp->ctrl_hdr.command_code = req->ctrl_msg_hdr.command_code;
+	resp->ctrl_hdr.rq_dgram_inst = RQDI_RESP;
+	resp->completion_code = 0;
+	resp->status = 0x01 << 4; // Already assigned
+	resp->eid_set = 161; // XXX TODO
+	resp->eid_pool_size = 0;
+	resp_len = sizeof(struct mctp_ctrl_resp_set_eid);
+
+	// TODO:
+	// Special case because the request destination was 0x00 but our response
+	// is from a real eid.
+	addr->smctp_tag |= MCTP_TAG_OWNER;
+
+	send_len = resp_len - 1;
+	send_ptr = (uint8_t*)resp + 1;
+	len = sendto(sd, send_ptr, send_len, 0, 
+		(struct sockaddr*)addr, sizeof(struct _sockaddr_mctp_ext));
+	if (len < 0) {
+		return -errno;
+	}
+
+	if ((size_t)len != send_len) {
+		warnx("BUG: short sendto %zd, expected %zu", len, send_len);
+		return -EPROTO;
+	}
+
+	return 0;
+}
+
 int handle_control_get_version_support(ctx *ctx, 
 	int sd, const struct _sockaddr_mctp_ext *addr,
 	const uint8_t *buf, const size_t buf_size)
@@ -277,7 +344,8 @@ int handle_control_get_version_support(ctx *ctx,
 	uint32_t version;
 	// space for a single version
 	uint8_t buffer[sizeof(*resp) + sizeof(version)];
-	size_t resp_len;
+	size_t resp_len, send_len;
+	uint8_t *send_ptr = NULL;
 	ssize_t len;
 
 	if (buf_size < sizeof(struct mctp_ctrl_cmd_get_mctp_ver_support)) {
@@ -297,6 +365,8 @@ int handle_control_get_version_support(ctx *ctx,
 	}
 
 	resp = (void*)buffer;
+	resp->ctrl_hdr.command_code = req->ctrl_msg_hdr.command_code;
+	resp->ctrl_hdr.rq_dgram_inst = RQDI_RESP;
 
 	if (version == 0) {
 		resp->completion_code = 0x80;
@@ -309,14 +379,16 @@ int handle_control_get_version_support(ctx *ctx,
 		*((uint32_t*)(resp+1)) = htonl(version);
 	}
 
-	len = sendto(sd, resp, resp_len, 0, 
+	send_len = resp_len - 1;
+	send_ptr = (uint8_t*)resp + 1;
+	len = sendto(sd, send_ptr, send_len, 0, 
 		(struct sockaddr*)addr, sizeof(struct _sockaddr_mctp_ext));
 	if (len < 0) {
 		return -errno;
 	}
 
-	if ((size_t)len != resp_len) {
-		warnx("BUG: short sendto %zd, expected %zu", len, resp_len);
+	if ((size_t)len != send_len) {
+		warnx("BUG: short sendto %zd, expected %zu", len, send_len);
 		return -EPROTO;
 	}
 
@@ -331,6 +403,7 @@ static int cb_listen_control_msg(sd_event_source *s, int sd, uint32_t revents, v
 	size_t buf_size;
 	struct mctp_ctrl_msg_hdr *ctrl_msg = NULL;
 	int rc;
+
 
 	rc = read_message(ctx, sd, &buf, &buf_size, &addr);
 	if (rc < 0)
@@ -349,10 +422,18 @@ static int cb_listen_control_msg(sd_event_source *s, int sd, uint32_t revents, v
 		goto out;
 	}
 
+	addr.smctp_tag &= ~MCTP_TAG_OWNER;
 	ctrl_msg = (void*)buf;
 	switch (ctrl_msg->command_code) {
 		case MCTP_CTRL_CMD_GET_VERSION_SUPPORT:
 			rc = handle_control_get_version_support(ctx, sd, &addr, buf, buf_size);
+			break;
+		case MCTP_CTRL_CMD_SET_ENDPOINT_ID:
+			if ((ctrl_msg->rq_dgram_inst & RQDI_MASK) == RQDI_REQ) {
+				rc = handle_control_set_endpoint_id(ctx, sd, &addr, buf, buf_size);
+			} else {
+				rc = handle_control_set_endpoint_id_resp(ctx, sd, &addr, buf, buf_size);
+			}
 			break;
 		default:
 			if (ctx->verbose) {
@@ -375,7 +456,7 @@ out:
 static int listen_control_msg(ctx *ctx, int net)
 {
 	struct _sockaddr_mctp addr;
-	int rc, sd = -1;
+	int rc, sd = -1, val;
 
 	sd = socket(AF_MCTP, SOCK_DGRAM, 0);
 	if (sd < 0) {
@@ -397,6 +478,15 @@ static int listen_control_msg(ctx *ctx, int net)
 		goto out;
 	}
 
+	/* TODO: level is arbitrary */
+	val = 1;
+	rc = setsockopt(sd, SOL_SOCKET+1, MCTP_OPT_ADDR_EXT, &val, sizeof(val));
+	if (rc < 0) {
+		rc = -errno;
+		warn("Kernel does not support MCTP extended addressing");
+		goto out;
+	}
+
 	rc = sd_event_add_io(ctx->event, NULL, sd, EPOLLIN, cb_listen_control_msg, ctx);
 	return rc;
 out:
@@ -414,7 +504,7 @@ static int endpoint_query_phys(ctx *ctx, const dest_phys *dest,
 	uint8_t **resp, size_t *resp_len, struct _sockaddr_mctp_ext *resp_addr)
 {
 	struct _sockaddr_mctp_ext addr = {0};
-	int sd = -1;
+	int sd = -1, val;
 	ssize_t rc;
 	uint8_t *send_ptr = NULL;
 	size_t send_len, buf_size;
@@ -428,6 +518,15 @@ static int endpoint_query_phys(ctx *ctx, const dest_phys *dest,
 	if (sd < 0) {
 		warn("socket");
 		rc = -errno;
+		goto out;
+	}
+
+	/* TODO: level is arbitrary */
+	val = 1;
+	rc = setsockopt(sd, SOL_SOCKET+1, MCTP_OPT_ADDR_EXT, &val, sizeof(val));
+	if (rc < 0) {
+		rc = -errno;
+		warn("Kernel does not support MCTP extended addressing");
 		goto out;
 	}
 
@@ -520,8 +619,9 @@ static int endpoint_send_get_mctp_version(ctx *ctx, const dest_phys *dest,
 	memset(ret_version, 0x0, sizeof(*ret_version));
 	*ret_supported = false;
 
-	req.ctrl_msg_hdr.rq_dgram_inst = 1<<7;
+	req.ctrl_msg_hdr.rq_dgram_inst = RQDI_REQ;
 	req.ctrl_msg_hdr.command_code = MCTP_CTRL_CMD_GET_VERSION_SUPPORT;
+	req.msg_type_number = query_type;
 	rc = endpoint_query_phys(ctx, dest, MCTP_CTRL_HDR_MSG_TYPE, &req, sizeof(req),
 		&buf, &buf_size, &addr);
 	if (rc < 0)
@@ -578,7 +678,7 @@ static int endpoint_send_set_endpoint_id(ctx *ctx, struct peer *peer,
 
 	rc = -1;
 
-	req.ctrl_msg_hdr.rq_dgram_inst = 1<<7;
+	req.ctrl_msg_hdr.rq_dgram_inst = RQDI_REQ;
 	req.ctrl_msg_hdr.command_code = MCTP_CTRL_CMD_SET_ENDPOINT_ID;
 	req.operation = 0; // 00b Set EID. TODO: do we want Force?
 	req.eid = peer->eid;
@@ -698,7 +798,7 @@ static peer *add_peer(ctx *ctx, const dest_phys *dest, mctp_eid_t eid, int net)
 	peer->state = NEW;
 
 	// Update network eid map
-	n->peeridx[eid] = eid;
+	n->peeridx[eid] = idx;
 
 	return peer;
 }
@@ -731,7 +831,8 @@ static int check_peer_struct(const ctx *ctx, const peer *peer, const struct net_
 	return 0;
 }
 
-static int remove_peer(ctx *ctx, peer *peer) {
+static int remove_peer(ctx *ctx, peer *peer)
+{
 	net_eids *n = NULL;
 
 	if (peer->state == UNUSED) {
@@ -857,28 +958,28 @@ static int configure_peer(ctx *ctx, sd_bus_error *berr, const dest_phys *dest, p
 
 	*ret_peer = NULL;
 
-	rc = endpoint_send_get_mctp_version(ctx, dest, 0xff, &supported, &min_version);
-	if (rc == -ETIMEDOUT) {
-		sd_bus_error_setf(berr, SD_BUS_ERROR_TIMEOUT,
-			"No response from %s", dest_phys_tostr(dest));
-		return rc;
-	} else if (rc < 0) {
-		sd_bus_error_setf(berr, SD_BUS_ERROR_NO_SERVER,
-			"Bad response from %s", dest_phys_tostr(dest));
-		return rc;
-	}
-
-	if (!supported) {
-		// Just warn and keep going
-		warn("Incongruous response, no MCTP support from %s", dest_phys_tostr(dest));
-	}
-
-	// TODO: disregard mismatch for now
-	if ((min_version.major & 0xf) != 0x01)
-			warn("Unexpected version 0x%08x from %s", version_val(&min_version),
-				dest_phys_tostr(dest));
-
 	rc = endpoint_assign_eid(ctx, berr, dest, ret_peer);
+
+	// rc = endpoint_send_get_mctp_version(ctx, dest, 0xff, &supported, &min_version);
+	// if (rc == -ETIMEDOUT) {
+	// 	sd_bus_error_setf(berr, SD_BUS_ERROR_TIMEOUT,
+	// 		"No response from %s", dest_phys_tostr(dest));
+	// 	return rc;
+	// } else if (rc < 0) {
+	// 	sd_bus_error_setf(berr, SD_BUS_ERROR_NO_SERVER,
+	// 		"Bad response from %s", dest_phys_tostr(dest));
+	// 	return rc;
+	// }
+
+	// if (!supported) {
+	// 	// Just warn and keep going
+	// 	warn("Incongruous response, no MCTP support from %s", dest_phys_tostr(dest));
+	// }
+
+	// // TODO: disregard mismatch for now
+	// if ((min_version.major & 0xf) != 0x01)
+	// 		warn("Unexpected version 0x%08x from %s", version_val(&min_version),
+	// 			dest_phys_tostr(dest));
 
 	return rc;
 }
@@ -1098,6 +1199,12 @@ int setup_nets(ctx *ctx)
 			ctx->nets[i].peeridx[j] = -1;
 		}
 	}
+
+	ctx->num_nets = num_nets;
+	if (ctx->verbose) {
+		mctp_nl_linkmap_dump(ctx->nl);
+	}
+
 	rc = 0;
 out:
 	free(netlist);
