@@ -1,3 +1,16 @@
+/* SPDX-License-Identifier: GPL-2.0 */
+/*
+
+ * mctpd: bus owner for MCTP using Linux kernel
+ *
+ * Copyright (c) 2021 Code Construct
+ * Copyright (c) 2021 Google
+ */
+
+#define _GNU_SOURCE
+
+#include <sys/socket.h>
+#include <arpa/inet.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -5,7 +18,7 @@
 #include <string.h>
 #include <err.h>
 #include <errno.h>
-#include <sys/socket.h>
+#include <getopt.h>
 
 #include <systemd/sd-event.h>
 #include <systemd/sd-bus.h>
@@ -78,7 +91,8 @@ struct ctx {
 	uint64_t mctp_timeout;
 
 	// Verbose logging
-	bool debug;
+	bool verbose;
+	bool testing;
 };
 typedef struct ctx ctx;
 
@@ -110,13 +124,29 @@ static const char* dest_phys_tostr(const dest_phys *dest)
 	return dfree(buf);
 }
 
-static int defer_free_handler(sd_event_source *s, void *userdata) {
+static const char* ext_addr_tostr(const struct _sockaddr_mctp_ext *addr)
+{
+	char hex[MAX_ADDR_LEN*4];
+	char* buf;
+	size_t l = 100;
+	buf = malloc(l);
+
+	write_hex_addr(addr->smctp_haddr, addr->smctp_halen, hex, sizeof(hex));
+	snprintf(buf, l, "sockaddr_mctp_ext eid %d net %d if %d hw len %hhu 0x%s",
+		addr->smctp_addr.s_addr, addr->smctp_network, addr->smctp_ifindex,
+		addr->smctp_halen, hex);
+	return dfree(buf);
+}
+
+static int defer_free_handler(sd_event_source *s, void *userdata)
+{
 	free(userdata);
 	return 0;
 }
 
 /* Returns ptr, frees it on the next default event loop cycle (defer)*/
-static void* dfree(void* ptr) {
+static void* dfree(void* ptr)
+{
 	sd_event *e;
 	int rc;
 	rc = sd_event_default(&e);
@@ -134,11 +164,14 @@ static void* dfree(void* ptr) {
 
 static int cb_exit_loop_io(sd_event_source *s, int fd, uint32_t revents, void *userdata)
 {
-	return sd_event_exit(sd_event_source_get_event(s), 0);
+	sd_event_exit(sd_event_source_get_event(s), 0);
+	return 0;
 }
 
-static int cb_exit_loop_timeout(sd_event_source *s, uint64_t usec, void *userdata) {
-	return sd_event_exit(sd_event_source_get_event(s), -ETIMEDOUT);
+static int cb_exit_loop_timeout(sd_event_source *s, uint64_t usec, void *userdata)
+{
+	sd_event_exit(sd_event_source_get_event(s), -ETIMEDOUT);
+	return 0;
 }
 
 /* Events are EPOLLIN, EPOLLOUT etc.
@@ -148,6 +181,7 @@ int wait_fd_timeout(int fd, short events, uint64_t timeout_usec)
 	int rc;
 	sd_event *ev = NULL;
 
+	// Create a new event loop just for the event+timeout
 	rc = sd_event_new(&ev);
 	if (rc < 0)
 		goto out;
@@ -170,6 +204,208 @@ out:
 	return rc;
 }
 
+/* Returns the message from a socket.
+   The first byte is filled with the message type byte.
+   ret_buf is allocated, should be freed by the caller */
+int read_message(ctx *ctx, int sd, uint8_t **ret_buf, size_t *ret_buf_size,
+		struct _sockaddr_mctp_ext *ret_addr)
+{
+	int rc;
+	socklen_t addrlen;
+	ssize_t len;
+	uint8_t* buf = NULL;
+	size_t buf_size;
+
+	len = recvfrom(sd, NULL, 0, MSG_PEEK | MSG_TRUNC, NULL, 0);
+	if (len < 0) {
+		rc = -errno;
+		goto out;
+	}
+
+	// +1 for space for addition type prefix byte
+	buf_size = len+1;
+	buf = malloc(buf_size);
+	if (!buf) {
+		rc = -ENOMEM;
+		goto out;
+	}
+
+	addrlen = sizeof(struct _sockaddr_mctp_ext);
+	memset(ret_addr, 0x0, addrlen);
+	// skip the initial prefix byte
+	len = recvfrom(sd, buf+1, buf_size-1, MSG_TRUNC, (struct sockaddr *)ret_addr,
+		&addrlen);
+	if (len < 0) {
+		rc = -errno;
+		goto out;
+	}
+	if ((size_t)len != buf_size-1) {
+		warnx("BUG: incorrect recvfrom %zd, expected %zu", len, buf_size-1);
+		rc = -EPROTO;
+		goto out;
+	}
+	if (addrlen == sizeof(struct _sockaddr_mctp)) {
+		// TODO: fatal? but sendto() would have failed earlier anyway
+		warnx("Kernel doesn't support MCTP extended addressing");
+	} else if (addrlen != sizeof(struct _sockaddr_mctp_ext)) {
+		warnx("Unexpected address size %u.", addrlen);
+		rc = -EPROTO;
+		goto out;
+	}
+
+	// populate it for good measure
+	buf[0] = ret_addr->smctp_type;
+	*ret_buf = buf;
+	*ret_buf_size = buf_size;
+	rc = 0;
+out:
+	if (rc < 0) {
+		if (ctx->verbose) {
+			warnx("read_message returned error: %s", strerror(-rc));
+		}
+		free(buf);
+	}
+	return rc;
+}
+
+int handle_control_get_version_support(ctx *ctx, 
+	int sd, const struct _sockaddr_mctp_ext *addr,
+	const uint8_t *buf, const size_t buf_size)
+{
+	struct mctp_ctrl_cmd_get_mctp_ver_support *req = NULL;
+	struct mctp_ctrl_resp_get_mctp_ver_support *resp = NULL;
+	uint32_t version;
+	// space for a single version
+	uint8_t buffer[sizeof(*resp) + sizeof(version)];
+	size_t resp_len;
+	ssize_t len;
+
+	if (buf_size < sizeof(struct mctp_ctrl_cmd_get_mctp_ver_support)) {
+		warnx("short Get Version Support message");
+		return -ENOMSG;
+	}
+
+	req = (void*)buf;
+	// TODO: check these version numbers
+	switch (req->msg_type_number) {
+		case 0xff: // Base Protocol
+		case 0x00: // Control protocol
+			version = 0xf1f3f100; // 1.3.1
+			break;
+		default:
+			version = 0;
+	}
+
+	resp = (void*)buffer;
+
+	if (version == 0) {
+		resp->completion_code = 0x80;
+		resp->number_of_entries = 0;
+		resp_len = sizeof(*resp);
+	} else {
+		resp->completion_code = 0x00;
+		resp->number_of_entries = 1;
+		resp_len = sizeof(*resp) + sizeof(version);
+		*((uint32_t*)(resp+1)) = htonl(version);
+	}
+
+	len = sendto(sd, resp, resp_len, 0, 
+		(struct sockaddr*)addr, sizeof(struct _sockaddr_mctp_ext));
+	if (len < 0) {
+		return -errno;
+	}
+
+	if ((size_t)len != resp_len) {
+		warnx("BUG: short sendto %zd, expected %zu", len, resp_len);
+		return -EPROTO;
+	}
+
+	return 0;
+}
+
+static int cb_listen_control_msg(sd_event_source *s, int sd, uint32_t revents, void *userdata)
+{
+	struct _sockaddr_mctp_ext addr = {0};
+	ctx *ctx = userdata;
+	uint8_t *buf = NULL;
+	size_t buf_size;
+	struct mctp_ctrl_msg_hdr *ctrl_msg = NULL;
+	int rc;
+
+	rc = read_message(ctx, sd, &buf, &buf_size, &addr);
+	if (rc < 0)
+		goto out;
+
+	if (addr.smctp_type != MCTP_CTRL_HDR_MSG_TYPE) {
+		warnx("BUG: Wrong message type for listen socket");
+		rc = -EINVAL;
+		goto out;
+	}
+
+	if (buf_size < sizeof(struct mctp_ctrl_msg_hdr)) {
+		warnx("Short message %zu bytes from %s",
+			buf_size, ext_addr_tostr(&addr));
+		rc = -EINVAL;
+		goto out;
+	}
+
+	ctrl_msg = (void*)buf;
+	switch (ctrl_msg->command_code) {
+		case MCTP_CTRL_CMD_GET_VERSION_SUPPORT:
+			rc = handle_control_get_version_support(ctx, sd, &addr, buf, buf_size);
+			break;
+		default:
+			if (ctx->verbose) {
+				warnx("Ignoring unsupported command code 0x%02x",
+					ctrl_msg->command_code);
+				rc = -ENOTSUP;
+			}
+	}
+
+	if (ctx->verbose && rc < 0) {
+		warnx("Error handling command code %02x from %s: %s",
+			ctrl_msg->command_code, ext_addr_tostr(&addr), strerror(-rc));
+	}
+
+out:
+	free(buf);
+	return 0;
+}
+
+static int listen_control_msg(ctx *ctx, int net)
+{
+	struct _sockaddr_mctp addr;
+	int rc, sd = -1;
+
+	sd = socket(AF_MCTP, SOCK_DGRAM, 0);
+	if (sd < 0) {
+		rc = -errno;
+		warn("%s: socket() failed", __func__);
+		goto out;
+	}
+
+	addr.smctp_family = AF_MCTP;
+	addr.smctp_network = net;
+	addr.smctp_addr.s_addr = MCTP_ADDR_ANY;
+	addr.smctp_type = MCTP_CTRL_HDR_MSG_TYPE;
+	addr.smctp_tag = MCTP_TAG_OWNER;
+
+	rc = bind(sd, (struct sockaddr *)&addr, sizeof(addr));
+	if (rc < 0) {
+		rc = -errno;
+		warn("%s: bind() failed", __func__);
+		goto out;
+	}
+
+	rc = sd_event_add_io(ctx->event, NULL, sd, EPOLLIN, cb_listen_control_msg, ctx);
+	return rc;
+out:
+	if (rc < 0) {
+		close(sd);
+	}
+	return rc;
+}
+
 /* req and resp buffers include the initial message type byte.
  * This is ignored, the addr.smctp_type is used instead.
  */
@@ -177,8 +413,7 @@ static int endpoint_query_phys(ctx *ctx, const dest_phys *dest,
 	uint8_t req_type, const void* req, size_t req_len,
 	uint8_t **resp, size_t *resp_len, struct _sockaddr_mctp_ext *resp_addr)
 {
-	struct _sockaddr_mctp_ext addr;
-	socklen_t addrlen;
+	struct _sockaddr_mctp_ext addr = {0};
 	int sd = -1;
 	ssize_t rc;
 	uint8_t *send_ptr = NULL;
@@ -186,13 +421,16 @@ static int endpoint_query_phys(ctx *ctx, const dest_phys *dest,
 
 	uint8_t* buf = NULL;
 
+	*resp = NULL;
+	*resp_len = 0;
 
 	sd = socket(AF_MCTP, SOCK_DGRAM, 0);
-	if (sd < 0)
-		err(EXIT_FAILURE, "socket");
+	if (sd < 0) {
+		warn("socket");
+		rc = -errno;
+		goto out;
+	}
 
-	memset(&addr, 0x0, sizeof(addr));
-	addrlen = sizeof(struct _sockaddr_mctp_ext);
 	addr.smctp_family = AF_MCTP;
 	addr.smctp_network = 0;
 	addr.smctp_addr.s_addr = 0;
@@ -215,6 +453,10 @@ static int endpoint_query_phys(ctx *ctx, const dest_phys *dest,
 			sizeof(struct _sockaddr_mctp_ext));
 	if (rc < 0) {
 		rc = -errno;
+		if (ctx->verbose) {
+			warnx("%s: sendto() to %s returned %s", __func__,
+				dest_phys_tostr(dest), strerror(errno));
+		}
 		goto out;
 	}
 	if ((size_t)rc != send_len) {
@@ -224,37 +466,18 @@ static int endpoint_query_phys(ctx *ctx, const dest_phys *dest,
 	}
 
 	rc = wait_fd_timeout(sd, EPOLLIN, ctx->mctp_timeout);
-	if (rc < 0)
-		goto out;
-
-	rc = recvfrom(sd, NULL, 0, MSG_PEEK | MSG_TRUNC, NULL, 0);
 	if (rc < 0) {
-		rc = -errno;
+		if (rc == -ETIMEDOUT && ctx->verbose) {
+			warnx("%s: receive timed out from %s", __func__,
+				dest_phys_tostr(dest));
+		}
 		goto out;
 	}
 
-	// +1 for space for addition type prefix byte
-	buf_size = rc+1;
-	buf = malloc(buf_size);
-	if (!buf) {
-		rc = -ENOMEM;
+	rc = read_message(ctx, sd, &buf, &buf_size, resp_addr);
+	if (rc < 0) {
 		goto out;
 	}
-
-	addrlen = sizeof(struct _sockaddr_mctp_ext);
-	memset(resp_addr, 0x0, addrlen);
-	// skip the initial prefix byte
-	rc = recvfrom(sd, buf+1, buf_size-1, MSG_TRUNC, (struct sockaddr *)&resp_addr,
-		&addrlen);
-	if (rc < 0)
-		return -errno;
-	if ((size_t)rc != buf_size-1) {
-		warnx("BUG: incorrect recvfrom %zd, expected %zu", rc, buf_size-1);
-		return -EPROTO;
-	}
-
-	// populate it for good measure
-	buf[0] = resp_addr->smctp_type;
 
 	if (resp_addr->smctp_type != req_type) {
 		warnx("Mismatching response type %d for request type %d. dest %s",
@@ -266,8 +489,6 @@ static int endpoint_query_phys(ctx *ctx, const dest_phys *dest,
 out:
 	close(sd);
 	if (rc) {
-		*resp = NULL;
-		*resp_len = 0;
 		free(buf);
 	} else {
 		*resp = buf;
@@ -279,7 +500,7 @@ out:
 
 static uint32_t version_val(const struct version_entry *vers)
 {
-	return *((uint32_t*)vers);
+	return ntohl(*((uint32_t*)vers));
 }
 
 /* Returns the min version supported */
@@ -329,7 +550,7 @@ static int endpoint_send_get_mctp_version(ctx *ctx, const dest_phys *dest,
 	/* Entries are in ascending version order */
 	v = (void*)(resp+1);
 	for (i = 0; i < resp->number_of_entries; i++) {
-		if (ctx->debug)
+		if (ctx->verbose)
 			fprintf(stderr, "%s: %s supports 0x%08x\n", __func__, 
 				dest_phys_tostr(dest), version_val(&v[i]));
 		if (i == 0)
@@ -457,6 +678,7 @@ static peer *add_peer(ctx *ctx, const dest_phys *dest, mctp_eid_t eid, int net)
 		if (!tmp)
 			return NULL;
 		ctx->peers = tmp;
+		// Zero the new entries
 		memset(&ctx->peers[ctx->size_peers], 0x0,
 			sizeof(*ctx->peers) * (new_size - ctx->size_peers));
 		ctx->size_peers = new_size;
@@ -502,7 +724,7 @@ static int check_peer_struct(const ctx *ctx, const peer *peer, const struct net_
 
 	if (idx != n->peeridx[peer->eid]) {
 		warnx("BUG: Bad net %d peeridx 0x%x vs 0x%lx",
-			peer->net, n->peeridx[peer->eid], idx);
+			peer->net, n->peeridx[peer->eid], (long)idx);
 		return -1;
 	}
 
@@ -528,6 +750,7 @@ static int remove_peer(ctx *ctx, peer *peer) {
 		return -1;
 	}
 
+	// Clear it
 	n->peeridx[peer->eid] = -1;
 	memset(peer, 0x0, sizeof(struct peer));
 	return 0;
@@ -563,7 +786,8 @@ static int change_peer_eid(ctx *ctx, peer *peer, mctp_eid_t new_eid) {
 	return 0;
 }
 
-static int endpoint_assign_eid(ctx *ctx, sd_bus_error *berr, const dest_phys *dest)
+static int endpoint_assign_eid(ctx *ctx, sd_bus_error *berr, const dest_phys *dest,
+	struct peer **ret_peer)
 {
 	mctp_eid_t e, new_eid;
 	net_eids *n = NULL;
@@ -625,8 +849,7 @@ static int endpoint_assign_eid(ctx *ctx, sd_bus_error *berr, const dest_phys *de
 	return 0;
 }
 
-static int configure_peer(ctx *ctx, sd_bus_error *berr,
-	const dest_phys *dest, peer **ret_peer)
+static int configure_peer(ctx *ctx, sd_bus_error *berr, const dest_phys *dest, peer **ret_peer)
 {
 	int rc;
 	bool supported;
@@ -655,11 +878,9 @@ static int configure_peer(ctx *ctx, sd_bus_error *berr,
 			warn("Unexpected version 0x%08x from %s", version_val(&min_version),
 				dest_phys_tostr(dest));
 
-	rc = endpoint_assign_eid(ctx, berr, dest);
+	rc = endpoint_assign_eid(ctx, berr, dest, ret_peer);
 
-	// rc = endpoint_send_(ctx, dest, 0xff, &supported, &min_version);
-
-	return -ENOSYS;
+	return rc;
 }
 
 int validate_dest_phys(ctx *ctx, const dest_phys *dest)
@@ -691,7 +912,7 @@ static int method_configure_endpoint(sd_bus_message *call, void *data, sd_bus_er
 		return rc;
 
 	dest->ifindex = mctp_nl_ifindex_byname(ctx->nl, ifname);
-	if (dest->ifindex < 0) {
+	if (dest->ifindex <= 0) {
 		return sd_bus_error_setf(berr, SD_BUS_ERROR_INVALID_ARGS,
 			"Unknown MCTP ifname '%s'", ifname);
 	}
@@ -883,12 +1104,55 @@ out:
 	return rc;
 }
 
+static void print_usage(ctx *ctx)
+{
+	fprintf(stderr, "mctpd [-v] [-N]\n");
+	fprintf(stderr, "      -v verbose\n");
+	fprintf(stderr, "      -N testing mode, no MTCP required to start\n");
+}
+
+static int parse_args(ctx *ctx, int argc, char **argv)
+{
+	struct option options[] = {
+		{ .name = "help", .has_arg = no_argument, .val = 'h' },
+		{ .name = "verbose", .has_arg = no_argument, .val = 'v' },
+		{ .name = "testing", .has_arg = no_argument, .val = 'N' },
+		{ 0 },
+	};
+	int c;
+
+	for (;;) {
+		c = getopt_long(argc, argv, "+hvN", options, NULL);
+		if (c == -1)
+			break;
+
+		switch (c) {
+		case 'N':
+			ctx->testing = true;
+			break;
+		case 'v':
+			ctx->verbose = true;
+			break;
+		case 'h':
+		default:
+			print_usage(ctx);
+			return 255;
+		}
+	}
+	return 0;
+}
+
 int main(int argc, char **argv)
 {
 	int rc;
 	ctx ctxi = {0}, *ctx = &ctxi;
 
 	ctx->mctp_timeout = 1000000; // TODO: 1 second
+
+	rc = parse_args(ctx, argc, argv);
+	if (rc != 0) {
+		return rc;
+	}
 
 	ctx->nl = mctp_nl_new(false);
 	if (!ctx->nl) {
@@ -897,13 +1161,21 @@ int main(int argc, char **argv)
 	}
 
 	rc = setup_nets(ctx);
-	if (rc < 0)
+	if (rc < 0 && !ctx->testing)
 		return 1;
 
 	rc = setup_bus(ctx);
 	if (rc < 0) {
 		warnx("Error in setup, returned %s %d", strerror(-rc), rc);
 		return 1;
+	}
+
+	// TODO add net argument
+	rc = listen_control_msg(ctx, MCTP_NET_ANY);
+	if (rc < 0) {
+		warnx("Error in listen, returned %s %d", strerror(-rc), rc);
+		if (!ctx->testing)
+			return 1;
 	}
 
 	rc = sd_event_loop(ctx->event);

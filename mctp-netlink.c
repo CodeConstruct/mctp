@@ -284,27 +284,34 @@ static bool nlmsgs_are_done(struct nlmsghdr *msg, size_t len)
 int mctp_nl_query(mctp_nl *nl, struct nlmsghdr *msg,
 		struct nlmsghdr **respp, size_t *resp_lenp)
 {
-	void *respbuf;
-	struct nlmsghdr *resp;
+	void *respbuf = NULL;
+	struct nlmsghdr *resp = NULL;
 	struct sockaddr_nl addr;
 	socklen_t addrlen;
 	size_t newlen, readlen, pos;
 	bool done;
 	int rc;
 
+	if (respp) {
+		*respp = NULL;
+		*resp_lenp = 0;
+	}
+
 	rc = mctp_nl_send(nl, msg);
 	if (rc)
 		return rc;
 
 	pos = 0;
-	respbuf = NULL;
 	done = false;
 
 	// read all the responses into a single buffer
 	while (!done) {
 		rc = recvfrom(nl->sd, NULL, 0, MSG_PEEK|MSG_TRUNC, NULL, 0);
-		if (rc < 0)
-			err(EXIT_FAILURE, "recvfrom(MSG_PEEK)");
+		if (rc < 0) {
+			warnx("recvfrom(MSG_PEEK)");
+			rc = -errno;
+			goto out;
+		}
 
 		if (rc == 0) {
 			if (pos == 0) {
@@ -320,14 +327,21 @@ int mctp_nl_query(mctp_nl *nl, struct nlmsghdr *msg,
 		newlen = pos + readlen;
 		respbuf = realloc(respbuf, newlen);
 		if (!respbuf)
-			err(EXIT_FAILURE, "allocation of %zu failed", newlen);
+		{
+			warnx("allocation of %zu failed", newlen);
+			rc = -ENOMEM;
+			goto out;
+		}
 		resp = respbuf + pos;
 
 		addrlen = sizeof(addr);
 		rc = recvfrom(nl->sd, resp, readlen, MSG_TRUNC,
 				(struct sockaddr *)&addr, &addrlen);
-		if (rc < 0)
-			err(EXIT_FAILURE, "recvfrom()");
+		if (rc < 0) {
+			warnx("recvfrom(MSG_PEEK)");
+			rc = -errno;
+			goto out;
+		}
 
 		if ((size_t)rc > readlen)
 			warnx("recvfrom: extra message data? (got %d, exp %zd)",
@@ -342,14 +356,16 @@ int mctp_nl_query(mctp_nl *nl, struct nlmsghdr *msg,
 		pos = min(newlen, pos+rc);
 	}
 
-	if (respp) {
+	rc = 0;
+out:
+	if (rc == 0 && respp) {
 		*respp = respbuf;
 		*resp_lenp = pos;
 	} else {
 		free(respbuf);
 	}
 
-	return 0;
+	return rc;
 }
 
 static int parse_getlink_dump(mctp_nl *nl, struct nlmsghdr *nlh, int len)
