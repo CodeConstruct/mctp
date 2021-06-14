@@ -76,8 +76,9 @@ struct peer {
 		// CONFLICT,
 	} state;
 
-	// bitmap of supported message types, from Get Message Type
-	uint8_t message_types[32];
+	// malloc()ed list of supported message types, from Get Message Type
+	uint8_t *message_types;
+	size_t num_message_types;
 
 	// from Get Endpoint ID
 	uint8_t endpoint_type;
@@ -166,6 +167,9 @@ static const char* dest_phys_tostr(const dest_phys *dest)
 	char* buf;
 	size_t l = 50 + sizeof(hex);
 	buf = malloc(l);
+	if (!buf) {
+		return "Out of memory";
+	}
 	write_hex_addr(dest->hwaddr, dest->hwaddr_len, hex, sizeof(hex));
 	snprintf(buf, l, "physaddr if %d hw len %zu 0x%s", dest->ifindex, dest->hwaddr_len, hex);
 	return dfree(buf);
@@ -177,13 +181,31 @@ static const char* ext_addr_tostr(const struct _sockaddr_mctp_ext *addr)
 	char* buf;
 	size_t l = 100;
 	buf = malloc(l);
+	if (!buf) {
+		return "Out of memory";
+	}
 
 	write_hex_addr(addr->smctp_haddr, addr->smctp_halen, hex, sizeof(hex));
 	snprintf(buf, l, "sockaddr_mctp_ext eid %d net %d if %d hw len %hhu 0x%s",
-		addr->smctp_base.smctp_addr.s_addr, 
+		addr->smctp_base.smctp_addr.s_addr,
 		addr->smctp_base.smctp_network, addr->smctp_ifindex,
 		addr->smctp_halen, hex);
 	return dfree(buf);
+}
+
+static const char* peer_tostr(const peer *peer)
+{
+	size_t l = 300;
+	char *str = NULL;
+
+	str = malloc(l);
+	if (!str) {
+		return "Out of memory";
+	}
+	snprintf(str, l, "peer eid %d net %d phys %s state %d",
+		peer->eid, peer->net, dest_phys_tostr(&peer->phys),
+		peer->state);
+	return dfree(str);
 }
 
 static int defer_free_handler(sd_event_source *s, void *userdata)
@@ -331,7 +353,7 @@ out:
 
 /* First byte of resp is the type. It is ignored, addr smctp_type is used */
 /* Replies to a real EID, not physical addressing */
-static int reply_message(ctx *ctx, int sd, const void *resp, size_t resp_len, 
+static int reply_message(ctx *ctx, int sd, const void *resp, size_t resp_len,
 	const struct _sockaddr_mctp_ext *addr)
 {
 	uint8_t *send_ptr;
@@ -468,7 +490,55 @@ int handle_control_get_endpoint_id(ctx *ctx,
 	return reply_message(ctx, sd, resp, sizeof(*resp), addr);
 }
 
-static int cb_listen_control_msg(sd_event_source *s, int sd, uint32_t revents, 
+int handle_control_get_message_type_support(ctx *ctx,
+	int sd, const struct _sockaddr_mctp_ext *addr,
+	const uint8_t *buf, const size_t buf_size)
+{
+	struct mctp_ctrl_cmd_get_msg_type_support *req = NULL;;
+	struct mctp_ctrl_resp_get_msg_type_support *resp = NULL;
+	uint8_t resp_buf[sizeof(*resp) + 1];
+
+	if (buf_size < sizeof(*req)) {
+		warnx("short Get Message Type Support message");
+		return -ENOMSG;
+	}
+
+	req = (void*)buf;
+	resp = (void*)resp_buf;
+	resp->ctrl_hdr.command_code = req->ctrl_msg_hdr.command_code;
+	resp->ctrl_hdr.rq_dgram_inst = RQDI_RESP;
+
+	// Only control messages supported
+	resp->msg_type_count = 1;
+	*((uint8_t*)(resp+1)) = MCTP_CTRL_HDR_MSG_TYPE;
+
+	return reply_message(ctx, sd, resp, sizeof(*resp), addr);
+}
+
+int handle_control_unsupported(ctx *ctx,
+	int sd, const struct _sockaddr_mctp_ext *addr,
+	const uint8_t *buf, const size_t buf_size)
+{
+	struct mctp_ctrl_msg_hdr *req = NULL;
+	struct mctp_ctrl_generic {
+		struct mctp_ctrl_msg_hdr ctrl_hdr;
+		uint8_t completion_code;
+	} __attribute__((__packed__));
+	struct mctp_ctrl_generic respi = {0}, *resp = &respi;
+
+	if (buf_size < sizeof(*req)) {
+		warnx("short unsupported control message");
+		return -ENOMSG;
+	}
+
+	req = (void*)buf;
+	resp->ctrl_hdr.command_code = req->command_code;
+	resp->ctrl_hdr.rq_dgram_inst = RQDI_RESP;
+	resp->completion_code = MCTP_CTRL_CC_ERROR_UNSUPPORTED_CMD;
+	return reply_message(ctx, sd, resp, sizeof(*resp), addr);
+}
+
+static int cb_listen_control_msg(sd_event_source *s, int sd, uint32_t revents,
 	void *userdata)
 {
 	struct _sockaddr_mctp_ext addr = {0};
@@ -513,17 +583,23 @@ static int cb_listen_control_msg(sd_event_source *s, int sd, uint32_t revents,
 		// 	rc = handle_control_get_endpoint_uuid(ctx,
 		// 		sd, &addr, buf, buf_size);
 		// 	break;
+		case MCTP_CTRL_CMD_GET_MESSAGE_TYPE_SUPPORT:
+			rc = handle_control_get_message_type_support(ctx,
+				sd, &addr, buf, buf_size);
+			break;
 		default:
 			if (ctx->verbose) {
 				warnx("Ignoring unsupported command code 0x%02x",
 					ctrl_msg->command_code);
 				rc = -ENOTSUP;
 			}
+			rc = handle_control_unsupported(ctx,
+				sd, &addr, buf, buf_size);
 	}
 
 	if (ctx->verbose && rc < 0) {
 		warnx("Error handling command code %02x from %s: %s",
-			ctrl_msg->command_code, ext_addr_tostr(&addr), 
+			ctrl_msg->command_code, ext_addr_tostr(&addr),
 			strerror(-rc));
 	}
 
@@ -565,7 +641,7 @@ static int listen_control_msg(ctx *ctx, int net)
 		goto out;
 	}
 
-	rc = sd_event_add_io(ctx->event, NULL, sd, EPOLLIN, 
+	rc = sd_event_add_io(ctx->event, NULL, sd, EPOLLIN,
 		cb_listen_control_msg, ctx);
 	return rc;
 out:
@@ -574,16 +650,18 @@ out:
 	}
 	return rc;
 }
+/* Use endpoint_query_peer() or endpoint_query_phys() instead.
 
-/* Queries an endpoint using physical addressing, null EID.
  * req and resp buffers include the initial message type byte.
  * This is ignored, the addr.smctp_type is used instead.
- */
-static int endpoint_query_phys(ctx *ctx, const dest_phys *dest,
-	uint8_t req_type, const void* req, size_t req_len,
+ * resp buffer is allocated, caller to free.
+ * Extended addressing is used optionally, depending on ext_addr arg. */
+static int endpoint_query_addr(ctx *ctx,
+	const struct _sockaddr_mctp_ext *req_addr, bool ext_addr,
+	const void* req, size_t req_len,
 	uint8_t **resp, size_t *resp_len, struct _sockaddr_mctp_ext *resp_addr)
 {
-	struct _sockaddr_mctp_ext addr = {0};
+	size_t req_addr_len;
 	int sd = -1, val;
 	ssize_t rc;
 	uint8_t *send_ptr = NULL;
@@ -601,6 +679,7 @@ static int endpoint_query_phys(ctx *ctx, const dest_phys *dest,
 		goto out;
 	}
 
+	// We want extended addressing on all received messages
 	val = 1;
 	rc = setsockopt(sd, SOL_MCTP, MCTP_OPT_ADDR_EXT, &val, sizeof(val));
 	if (rc < 0) {
@@ -609,16 +688,11 @@ static int endpoint_query_phys(ctx *ctx, const dest_phys *dest,
 		goto out;
 	}
 
-	addr.smctp_base.smctp_family = AF_MCTP;
-	addr.smctp_base.smctp_network = 0;
-	addr.smctp_base.smctp_addr.s_addr = 0;
-
-	addr.smctp_ifindex = dest->ifindex;
-	addr.smctp_halen = dest->hwaddr_len;
-	memcpy(addr.smctp_haddr, dest->hwaddr, dest->hwaddr_len);
-
-	addr.smctp_base.smctp_type = req_type;
-	addr.smctp_base.smctp_tag = MCTP_TAG_OWNER;
+	if (ext_addr) {
+		req_addr_len = sizeof(struct _sockaddr_mctp_ext);
+	} else {
+		req_addr_len = sizeof(struct _sockaddr_mctp);
+	}
 
 	if (req_len == 0) {
 		warnx("BUG: zero length request");
@@ -627,13 +701,13 @@ static int endpoint_query_phys(ctx *ctx, const dest_phys *dest,
 	}
 	send_len = req_len - 1;
 	send_ptr = (uint8_t*)req + 1;
-	rc = sendto(sd, send_ptr, send_len, 0, (struct sockaddr *)&addr,
-			sizeof(struct _sockaddr_mctp_ext));
+	rc = sendto(sd, send_ptr, send_len, 0, (struct sockaddr*)req_addr, req_addr_len);
 	if (rc < 0) {
 		rc = -errno;
 		if (ctx->verbose) {
-			warnx("%s: sendto() to %s returned %s", __func__,
-				dest_phys_tostr(dest), strerror(errno));
+			warnx("%s: sendto(%s) %zu bytes failed. %s", __func__,
+				ext_addr_tostr(req_addr), send_len,
+				strerror(errno));
 		}
 		goto out;
 	}
@@ -647,7 +721,7 @@ static int endpoint_query_phys(ctx *ctx, const dest_phys *dest,
 	if (rc < 0) {
 		if (rc == -ETIMEDOUT && ctx->verbose) {
 			warnx("%s: receive timed out from %s", __func__,
-				dest_phys_tostr(dest));
+				ext_addr_tostr(req_addr));
 		}
 		goto out;
 	}
@@ -657,9 +731,11 @@ static int endpoint_query_phys(ctx *ctx, const dest_phys *dest,
 		goto out;
 	}
 
-	if (resp_addr->smctp_base.smctp_type != req_type) {
+	if (resp_addr->smctp_base.smctp_type != req_addr->smctp_base.smctp_type) {
 		warnx("Mismatching response type %d for request type %d. dest %s",
-			resp_addr->smctp_base.smctp_type, req_type, dest_phys_tostr(dest));
+			resp_addr->smctp_base.smctp_type,
+			req_addr->smctp_base.smctp_type,
+			ext_addr_tostr(req_addr));
 		rc = -ENOMSG;
 	}
 
@@ -675,6 +751,58 @@ out:
 
 	return rc;
 }
+
+/* Queries an endpoint peer. Addressing is standard eid/net.
+ * req and resp buffers include the initial message type byte.
+ * This is ignored, the addr.smctp_type is used instead.
+ */
+static int endpoint_query_peer(ctx *ctx, const peer *peer,
+	uint8_t req_type, const void* req, size_t req_len,
+	uint8_t **resp, size_t *resp_len, struct _sockaddr_mctp_ext *resp_addr)
+{
+	struct _sockaddr_mctp_ext addr = {0};
+
+	if (peer->state != ASSIGNED) {
+		warnx("BUG: %s bad peer %s", __func__, peer_tostr(peer));
+		return -EPROTO;
+	}
+
+	addr.smctp_base.smctp_family = AF_MCTP;
+	addr.smctp_base.smctp_network = peer->net;
+	addr.smctp_base.smctp_addr.s_addr = peer->eid;
+
+	addr.smctp_base.smctp_type = req_type;
+	addr.smctp_base.smctp_tag = MCTP_TAG_OWNER;
+
+	return endpoint_query_addr(ctx, &addr, false, req, req_len,
+		resp, resp_len, resp_addr);
+}
+
+/* Queries an endpoint using physical addressing, null EID.
+ * req and resp buffers include the initial message type byte.
+ * This is ignored, the addr.smctp_type is used instead.
+ */
+static int endpoint_query_phys(ctx *ctx, const dest_phys *dest,
+	uint8_t req_type, const void* req, size_t req_len,
+	uint8_t **resp, size_t *resp_len, struct _sockaddr_mctp_ext *resp_addr)
+{
+	struct _sockaddr_mctp_ext addr = {0};
+
+	addr.smctp_base.smctp_family = AF_MCTP;
+	addr.smctp_base.smctp_network = 0;
+	addr.smctp_base.smctp_addr.s_addr = 0;
+
+	addr.smctp_ifindex = dest->ifindex;
+	addr.smctp_halen = dest->hwaddr_len;
+	memcpy(addr.smctp_haddr, dest->hwaddr, dest->hwaddr_len);
+
+	addr.smctp_base.smctp_type = req_type;
+	addr.smctp_base.smctp_tag = MCTP_TAG_OWNER;
+
+	return endpoint_query_addr(ctx, &addr, true, req, req_len,
+		resp, resp_len, resp_addr);
+}
+
 
 static uint32_t version_val(const struct version_entry *vers)
 {
@@ -715,8 +843,8 @@ static int endpoint_send_get_mctp_version(ctx *ctx, const dest_phys *dest,
 	}
 	resp = (void*)buf;
 
-	expect_size = sizeof(resp) + resp->number_of_entries 
-					* sizeof(struct version_entry);
+	expect_size = sizeof(resp) +
+		resp->number_of_entries * sizeof(struct version_entry);
 	if (buf_size != expect_size) {
 		warnx("%s: bad reply length. got %zu, expected %zu, %d entries. dest %s",
 			__func__, buf_size, expect_size, resp->number_of_entries,
@@ -725,7 +853,7 @@ static int endpoint_send_get_mctp_version(ctx *ctx, const dest_phys *dest,
 		goto out;
 	}
 
-	if (resp->completion_code != 0x80)
+	if (resp->completion_code == 0)
 		*ret_supported = true;
 
 	/* Entries are in ascending version order */
@@ -768,7 +896,7 @@ static int endpoint_send_set_endpoint_id(ctx *ctx, const peer *peer,
 		goto out;
 
 	if (buf_size != sizeof(*resp)) {
-		warnx("%s: wrong reply length %zu bytes. dest %s", __func__, 
+		warnx("%s: wrong reply length %zu bytes. dest %s", __func__,
 			buf_size, dest_phys_tostr(dest));
 		rc = -ENOMSG;
 		goto out;
@@ -792,7 +920,7 @@ static int endpoint_send_set_endpoint_id(ctx *ctx, const peer *peer,
 				dest_phys_tostr(dest), peer->eid, resp->eid_set);
 		}
 	} else {
-		warnx("%s unexpected status 0x%02x", 
+		warnx("%s unexpected status 0x%02x",
 			dest_phys_tostr(dest), resp->status);
 	}
 	*new_eid = resp->eid_set;
@@ -800,7 +928,7 @@ static int endpoint_send_set_endpoint_id(ctx *ctx, const peer *peer,
 	alloc = resp->status & 0x3;
 	if (alloc != 0) {
 		// TODO for bridges
-		warnx("%s requested allocation pool, unimplemented", 
+		warnx("%s requested allocation pool, unimplemented",
 			dest_phys_tostr(dest));
 	}
 
@@ -929,6 +1057,7 @@ static int remove_peer(ctx *ctx, peer *peer)
 
 	// Clear it
 	n->peeridx[peer->eid] = -1;
+	free(peer->message_types);
 	memset(peer, 0x0, sizeof(struct peer));
 	return 0;
 }
@@ -1176,12 +1305,73 @@ static int get_endpoint_peer(ctx *ctx, sd_bus_error *berr,
 
 	peer->endpoint_type = ep_type;
 	peer->medium_spec = medium_spec;
+	peer->state = ASSIGNED;
 
 	*ret_peer = peer;
 	return 0;
 }
 
-static int assign_peer(ctx *ctx, sd_bus_error *berr, 
+static int query_get_peer_msgtypes(ctx *ctx, peer *peer) {
+	struct _sockaddr_mctp_ext addr;
+	struct mctp_ctrl_cmd_get_msg_type_support req;
+	struct mctp_ctrl_resp_get_msg_type_support *resp = NULL;
+	uint8_t* buf = NULL;
+	size_t buf_size, expect_size;
+	int rc;
+
+	if (peer->state != ASSIGNED) {
+		warnx("%s: Wrong state for peer %s", __func__, peer_tostr(peer));
+		return -EPROTO;
+	}
+
+	free(peer->message_types);
+	peer->message_types = NULL;
+
+	req.ctrl_msg_hdr.rq_dgram_inst = RQDI_REQ;
+	req.ctrl_msg_hdr.command_code = MCTP_CTRL_CMD_GET_MESSAGE_TYPE_SUPPORT;
+
+	rc = endpoint_query_peer(ctx, peer, MCTP_CTRL_HDR_MSG_TYPE,
+		&req, sizeof(req), &buf, &buf_size, &addr);
+	if (rc < 0)
+		goto out;
+
+	if (buf_size < sizeof(*resp)) {
+		warnx("%s: short reply %zu bytes. dest %s", __func__, buf_size,
+			peer_tostr(peer));
+		rc = -ENOMSG;
+		goto out;
+	}
+	resp = (void*)buf;
+	expect_size = sizeof(resp) + resp->msg_type_count;
+	if (buf_size != expect_size) {
+		warnx("%s: bad reply length. got %zu, expected %zu, %d entries. dest %s",
+			__func__, buf_size, expect_size, resp->msg_type_count,
+			peer_tostr(peer));
+		rc = -ENOMSG;
+		goto out;
+	}
+
+	if (resp->completion_code != 0x00) {
+		rc = -ECONNREFUSED;
+		goto out;
+	}
+
+	peer->num_message_types = resp->msg_type_count;
+	peer->message_types = malloc(resp->msg_type_count);
+	if (!peer->message_types) {
+		rc = -ENOMEM;
+		goto out;
+	}
+	memcpy(peer->message_types, (void*)(resp+1), resp->msg_type_count);
+	rc = 0;
+
+out:
+	free(buf);
+	return rc;
+}
+
+
+static int assign_peer(ctx *ctx, sd_bus_error *berr,
 	const dest_phys *dest, peer **ret_peer)
 {
 	int rc;
@@ -1258,14 +1448,14 @@ static int method_assign_endpoint(sd_bus_message *call, void *data, sd_bus_error
 
 	rc = validate_dest_phys(ctx, dest);
 	if (rc < 0)
-		return sd_bus_error_setf(berr, SD_BUS_ERROR_INVALID_ARGS, 
+		return sd_bus_error_setf(berr, SD_BUS_ERROR_INVALID_ARGS,
 			"Bad physaddr");
 
 	peer = find_peer_by_phys(ctx, dest);
 	if (peer) {
 		// Return existing record.
 		if (peer->state != ASSIGNED) {
-			warnx("BUG: Bad state for peer %d, eid %d", 
+			warnx("BUG: Bad state for peer %d, eid %d",
 				peer->state, peer->eid);
 			rc = -EPROTO;
 			goto err;
@@ -1275,9 +1465,18 @@ static int method_assign_endpoint(sd_bus_message *call, void *data, sd_bus_error
 	}
 
 	rc = assign_peer(ctx, berr, dest, &peer);
-	if (rc == 0)
-		return sd_bus_reply_method_return(call, "yib",
-			peer->eid, peer->net, 1);
+	if (rc < 0)
+		goto err;
+
+	rc = query_get_peer_msgtypes(ctx, peer);
+	if (rc < 0) {
+		warnx("Error getting endpoint types for %s. Ignoring error %d %s",
+			peer_tostr(peer), rc, strerror(-rc));
+		rc = 0;
+	}
+
+	return sd_bus_reply_method_return(call, "yib",
+		peer->eid, peer->net, 1);
 err:
 	set_berr(ctx, rc, berr);
 	return rc;
@@ -1315,6 +1514,13 @@ static int method_learn_endpoint(sd_bus_message *call, void *data, sd_bus_error 
 		goto err;
 	if (!peer)
 		return sd_bus_reply_method_return(call, "byi", 0, 0, 0);
+
+	rc = query_get_peer_msgtypes(ctx, peer);
+	if (rc < 0) {
+		warnx("Error getting endpoint types for %s. Ignoring error %d %s",
+			peer_tostr(peer), rc, strerror(-rc));
+		rc = 0;
+	}
 
 	return sd_bus_reply_method_return(call, "byi", 1, peer->eid, peer->net);
 err:
@@ -1493,6 +1699,7 @@ int setup_nets(ctx *ctx)
 			ctx->nets[i].peeridx[j] = -1;
 		}
 	}
+	ctx->num_nets = num_nets;
 
 	/* Set up local addresses */
 	ifs = mctp_nl_if_list(ctx->nl, &num_ifs);
@@ -1531,7 +1738,6 @@ int setup_nets(ctx *ctx)
 	}
 	free(ifs);
 
-	ctx->num_nets = num_nets;
 	if (ctx->verbose) {
 		mctp_nl_linkmap_dump(ctx->nl);
 	}
