@@ -39,13 +39,13 @@ static int mctp_req(unsigned int net, mctp_eid_t eid,
 
 	memset(&addr, 0x0, sizeof(addr));
 	addrlen = sizeof(struct _sockaddr_mctp);
-	addr.smctp_family = AF_MCTP;
-	addr.smctp_network = net;
-	addr.smctp_addr.s_addr = eid;
-	addr.smctp_type = 1;
-	addr.smctp_tag = MCTP_TAG_OWNER;
+	addr.smctp_base.smctp_family = AF_MCTP;
+	addr.smctp_base.smctp_network = net;
+	addr.smctp_base.smctp_addr.s_addr = eid;
+	addr.smctp_base.smctp_type = 1;
+	addr.smctp_base.smctp_tag = MCTP_TAG_OWNER;
 	printf("req:  sending to (net %d, eid %d), type %d\n",
-		net, eid, addr.smctp_type);
+		net, eid, addr.smctp_base.smctp_type);
 
 	buf = malloc(len);
 	if (!buf)
@@ -88,8 +88,8 @@ static int mctp_req(unsigned int net, mctp_eid_t eid,
 
 
 	printf("req:  message from (net %d, eid %d) type %d: 0x%02x..\n",
-			addr.smctp_network, addr.smctp_addr.s_addr,
-			addr.smctp_type,
+			addr.smctp_base.smctp_network, addr.smctp_base.smctp_addr.s_addr,
+			addr.smctp_base.smctp_type,
 			buf[0]);
 	if (addrlen == sizeof(struct _sockaddr_mctp_ext)) {
 		printf("      ext ifindex %d ha[0]=0x%02x len %hhu\n",

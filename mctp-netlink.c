@@ -22,6 +22,10 @@ struct linkmap_entry {
 	int	ifindex;
 	char	ifname[IFNAMSIZ+1];
 	int	net;
+	uint8_t	medium;
+
+	mctp_eid_t *local_eids;
+	size_t num_local;
 };
 
 struct mctp_nl {
@@ -37,9 +41,13 @@ struct mctp_nl {
 
 #define ARRAY_SIZE(a) (sizeof(a)/sizeof((a)[0]))
 
+static int fill_local_addrs(mctp_nl *nl);
+static void sort_local_addrs(mctp_nl *nl);
 static int fill_linkmap(mctp_nl *nl);
 static int linkmap_add_entry(mctp_nl *nl, struct ifinfomsg *info,
-		const char *ifname, size_t ifname_len, int net);
+		const char *ifname, size_t ifname_len, int net, uint8_t medium);
+static struct linkmap_entry *entry_byindex(const mctp_nl *nl,
+	int index);
 
 mctp_nl * mctp_nl_new(bool verbose)
 {
@@ -79,6 +87,10 @@ mctp_nl * mctp_nl_new(bool verbose)
 		goto err;
 
 	rc = fill_linkmap(nl);
+	if (rc)
+		goto err;
+
+	rc = fill_local_addrs(nl);
 	if (rc)
 		goto err;
 
@@ -377,6 +389,7 @@ static int parse_getlink_dump(mctp_nl *nl, struct nlmsghdr *nlh, int len)
 		char *ifname;
 		size_t ifname_len, rlen, nlen, mlen;
 		uint32_t net;
+		uint8_t medium = 0x00;
 
 		if (nlh->nlmsg_type == NLMSG_DONE)
 			return 0;
@@ -407,14 +420,14 @@ static int parse_getlink_dump(mctp_nl *nl, struct nlmsghdr *nlh, int len)
 			warnx("Missing IFLA_MCTP_NET");
 			continue;
 		}
-
+		mctp_get_rtnlmsg_attr_u8(IFLA_MCTP_MEDIA_TYPE, rt_mctp, mlen, &medium);
 		ifname = mctp_get_rtnlmsg_attr(IFLA_IFNAME, rta, rlen, &ifname_len);
 		if (!ifname) {
 			warnx("no ifname?");
 			continue;
 		}
 		ifname_len = strnlen(ifname, ifname_len);
-		linkmap_add_entry(nl, info, ifname, ifname_len, net);
+		linkmap_add_entry(nl, info, ifname, ifname_len, net, medium);
 	}
 	// Not done.
 	return 1;
@@ -483,15 +496,104 @@ static int fill_linkmap(mctp_nl *nl)
 	return rc;
 }
 
-void mctp_nl_linkmap_dump(const mctp_nl *nl)
+static int fill_local_addrs(mctp_nl *nl)
+{
+	int rc;
+	struct nlmsghdr *resp = NULL, *rp = NULL;
+	size_t len;
+	struct {
+		struct nlmsghdr		nh;
+		struct ifaddrmsg	ifmsg;
+		struct rtattr		rta;
+		char			ifname[16];
+	} msg = {0};
+
+	msg.nh.nlmsg_len = NLMSG_LENGTH(sizeof(msg.ifmsg));
+
+	msg.nh.nlmsg_type = RTM_GETADDR;
+	msg.nh.nlmsg_flags = NLM_F_REQUEST | NLM_F_DUMP;
+	msg.ifmsg.ifa_family = AF_MCTP;
+
+	rc = mctp_nl_query(nl, &msg.nh, &resp, &len);
+	if (rc)
+		return rc;
+
+	rp = resp;
+	for (; NLMSG_OK(rp, len); rp = NLMSG_NEXT(rp, len)) {
+		struct ifaddrmsg *ifa = NULL;
+		size_t rta_len, ifalen;
+		struct rtattr *rta = NULL;
+		void* tmp;
+		struct linkmap_entry* entry = NULL;
+		mctp_eid_t eid;
+
+		if (rp->nlmsg_type != RTM_NEWADDR)
+			continue;
+		ifa = NLMSG_DATA(rp);
+		ifalen = NLMSG_PAYLOAD(rp, 0);
+		if (ifalen < sizeof(*ifa)) {
+			warnx("kernel returned short ifaddrmsg");
+			continue;
+		}
+		if (ifa->ifa_family != AF_MCTP)
+			continue;
+		rta = (void *)(ifa + 1);
+		rta_len = ifalen - sizeof(*ifa);
+		if (!mctp_get_rtnlmsg_attr_u8(IFA_LOCAL, rta, rta_len, &eid))
+			continue;
+
+		entry = entry_byindex(nl, ifa->ifa_index);
+		if (!entry) {
+			warnx("kernel returned address for unknown if");
+			continue;
+		}
+		tmp = realloc(entry->local_eids,
+			(entry->num_local+1) * sizeof(*entry->local_eids));
+		if (!tmp)
+			continue;
+		entry->local_eids = tmp;
+		entry->local_eids[entry->num_local] = eid;
+		entry->num_local++;
+	}
+
+	sort_local_addrs(nl);
+
+	free(resp);
+	return rc;
+}
+
+static int cmp_eid(const void* a, const void* b)
+{
+	const mctp_eid_t *ea = a, *eb = b;
+	return (int)(*ea) - (int)(*eb);
+}
+
+static void sort_local_addrs(mctp_nl *nl)
 {
 	size_t i;
+	for (i = 0; i < nl->linkmap_count; i++) {
+		struct linkmap_entry *entry = &nl->linkmap[i];
+		qsort(entry->local_eids, entry->num_local,
+			sizeof(mctp_eid_t), cmp_eid);
+	}
+}
+
+void mctp_nl_linkmap_dump(const mctp_nl *nl)
+{
+	size_t i, j;
 
 	printf("linkmap\n");
 	for (i = 0; i < nl->linkmap_count; i++) {
 		struct linkmap_entry *entry = &nl->linkmap[i];
-		printf("  %d: %s, net %d\n", entry->ifindex, entry->ifname,
-			entry->net);
+		printf("  %2d: %s, net %d med 0x%02x local addrs [",
+			entry->ifindex, entry->ifname,
+			entry->net, entry->medium);
+		for (j = 0; j < entry->num_local; j++) {
+			if (j != 0)
+				printf(", ");
+			printf("%d", entry->local_eids[j]);
+		}
+		printf("]\n");
 	}
 }
 
@@ -510,30 +612,49 @@ int mctp_nl_ifindex_byname(const mctp_nl *nl, const char *ifname)
 
 const char* mctp_nl_if_byindex(const mctp_nl *nl, int index)
 {
-	size_t i;
-
-	for (i = 0; i < nl->linkmap_count; i++) {
-		struct linkmap_entry *entry = &nl->linkmap[i];
-		if (entry->ifindex == index) {
-			return entry->ifname;
-		}
-	}
-
+	struct linkmap_entry *entry = entry_byindex(nl, index);
+	if (entry)
+		return entry->ifname;
 	return NULL;
 }
 
 int mctp_nl_net_byindex(const mctp_nl *nl, int index)
+{
+	struct linkmap_entry *entry = entry_byindex(nl, index);
+	if (entry)
+		return entry->net;
+	return 0;
+}
+
+mctp_eid_t *mctp_nl_addrs_byindex(const mctp_nl *nl, int index, 
+	size_t *ret_num)
+{
+	struct linkmap_entry *entry = entry_byindex(nl, index);
+	mctp_eid_t *ret;
+
+	*ret_num = 0;
+	if (entry)
+		return NULL;
+	ret = malloc(entry->num_local);
+	if (!ret)
+		return NULL;
+	memcpy(ret, entry->local_eids, entry->num_local);
+	*ret_num = entry->num_local;
+	return ret;
+}
+
+static struct linkmap_entry *entry_byindex(const mctp_nl *nl,
+	int index)
 {
 	size_t i;
 
 	for (i = 0; i < nl->linkmap_count; i++) {
 		struct linkmap_entry *entry = &nl->linkmap[i];
 		if (entry->ifindex == index) {
-			return entry->net;
+			return entry;
 		}
 	}
-
-	return 0;
+	return NULL;
 }
 
 int *mctp_nl_net_list(const mctp_nl *nl, size_t *ret_num_nets)
@@ -570,7 +691,7 @@ int *mctp_nl_net_list(const mctp_nl *nl, size_t *ret_num_nets)
 }
 
 static int linkmap_add_entry(mctp_nl *nl, struct ifinfomsg *info,
-		const char *ifname, size_t ifname_len, int net)
+		const char *ifname, size_t ifname_len, int net, uint8_t medium)
 {
 	struct linkmap_entry *entry;
 	size_t newsz;
@@ -582,8 +703,8 @@ static int linkmap_add_entry(mctp_nl *nl, struct ifinfomsg *info,
 		return -1;
 	}
 
-	if (net < 0) {
-		warnx("Can't have negative network ID %d for %*s", net, (int)ifname_len, ifname);
+	if (net <= 0) {
+		warnx("Bad network ID %d for %*s", net, (int)ifname_len, ifname);
 		return -1;
 	}
 
@@ -604,5 +725,6 @@ static int linkmap_add_entry(mctp_nl *nl, struct ifinfomsg *info,
 	snprintf(entry->ifname, IFNAMSIZ, "%*s", (int)ifname_len, ifname);
 	entry->ifindex = info->ifi_index;
 	entry->net = net;
+	entry->medium = medium;
 	return 0;
 }

@@ -34,13 +34,7 @@ struct _sockaddr_mctp {
 };
 
 struct _sockaddr_mctp_ext {
-		/* fields exactly match struct sockaddr_mctp */
-		sa_family_t			smctp_family; /* = AF_MCTP */
-		int					smctp_network;
-		struct _mctp_addr	smctp_addr;
-		uint8_t				smctp_type;
-		uint8_t				smctp_tag;
-		/* extended addressing */
+		struct _sockaddr_mctp	smctp_base;
 		int					smctp_ifindex;
 		uint8_t				smctp_halen;
 		unsigned char		smctp_haddr[MAX_ADDR_LEN];
@@ -55,12 +49,14 @@ struct _sockaddr_mctp_ext {
 enum {
 	IFLA_MCTP_UNSPEC,
 	IFLA_MCTP_NET,
+	IFLA_MCTP_MEDIA_TYPE,
 	__IFLA_MCTP_MAX,
 };
 
 #define IFLA_MCTP_MAX (__IFLA_MCTP_MAX - 1)
 
 /* setsockopt(2) options */
+#define SOL_MCTP (SOL_SOCKET + 1)
 #define MCTP_OPT_ADDR_EXT	1
 
 #endif /* _MCTP_H */

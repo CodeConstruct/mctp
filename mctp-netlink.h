@@ -5,6 +5,8 @@
 #include <stdbool.h>
 #include <linux/rtnetlink.h>
 
+#include "mctp.h"
+
 struct mctp_nl;
 typedef struct mctp_nl mctp_nl;
 
@@ -27,6 +29,9 @@ int mctp_nl_query(mctp_nl *nl, struct nlmsghdr *msg,
 int mctp_nl_ifindex_byname(const mctp_nl *nl, const char *ifname);
 const char* mctp_nl_if_byindex(const mctp_nl *nl, int index);
 int mctp_nl_net_byindex(const mctp_nl *nl, int index);
+/* Caller to free */
+mctp_eid_t *mctp_nl_addrs_byindex(const mctp_nl *nl, int index,
+	size_t *ret_num);
 void mctp_nl_linkmap_dump(const mctp_nl *nl);
 /* Returns an allocated list of nets, caller to free */
 int *mctp_nl_net_list(const mctp_nl *nl, size_t *ret_num_nets);

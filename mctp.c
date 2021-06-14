@@ -697,8 +697,6 @@ static int cmd_addr_show(struct ctx *ctx, int argc, const char **argv)
 
 	msg.nh.nlmsg_type = RTM_GETADDR;
 	msg.nh.nlmsg_flags = NLM_F_REQUEST | NLM_F_DUMP;
-
-	msg.ifmsg.ifa_index = 1; // TODO: check this, could be 0?
 	msg.ifmsg.ifa_family = AF_MCTP;
 	msg.ifmsg.ifa_index = ifindex;
 
@@ -1313,9 +1311,10 @@ int main(int argc, char **argv)
 		errx(EXIT_FAILURE, "no such command '%s'", cmdname);
 
 	ctx->nl = mctp_nl_new(ctx->verbose);
-	if (!ctx->nl) {
+	if (!ctx->nl)
 		errx(EXIT_FAILURE, "Error creating netlink object");
-	}
+	if (ctx->verbose)
+		mctp_nl_linkmap_dump(ctx->nl);
 
 	argc--;
 	argv++;
