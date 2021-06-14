@@ -877,6 +877,7 @@ static int fill_rtalter_args(struct ctx *ctx, struct mctp_rtalter_msg *msg,
 	msg->nh.nlmsg_flags = NLM_F_REQUEST | NLM_F_ACK;
 
 	msg->rtmsg.rtm_family = AF_MCTP;
+	msg->rtmsg.rtm_type = RTN_UNICAST;
 	// TODO add eid range handling
 	msg->rtmsg.rtm_dst_len = 0;
 	msg->rtmsg.rtm_type = RTN_UNICAST;
