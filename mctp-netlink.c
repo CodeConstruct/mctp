@@ -690,6 +690,22 @@ int *mctp_nl_net_list(const mctp_nl *nl, size_t *ret_num_nets)
 	return nets;
 }
 
+int *mctp_nl_if_list(const mctp_nl *nl, size_t *ret_num_ifs)
+{
+	size_t i;
+	int *ifs;
+
+	*ret_num_ifs = 0;
+	ifs = malloc(sizeof(int) * nl->linkmap_count);
+	if (!ifs)
+		return NULL;
+	for (i = 0; i < nl->linkmap_count; i++) {
+		ifs[i] = nl->linkmap[i].ifindex;
+	}
+	*ret_num_ifs = nl->linkmap_count;
+	return ifs;
+}
+
 static int linkmap_add_entry(mctp_nl *nl, struct ifinfomsg *info,
 		const char *ifname, size_t ifname_len, int net, uint8_t medium)
 {

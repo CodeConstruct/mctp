@@ -35,6 +35,8 @@ mctp_eid_t *mctp_nl_addrs_byindex(const mctp_nl *nl, int index,
 void mctp_nl_linkmap_dump(const mctp_nl *nl);
 /* Returns an allocated list of nets, caller to free */
 int *mctp_nl_net_list(const mctp_nl *nl, size_t *ret_num_nets);
+/* Returns an allocated list of ifindex, caller to free */
+int *mctp_nl_if_list(const mctp_nl *nl, size_t *ret_num_if);
 
 /* Helpers */
 
