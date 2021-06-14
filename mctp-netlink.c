@@ -633,7 +633,7 @@ mctp_eid_t *mctp_nl_addrs_byindex(const mctp_nl *nl, int index,
 	mctp_eid_t *ret;
 
 	*ret_num = 0;
-	if (entry)
+	if (!entry)
 		return NULL;
 	ret = malloc(entry->num_local);
 	if (!ret)
