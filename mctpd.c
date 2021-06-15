@@ -1,6 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0 */
 /*
-
  * mctpd: bus owner for MCTP using Linux kernel
  *
  * Copyright (c) 2021 Code Construct
@@ -2028,6 +2027,9 @@ static int setup_testing(ctx *ctx) {
 	peer *peer;
 	size_t i, j;
 
+	if (!ctx->testing)
+		return 0;
+
 	if (ctx->num_nets > 0) {
 		warnx("Skipping setup_testing, have MCTP nets");
 		return 0;
@@ -2054,6 +2056,11 @@ static int setup_testing(ctx *ctx) {
 		return rc;
 	}
 	peer->state = ASSIGNED;
+	peer->num_message_types = 3;
+	peer->message_types = malloc(3);
+	peer->message_types[0] = 0x00;
+	peer->message_types[1] = 0x03;
+	peer->message_types[2] = 0x04;
 
 	rc = add_peer(ctx, &dest, 9, 12, &peer);
 	if (rc < 0) {
@@ -2149,11 +2156,9 @@ int main(int argc, char **argv)
 			return 1;
 	}
 
-	if (ctx->testing) {
-		rc = setup_testing(ctx);
-		if (rc < 0)
-			return 1;
-	}
+	rc = setup_testing(ctx);
+	if (rc < 0)
+		return 1;
 
 	rc = sd_event_loop(ctx->event);
 	if (rc < 0) {
