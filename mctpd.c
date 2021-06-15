@@ -31,8 +31,11 @@
 #define max(a, b) ((a) > (b) ? (a) : (b))
 #define min(a, b) ((a) < (b) ? (a) : (b))
 
-static const char* mctpd_obj_path = "/BusOwner";
-static const char* mctpd_iface_busowner = "au.com.codeconstruct.mctpd.BusOwner";
+#define MCTP_DBUS_PATH "/xyz/openbmc_project/mctp"
+#define CC_MCTP_DBUS_IFACE "au.com.CodeConstruct.MCTP"
+#define MCTP_DBUS_IFACE "xyz.openbmc_project.MCTP"
+#define MCTP_DBUS_IFACE_ENDPOINT "xyz.openbmc_project.MCTP.Endpoint"
+#define OPENBMC_IFACE_COMMON_UUID "xyz.openbmc_project.Common.UUID"
 
 static mctp_eid_t eid_alloc_min = 0x08;
 static mctp_eid_t eid_alloc_max = 0xfe;
@@ -95,7 +98,7 @@ struct ctx {
 	bool bus_owner;
 
 	// An allocated array of peers, changes address (reallocated) during runtime
-	struct peer *peers;
+	peer *peers;
 	size_t size_peers;
 
 	struct net_det *nets;
@@ -109,6 +112,9 @@ struct ctx {
 	bool testing;
 };
 typedef struct ctx ctx;
+
+static int emit_endpoint_added(ctx *ctx, const peer *peer);
+static int emit_endpoint_removed(ctx *ctx, const peer *peer);
 
 mctp_eid_t local_addr(const ctx *ctx, int ifindex) {
 	mctp_eid_t *eids, ret = 0;
@@ -219,6 +225,9 @@ static void* dfree(void* ptr)
 {
 	sd_event *e;
 	int rc;
+
+	if (!ptr)
+		return NULL;
 	rc = sd_event_default(&e);
 	if (rc < 0) {
 		warnx("defer_free no event loop");
@@ -1055,6 +1064,9 @@ static int remove_peer(ctx *ctx, peer *peer)
 		return -1;
 	}
 
+	if (peer->state == ASSIGNED)
+		emit_endpoint_removed(ctx, peer);
+
 	// Clear it
 	n->peeridx[peer->eid] = -1;
 	free(peer->message_types);
@@ -1082,13 +1094,17 @@ static int change_peer_eid(ctx *ctx, peer *peer, mctp_eid_t new_eid) {
 		return -EPROTO;
 	}
 
-	if (n->peeridx[new_eid] != -1) {
+	if (n->peeridx[new_eid] != -1)
 		return -EEXIST;
-	}
 
+	if (peer->state == ASSIGNED)
+		emit_endpoint_removed(ctx, peer);
 	n->peeridx[new_eid] = n->peeridx[peer->eid];
 	n->peeridx[peer->eid] = -1;
 	peer->eid = new_eid;
+	if (peer->state == ASSIGNED)
+		emit_endpoint_added(ctx, peer);
+
 	return 0;
 }
 
@@ -1150,6 +1166,7 @@ static int endpoint_assign_eid(ctx *ctx, sd_bus_error *berr, const dest_phys *de
 		}
 	}
 	peer->state = ASSIGNED;
+	emit_endpoint_added(ctx, peer);
 
 	return 0;
 }
@@ -1306,6 +1323,7 @@ static int get_endpoint_peer(ctx *ctx, sd_bus_error *berr,
 	peer->endpoint_type = ep_type;
 	peer->medium_spec = medium_spec;
 	peer->state = ASSIGNED;
+	emit_endpoint_added(ctx, peer);
 
 	*ret_peer = peer;
 	return 0;
@@ -1582,7 +1600,58 @@ static int method_test_timer(sd_bus_message *call, void *data, sd_bus_error *sde
 	return rc;
 }
 
-static const sd_bus_vtable mctpd_vtable[] = {
+static int peer_from_path(ctx *ctx, const char* path, peer **ret_peer) 
+{
+	char *netstr = NULL, *eidstr = NULL;
+	uint32_t tmp, net;
+	mctp_eid_t eid;
+	int rc;
+
+	*ret_peer = NULL;
+	rc = sd_bus_path_decode_many(path, MCTP_DBUS_PATH "/%/%",
+		&netstr, &eidstr);
+	if (rc == 0)
+		return -ENOENT;
+	if (rc < 0)
+		return rc;
+	dfree(netstr);
+	dfree(eidstr);
+
+	if (parse_uint32(eidstr, &tmp) < 0 || tmp > 0xff)
+		return -EINVAL;
+	eid = tmp & 0xff;
+
+	if (parse_uint32(netstr, &net) < 0)
+		return -EINVAL;
+
+	*ret_peer = find_peer_by_addr(ctx, eid, net);
+	if (!*ret_peer)
+		return -ENOENT;
+	return 0;
+}
+
+static int path_from_peer(const peer *peer, char ** ret_path) {
+	size_t l;
+	char* buf;
+
+	if (peer->state == UNUSED || peer->state == NEW) {
+		warnx("BUG: %s on peer %s", __func__, peer_tostr(peer));
+		return -EPROTO;
+	}
+
+	l = strlen(MCTP_DBUS_PATH) + 60;
+	buf = malloc(l);
+	if (!buf)
+		return -ENOMEM;
+	/* can't use sd_bus_path_encode_many() since it escapes
+	   leading digits */
+	snprintf(buf, l, "%s/%d/%d", MCTP_DBUS_PATH,
+		peer->net, peer->eid);
+	*ret_path = buf;
+	return 0;
+}
+
+static const sd_bus_vtable bus_mctpd_vtable[] = {
 	SD_BUS_VTABLE_START(0),
 
 	SD_BUS_METHOD_WITH_NAMES("AssignEndpoint",
@@ -1607,6 +1676,7 @@ static const sd_bus_vtable mctpd_vtable[] = {
 		method_learn_endpoint,
 		0),
 
+
 	// Testing code
 	SD_BUS_METHOD_WITH_NAMES("TestTimer",
 		"i",
@@ -1626,10 +1696,190 @@ static const sd_bus_vtable mctpd_vtable[] = {
 	SD_BUS_VTABLE_END
 };
 
+static int bus_endpoint_get_prop(sd_bus *bus,
+		const char *path, const char *interface, const char *property,
+		sd_bus_message *reply, void *userdata, sd_bus_error *berr)
+{
+	peer *peer = userdata;
+	int rc;
+
+	if (strcmp(property, "NetworkId") == 0) {
+		rc = sd_bus_message_append(reply, "i", peer->net);
+	} else if (strcmp(property, "EID") == 0) {
+		rc = sd_bus_message_append(reply, "y", peer->eid);
+	} else if (strcmp(property, "SupportedMessageTypes") == 0) {
+		rc = sd_bus_message_append_array(reply, 'y',
+			peer->message_types, peer->num_message_types);
+	} else {
+		rc = -ENOENT;
+	}
+
+	return rc;
+}
+
+static const sd_bus_vtable bus_endpoint_vtable[] = {
+	SD_BUS_VTABLE_START(0),
+	SD_BUS_PROPERTY("NetworkId",
+			"i",
+			bus_endpoint_get_prop,
+			0,
+			SD_BUS_VTABLE_PROPERTY_CONST),
+	SD_BUS_PROPERTY("EID",
+			"y",
+			bus_endpoint_get_prop,
+			0,
+			SD_BUS_VTABLE_PROPERTY_CONST),
+	SD_BUS_PROPERTY("SupportedMessageTypes",
+			"ay",
+			bus_endpoint_get_prop,
+			0,
+			SD_BUS_VTABLE_PROPERTY_CONST),
+	SD_BUS_VTABLE_END
+};
+
+static int bus_endpoint_find(sd_bus *bus, const char *path,
+	const char *interface, void *userdata, void **ret_found,
+	sd_bus_error *ret_error)
+{
+	ctx *ctx = userdata;
+	peer *peer = NULL;
+	int rc;
+
+	rc = peer_from_path(ctx, path, &peer);
+	if (rc == 0) {
+		*ret_found = peer;
+		return 1;
+	}
+	return 0;
+}
+
+static int emit_endpoint_added(ctx *ctx, const peer *peer) {
+	char *path = NULL;
+	int rc;
+
+	rc = path_from_peer(peer, &path);
+	if (rc < 0)
+		return rc;
+	if (ctx->verbose)
+		warnx("%s: %s", __func__, path);
+	rc = sd_bus_emit_object_added(ctx->bus, dfree(path));
+	// rc = sd_bus_emit_interfaces_added(ctx->bus, dfree(path),
+	// 	MCTP_DBUS_IFACE_ENDPOINT, NULL);
+	if (rc < 0)
+		warnx("%s: error emitting, %s", __func__, strerror(errno));
+	return rc;
+}
+
+static int emit_endpoint_removed(ctx *ctx, const peer *peer) {
+	char *path = NULL;
+	int rc;
+
+	rc = path_from_peer(peer, &path);
+	if (rc < 0)
+		return rc;
+	if (ctx->verbose)
+		warnx("%s: %s", __func__, path);
+	rc = sd_bus_emit_object_removed(ctx->bus, dfree(path));
+	if (rc < 0)
+		warnx("%s: error emitting, %s", __func__, strerror(errno));
+	return rc;
+}
+
+static int bus_mctpd_find(sd_bus *bus, const char *path,
+	const char *interface, void *userdata, void **ret_found,
+	sd_bus_error *ret_error)
+{
+	if (strcmp(path, MCTP_DBUS_PATH) == 0) {
+		*ret_found = userdata;
+		return 1;
+	}
+	return 0;
+}
+
+static int mctpd_dbus_enumerate(sd_bus *bus, const char* path,
+	void *data, char ***out, sd_bus_error *err)
+{
+	ctx *ctx = data;
+	size_t num_nodes, i, j;
+	char **nodes = NULL;
+	int rc;
+
+	// NULL terminator
+ 	num_nodes = 1;
+	// .../mctp object
+	num_nodes++;
+
+	for (i = 0; i < ctx->size_peers; i++)
+		if (ctx->peers[i].state != UNUSED)
+			num_nodes++;
+
+	num_nodes += ctx->num_nets;
+
+	nodes = malloc(sizeof(*nodes) * num_nodes);
+	if (!nodes) {
+		rc = -ENOMEM;
+		goto out;
+	}
+
+	j = 0;
+	nodes[j] = strdup(MCTP_DBUS_PATH);
+	if (!nodes[j]) {
+		rc = -ENOMEM;
+		goto out;
+	}
+	j++;
+
+	// Peers
+	for (i = 0; i < ctx->size_peers; i++) {
+		peer *peer = &ctx->peers[i];
+
+		if (peer->state == UNUSED || peer->state == NEW)
+			continue;
+		// TODO do we need to exclude LOCAL?
+
+		rc = path_from_peer(peer, &nodes[j]);
+		if (rc < 0)
+			goto out;
+		j++;
+	}
+
+	// Nets
+	for (i = 0; i < ctx->num_nets; i++) {
+		size_t l;
+		char *buf = NULL;
+
+		l = strlen(MCTP_DBUS_PATH) + 30;
+		buf = malloc(l);
+		if (!buf) {
+			rc = -ENOMEM;
+			goto out;
+		}
+		/* can't use sd_bus_path_encode_many() since it escapes
+		   leading digits */
+		snprintf(buf, l, "%s/%d", MCTP_DBUS_PATH, ctx->nets[i].net);
+		nodes[j] = buf;
+		j++;
+	}
+
+	// NULL terminator
+	nodes[j] = NULL;
+	j++;
+	rc = 0;
+	*out = nodes;
+out:
+	if (rc < 0) {
+		for (i = 0; nodes && i < j; i++) {
+			free(nodes[i]);
+		}
+		free(nodes);
+	}
+
+	return rc;
+}
+
 static int setup_bus(ctx *ctx)
 {
 	int rc;
-	sd_bus_slot *slot = NULL;
 
 	rc = sd_event_new(&ctx->event);
 	if (rc < 0) {
@@ -1650,27 +1900,51 @@ static int setup_bus(ctx *ctx)
 		goto out;
 	}
 
-	rc = sd_bus_add_object_vtable(ctx->bus, &slot,
-		mctpd_obj_path, mctpd_iface_busowner, mctpd_vtable, ctx);
+	/* mctp object needs to use _fallback_vtable() since we can't
+	   mix non-fallback and fallback vtables on MCTP_DBUS_PATH */
+	rc = sd_bus_add_fallback_vtable(ctx->bus, NULL,
+				       MCTP_DBUS_PATH,
+				       CC_MCTP_DBUS_IFACE,
+				       bus_mctpd_vtable,
+				       bus_mctpd_find,
+				       ctx);
 	if (rc < 0) {
-		warnx("Failed object");
+		warnx("Failed dbus object");
 		goto out;
 	}
 
-	rc = sd_bus_request_name(ctx->bus, mctpd_iface_busowner, 0);
+	rc = sd_bus_add_fallback_vtable(ctx->bus, NULL,
+				       MCTP_DBUS_PATH,
+				       MCTP_DBUS_IFACE_ENDPOINT,
+				       bus_endpoint_vtable,
+				       bus_endpoint_find,
+				       ctx);
 	if (rc < 0) {
-		warnx("Failed requesting name %s", mctpd_iface_busowner);
+		warnx("Failed dbus fallback endpoint %s", strerror(-rc));
 		goto out;
 	}
 
-	sd_bus_slot_set_floating(slot, 0);
+	rc = sd_bus_add_object_manager(ctx->bus, NULL, MCTP_DBUS_PATH);
+	if (rc < 0) {
+		warnx("%s failed %s", __func__, strerror(-rc));
+		goto out;
+	}
+
+	rc = sd_bus_request_name(ctx->bus, MCTP_DBUS_IFACE, 0);
+	if (rc < 0) {
+		warnx("Failed requesting name %s", MCTP_DBUS_IFACE);
+		goto out;
+	}
+
+	rc = sd_bus_add_node_enumerator(ctx->bus, NULL,
+		MCTP_DBUS_PATH, mctpd_dbus_enumerate, ctx);
+	if (rc < 0) {
+		warnx("Failed add enumerator");
+		goto out;
+	}
 
 	rc = 0;
 out:
-	if (rc < 0 && slot) {
-		sd_bus_slot_unref(slot);
-	}
-
 	return rc;
 }
 
@@ -1746,6 +2020,49 @@ int setup_nets(ctx *ctx)
 out:
 	free(netlist);
 	return rc;
+}
+
+static int setup_testing(ctx *ctx) {
+	int rc;
+	dest_phys dest = {};
+	peer *peer;
+	size_t i, j;
+
+	if (ctx->num_nets > 0) {
+		warnx("Skipping setup_testing, have MCTP nets");
+		return 0;
+	}
+
+	ctx->num_nets = 2;
+	ctx->nets = calloc(ctx->num_nets, sizeof(net_det));
+	ctx->nets[0].net = 10;
+	ctx->nets[1].net = 12;
+	for (j = 0; j < ctx->num_nets; j++)
+		for (i = 0; i < 0xff; i++)
+			ctx->nets[j].peeridx[i] = -1;
+
+	rc = add_peer(ctx, &dest, 7, 10, &peer);
+	if (rc < 0) {
+		warnx("%s failed add_peer, %s", __func__, strerror(-rc));
+		return rc;
+	}
+	peer->state = ASSIGNED;
+
+	rc = add_peer(ctx, &dest, 7, 12, &peer);
+	if (rc < 0) {
+		warnx("%s failed add_peer, %s", __func__, strerror(-rc));
+		return rc;
+	}
+	peer->state = ASSIGNED;
+
+	rc = add_peer(ctx, &dest, 9, 12, &peer);
+	if (rc < 0) {
+		warnx("%s failed add_peer, %s", __func__, strerror(-rc));
+		return rc;
+	}
+	peer->state = ASSIGNED;
+
+	return 0;
 }
 
 static void print_usage(ctx *ctx)
@@ -1829,6 +2146,12 @@ int main(int argc, char **argv)
 	if (rc < 0) {
 		warnx("Error in listen, returned %s %d", strerror(-rc), rc);
 		if (!ctx->testing)
+			return 1;
+	}
+
+	if (ctx->testing) {
+		rc = setup_testing(ctx);
+		if (rc < 0)
 			return 1;
 	}
 
