@@ -575,9 +575,9 @@ static int do_link_set(struct ctx *ctx, int ifindex, bool have_updown, bool up,
 static int cmd_link_set(struct ctx *ctx, int argc, const char **argv) {
 	bool have_updown = false, up, have_net = false;
 	int i;
-	int ifindex, mtu = 0, net = 0;
+	int ifindex;
+	uint32_t mtu = 0, net = 0;
 	const char *curr, *linkstr, *mtustr = NULL, *netstr = NULL;
-	char *endp;
 	const char **next = NULL;
 
 	if (argc < 3)
@@ -621,16 +621,14 @@ static int cmd_link_set(struct ctx *ctx, int argc, const char **argv) {
 	}
 
 	if (mtustr) {
-		mtu = strtoul(mtustr, &endp, 0);
-		if (endp == mtustr || mtu <= 0) {
+		if (parse_uint32(mtustr, &mtu) < 0 || mtu == 0) {
 			warnx("invalid mtu %s", mtustr);
 			return -1;
 		}
 	}
 
 	if (netstr) {
-		net = strtoul(netstr, &endp, 0);
-		if (endp == netstr) {
+		if (parse_uint32(netstr, &net) < 0 || net == 0) {
 			warnx("invalid net %s", netstr);
 			return -1;
 		}
@@ -723,10 +721,9 @@ static int cmd_addr_addremove(struct ctx *ctx,
 		uint8_t			data[4];
 	} msg = {0};
 	const char *eidstr, *linkstr;
-	unsigned long tmp;
+	uint32_t tmp;
 	uint8_t eid;
 	int ifindex;
-	char *endp;
 
 	if (argc != 4) {
 		warnx("%s: invalid arguments", cmdname);
@@ -747,8 +744,7 @@ static int cmd_addr_addremove(struct ctx *ctx,
 		return -1;
 	}
 
-	tmp = strtoul(eidstr, &endp, 0);
-	if (endp == eidstr || tmp > 0xff) {
+	if (parse_uint32(eidstr, &tmp) < 0 || tmp > 0xff) {
 		warnx("invalid address %s", eidstr);
 		return -1;
 	}
@@ -855,8 +851,7 @@ static int fill_rtalter_args(struct ctx *ctx, struct mctp_rtalter_msg *msg,
 {
 	int ifindex;
 	mctp_eid_t eid;
-	char *endp;
-	unsigned long tmp;
+	uint32_t tmp;
 	struct rtattr *rta;
 	size_t rta_len;
 
@@ -866,8 +861,7 @@ static int fill_rtalter_args(struct ctx *ctx, struct mctp_rtalter_msg *msg,
 		return -1;
 	}
 
-	tmp = strtoul(eidstr, &endp, 0);
-	if (endp == eidstr || tmp > 0xff) {
+	if (parse_uint32(eidstr, &tmp) < 0 || tmp > 0xff) {
 		warnx("invalid address %s", eidstr);
 		return -1;
 	}
@@ -1048,9 +1042,8 @@ static int fill_neighalter_args(struct ctx *ctx,
 		struct rtattr **prta, size_t *prta_len,
 		const char *eidstr, const char *linkstr) {
 	struct rtattr *rta;
-	unsigned long tmp;
+	uint32_t tmp;
 	uint8_t eid;
-	char* endp;
 	int ifindex;
 	size_t rta_len;
 
@@ -1060,8 +1053,7 @@ static int fill_neighalter_args(struct ctx *ctx,
 		return -1;
 	}
 
-	tmp = strtoul(eidstr, &endp, 0);
-	if (endp == eidstr || tmp > 0xff) {
+	if (parse_uint32(eidstr, &tmp) < 0 || tmp > 0xff) {
 		warnx("invalid address %s", eidstr);
 		return -1;
 	}

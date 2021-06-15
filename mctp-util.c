@@ -3,7 +3,6 @@
 #include <ctype.h>
 #include <stdlib.h>
 #include <errno.h>
-
 #include "mctp-util.h"
 
 void mctp_hexdump(void *b, int len, const char *indent) {
@@ -110,3 +109,28 @@ int parse_hex_addr(const char* in, uint8_t *out, size_t *out_len)
     return rc;
 }
 
+int parse_uint32(const char *str, uint32_t *out)
+{
+	unsigned long v;
+	char *endp;
+	v = strtoul(str, &endp, 0);
+	if (endp == str || *endp != '\0')
+		return -EINVAL;
+	if (v > UINT32_MAX)
+		return -EOVERFLOW;
+	*out = v;
+	return 0;
+}
+
+int parse_int32(const char *str, int32_t *out)
+{
+	long v;
+	char *endp;
+	v = strtol(str, &endp, 0);
+	if (endp == str || *endp != '\0')
+		return -EINVAL;
+	if (v > INT32_MAX || v < INT32_MIN)
+		return -EOVERFLOW;
+	*out = v;
+	return 0;
+}
