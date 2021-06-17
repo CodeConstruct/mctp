@@ -1023,12 +1023,12 @@ static int check_peer_struct(const ctx *ctx, const peer *peer, const struct net_
 		return -1;
 	}
 
-	if ((peer - ctx->peers) % sizeof(struct peer) != 0) {
+	if (((void*)peer - (void*)ctx->peers) % sizeof(struct peer) != 0) {
 		warnx("BUG: Bad address alignment");
 		return -1;
 	}
 
-	idx = (peer - ctx->peers) / sizeof(struct peer);
+	idx = peer - ctx->peers;
 	if (idx < 0 || idx > (ssize_t)ctx->size_peers) {
 		warnx("BUG: Bad address index");
 		return -1;
@@ -1134,6 +1134,7 @@ static int endpoint_assign_eid(ctx *ctx, sd_bus_error *berr, const dest_phys *de
 			rc = add_peer(ctx, dest, e, net, &peer);
 			if (rc < 0)
 				return rc;
+			break;
 		}
 	}
 	if (e > eid_alloc_max) {
@@ -1166,6 +1167,7 @@ static int endpoint_assign_eid(ctx *ctx, sd_bus_error *berr, const dest_phys *de
 	}
 	peer->state = ASSIGNED;
 	emit_endpoint_added(ctx, peer);
+	*ret_peer = peer;
 
 	return 0;
 }
@@ -1183,17 +1185,17 @@ static void set_berr(ctx *ctx, int errcode, sd_bus_error *berr) {
 			break;
 		case -ETIMEDOUT:
 			sd_bus_error_setf(berr, SD_BUS_ERROR_FAILED,
-				"Endpoint did not respond");
+				"MCTP Endpoint did not respond");
 			break;
 		case -ECONNREFUSED:
 			// MCTP_CTRL_CC_ERROR or others
 			sd_bus_error_setf(berr, SD_BUS_ERROR_FAILED,
-				"Endpoint replied with failure");
+				"MCTP Endpoint replied with failure");
 			break;
 		case -EBUSY:
 			// MCTP_CTRL_CC_ERROR_NOT_READY
 			sd_bus_error_setf(berr, SD_BUS_ERROR_FAILED,
-				"Endpoint busy");
+				"MCTP Endpoint busy");
 			break;
 		case -ENOTSUP:
 			// MCTP_CTRL_CC_ERROR_UNSUPPORTED_CMD
@@ -1546,6 +1548,73 @@ err:
 }
 
 // Testing code
+static int method_sendto_phys(sd_bus_message *call, void *data, sd_bus_error *berr)
+{
+	int rc;
+	const char *ifname = NULL;
+	struct _sockaddr_mctp_ext addr;
+	dest_phys desti, *dest = &desti;
+	ctx *ctx = data;
+	uint8_t type;
+	uint8_t *req = NULL, *resp = NULL;
+	size_t req_len, resp_len;
+	sd_bus_message *m = NULL;
+
+	rc = sd_bus_message_read(call, "s", &ifname);
+	if (rc < 0)
+		goto err;
+
+	rc = sd_bus_message_read_array(call, 'y',
+		(const void**)&dest->hwaddr, &dest->hwaddr_len);
+	if (rc < 0)
+		goto err;
+
+	rc = sd_bus_message_read(call, "y", &type);
+	if (rc < 0)
+		goto err;
+
+	rc = sd_bus_message_read_array(call, 'y', (const void**)&req, &req_len);
+	if (rc < 0)
+		goto err;
+
+	dest->ifindex = mctp_nl_ifindex_byname(ctx->nl, ifname);
+	if (dest->ifindex <= 0)
+		return sd_bus_error_setf(berr, SD_BUS_ERROR_INVALID_ARGS,
+			"Unknown MCTP ifname '%s'", ifname);
+
+	rc = validate_dest_phys(ctx, dest);
+	if (rc < 0)
+		return sd_bus_error_setf(berr, SD_BUS_ERROR_INVALID_ARGS,
+			"Bad physaddr");
+
+	rc = endpoint_query_phys(ctx, dest, MCTP_CTRL_HDR_MSG_TYPE, req-1,
+		req_len+1, &resp, &resp_len, &addr);
+	if (rc < 0)
+		goto err;
+
+	dfree(resp);
+	rc = sd_bus_message_new_method_return(call, &m);
+	if (rc < 0)
+		goto err;
+
+	rc = sd_bus_message_append(m, "yi",
+		addr.smctp_base.smctp_addr,
+		addr.smctp_base.smctp_network);
+	if (rc < 0)
+		goto err;
+
+	rc = sd_bus_message_append_array(m, 'y', resp+1, resp_len-1);
+	if (rc < 0)
+		goto err;
+
+	rc = sd_bus_send(sd_bus_message_get_bus(m), m, NULL);
+	sd_bus_message_unref(m);
+	return rc;
+
+err:
+	set_berr(ctx, rc, berr);
+	return rc;
+}
 static int cb_test_timer(sd_event_source *s, uint64_t t, void* data)
 {
 	sd_bus_message *call = data;
@@ -1675,8 +1744,19 @@ static const sd_bus_vtable bus_mctpd_vtable[] = {
 		method_learn_endpoint,
 		0),
 
-
 	// Testing code
+	SD_BUS_METHOD_WITH_NAMES("SendToPhys",
+		"sayyay",
+		SD_BUS_PARAM(ifname)
+		SD_BUS_PARAM(physaddr)
+		SD_BUS_PARAM(type)
+		SD_BUS_PARAM(req),
+		"yiay",
+		SD_BUS_PARAM(eid)
+		SD_BUS_PARAM(net)
+		SD_BUS_PARAM(resp),
+		method_sendto_phys,
+		0),
 	SD_BUS_METHOD_WITH_NAMES("TestTimer",
 		"i",
 		SD_BUS_PARAM(seconds),
