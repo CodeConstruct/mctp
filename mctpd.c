@@ -21,6 +21,7 @@
 
 #include <systemd/sd-event.h>
 #include <systemd/sd-bus.h>
+#include <systemd/sd-id128.h>
 
 #include "mctp.h"
 #include "mctp-util.h"
@@ -32,6 +33,7 @@
 
 #define MCTP_DBUS_PATH "/xyz/openbmc_project/mctp"
 #define CC_MCTP_DBUS_IFACE "au.com.CodeConstruct.MCTP"
+#define CC_MCTP_DBUS_TESTING_IFACE "au.com.CodeConstruct.MCTPTesting"
 #define MCTP_DBUS_IFACE "xyz.openbmc_project.MCTP"
 #define MCTP_DBUS_IFACE_ENDPOINT "xyz.openbmc_project.MCTP.Endpoint"
 #define OPENBMC_IFACE_COMMON_UUID "xyz.openbmc_project.Common.UUID"
@@ -85,6 +87,9 @@ struct peer {
 	// from Get Endpoint ID
 	uint8_t endpoint_type;
 	uint8_t medium_spec;
+
+	// From Get Endpoint UUID. A malloced 16 bytes */
+	uint8_t *uuid;
 };
 typedef struct peer peer;
 
@@ -106,6 +111,8 @@ struct ctx {
 	// Timeout in usecs for a MCTP response
 	uint64_t mctp_timeout;
 
+	uint8_t uuid[16];
+
 	// Verbose logging
 	bool verbose;
 	bool testing;
@@ -114,6 +121,7 @@ typedef struct ctx ctx;
 
 static int emit_endpoint_added(ctx *ctx, const peer *peer);
 static int emit_endpoint_removed(ctx *ctx, const peer *peer);
+static int query_peer_properties(ctx *ctx, peer *peer);
 
 mctp_eid_t local_addr(const ctx *ctx, int ifindex) {
 	mctp_eid_t *eids, ret = 0;
@@ -141,7 +149,6 @@ static bool match_phys(const dest_phys *d1, const dest_phys *d2) {
 	return d1->ifindex == d2->ifindex &&
 		d1->hwaddr_len == d2->hwaddr_len &&
 		!memcmp(d1->hwaddr, d2->hwaddr, d1->hwaddr_len);
-
 }
 
 static peer * find_peer_by_phys(ctx *ctx, const dest_phys *dest)
@@ -405,7 +412,7 @@ int handle_control_set_endpoint_id(ctx *ctx,
 	const uint8_t *buf, const size_t buf_size)
 {
 	struct mctp_ctrl_cmd_set_eid *req = NULL;
-	struct mctp_ctrl_resp_set_eid respi, *resp = &respi;
+	struct mctp_ctrl_resp_set_eid respi = {0}, *resp = &respi;
 	size_t resp_len;
 
 	if (buf_size < sizeof(*req)) {
@@ -498,6 +505,26 @@ int handle_control_get_endpoint_id(ctx *ctx,
 	return reply_message(ctx, sd, resp, sizeof(*resp), addr);
 }
 
+int handle_control_get_endpoint_uuid(ctx *ctx,
+	int sd, const struct _sockaddr_mctp_ext *addr,
+	const uint8_t *buf, const size_t buf_size)
+{
+	struct mctp_ctrl_cmd_get_uuid *req = NULL;;
+	struct mctp_ctrl_resp_get_uuid respi = {0}, *resp = &respi;
+
+	if (buf_size < sizeof(*req)) {
+		warnx("short Get Endpoint UUID message");
+		return -ENOMSG;
+	}
+
+	req = (void*)buf;
+	resp->ctrl_hdr.command_code = req->ctrl_msg_hdr.command_code;
+	resp->ctrl_hdr.rq_dgram_inst = RQDI_RESP;
+	memcpy(resp->uuid.raw, ctx->uuid, sizeof(resp->uuid));
+	return reply_message(ctx, sd, resp, sizeof(*resp), addr);
+}
+
+
 int handle_control_get_message_type_support(ctx *ctx,
 	int sd, const struct _sockaddr_mctp_ext *addr,
 	const uint8_t *buf, const size_t buf_size)
@@ -574,6 +601,10 @@ static int cb_listen_control_msg(sd_event_source *s, int sd, uint32_t revents,
 	}
 
 	ctrl_msg = (void*)buf;
+	if (ctx->verbose) {
+		warnx("Got control request command code %hhd",
+			ctrl_msg->command_code);
+	}
 	switch (ctrl_msg->command_code) {
 		case MCTP_CTRL_CMD_GET_VERSION_SUPPORT:
 			rc = handle_control_get_version_support(ctx,
@@ -587,10 +618,10 @@ static int cb_listen_control_msg(sd_event_source *s, int sd, uint32_t revents,
 			rc = handle_control_get_endpoint_id(ctx,
 				sd, &addr, buf, buf_size);
 			break;
-		// case MCTP_CTRL_CMD_GET_ENDPOINT_UUID:
-		// 	rc = handle_control_get_endpoint_uuid(ctx,
-		// 		sd, &addr, buf, buf_size);
-		// 	break;
+		case MCTP_CTRL_CMD_GET_ENDPOINT_UUID:
+			rc = handle_control_get_endpoint_uuid(ctx,
+				sd, &addr, buf, buf_size);
+			break;
 		case MCTP_CTRL_CMD_GET_MESSAGE_TYPE_SUPPORT:
 			rc = handle_control_get_message_type_support(ctx,
 				sd, &addr, buf, buf_size);
@@ -1069,6 +1100,7 @@ static int remove_peer(ctx *ctx, peer *peer)
 	// Clear it
 	n->peeridx[peer->eid] = -1;
 	free(peer->message_types);
+	free(peer->uuid);
 	memset(peer, 0x0, sizeof(struct peer));
 	return 0;
 }
@@ -1343,6 +1375,7 @@ static int query_get_peer_msgtypes(ctx *ctx, peer *peer) {
 		return -EPROTO;
 	}
 
+	peer->num_message_types = 0;
 	free(peer->message_types);
 	peer->message_types = NULL;
 
@@ -1382,6 +1415,82 @@ static int query_get_peer_msgtypes(ctx *ctx, peer *peer) {
 		goto out;
 	}
 	memcpy(peer->message_types, (void*)(resp+1), resp->msg_type_count);
+	rc = 0;
+out:
+	free(buf);
+	return rc;
+}
+
+static int peer_set_uuid(peer *peer, const uint8_t uuid[16])
+{
+	if (!peer->uuid) {
+		peer->uuid = malloc(16);
+		if (!peer->uuid)
+			return -ENOMEM;
+	}
+	memcpy(peer->uuid, uuid, 16);
+	return 0;
+}
+
+/* Returns a deferred free pointer */
+static const char* bytes_to_uuid(const uint8_t u[16])
+{
+	char *buf = dfree(malloc(37));
+	if (!buf) {
+		return "Out of memory                                    ";
+	}
+	snprintf(buf, 37,
+		"%02x%02x%02x%02x"
+		"-"
+		"%02x%02x"
+		"-"
+		"%02x%02x"
+		"-"
+		"%02x%02x"
+		"-"
+		"%02x%02x%02x%02x%02x%02x",
+		u[0], u[1], u[2], u[3], u[4], u[5], u[6], u[7],
+		u[8], u[9], u[10], u[11], u[12], u[13], u[14], u[15]);
+	return buf;
+}
+
+static int query_get_peer_uuid(ctx *ctx, peer *peer) {
+	struct _sockaddr_mctp_ext addr;
+	struct mctp_ctrl_cmd_get_uuid req;
+	struct mctp_ctrl_resp_get_uuid *resp = NULL;
+	uint8_t* buf = NULL;
+	size_t buf_size;
+	int rc;
+
+	if (peer->state != ASSIGNED) {
+		warnx("%s: Wrong state for peer %s", __func__, peer_tostr(peer));
+		return -EPROTO;
+	}
+
+	req.ctrl_msg_hdr.rq_dgram_inst = RQDI_REQ;
+	req.ctrl_msg_hdr.command_code = MCTP_CTRL_CMD_GET_ENDPOINT_UUID;
+
+	rc = endpoint_query_peer(ctx, peer, MCTP_CTRL_HDR_MSG_TYPE,
+		&req, sizeof(req), &buf, &buf_size, &addr);
+	if (rc < 0)
+		goto out;
+
+	if (buf_size != sizeof(*resp)) {
+		warnx("%s: wrong reply %zu bytes. dest %s", __func__, buf_size,
+			peer_tostr(peer));
+		rc = -ENOMSG;
+		goto out;
+	}
+	resp = (void*)buf;
+
+	if (resp->completion_code != 0x00) {
+		rc = -ECONNREFUSED;
+		goto out;
+	}
+
+	rc = peer_set_uuid(peer, (uint8_t*)(&resp->uuid));
+	if (rc < 0)
+		goto out;
 	rc = 0;
 
 out:
@@ -1487,12 +1596,9 @@ static int method_assign_endpoint(sd_bus_message *call, void *data, sd_bus_error
 	if (rc < 0)
 		goto err;
 
-	rc = query_get_peer_msgtypes(ctx, peer);
-	if (rc < 0) {
-		warnx("Error getting endpoint types for %s. Ignoring error %d %s",
-			peer_tostr(peer), rc, strerror(-rc));
-		rc = 0;
-	}
+	rc = query_peer_properties(ctx, peer);
+	if (rc < 0)
+		goto err;
 
 	return sd_bus_reply_method_return(call, "yib",
 		peer->eid, peer->net, 1);
@@ -1534,18 +1640,43 @@ static int method_learn_endpoint(sd_bus_message *call, void *data, sd_bus_error 
 	if (!peer)
 		return sd_bus_reply_method_return(call, "byi", 0, 0, 0);
 
-	rc = query_get_peer_msgtypes(ctx, peer);
-	if (rc < 0) {
-		warnx("Error getting endpoint types for %s. Ignoring error %d %s",
-			peer_tostr(peer), rc, strerror(-rc));
-		rc = 0;
-	}
+	rc = query_peer_properties(ctx, peer);
+	if (rc < 0)
+		goto err;
 
 	return sd_bus_reply_method_return(call, "byi", 1, peer->eid, peer->net);
 err:
 	set_berr(ctx, rc, berr);
 	return rc;
 }
+
+// Query various properties of a peer.
+// To be called when a new peer is discovered/assigned, once an EID is known
+static int query_peer_properties(ctx *ctx, peer *peer)
+{
+	int rc;
+
+	rc = query_get_peer_msgtypes(ctx, peer);
+	if (rc < 0) {
+		// Warn here, it's a mandatory command code.
+		// It might be too noisy if some devices don't implement it.
+		warnx("Error getting endpoint types for %s. Ignoring error %d %s",
+			peer_tostr(peer), rc, strerror(-rc));
+		rc = 0;
+	}
+
+	rc = query_get_peer_uuid(ctx, peer);
+	if (rc < 0) {
+		if (ctx->verbose)
+			warnx("Error getting UUID for %s. Ignoring error %d %s",
+				peer_tostr(peer), rc, strerror(-rc));
+		rc = 0;
+	}
+
+	// TODO: emit property changed? Though currently they are all const.
+	return rc;
+}
+
 
 // Testing code
 static int method_sendto_phys(sd_bus_message *call, void *data, sd_bus_error *berr)
@@ -1743,8 +1874,11 @@ static const sd_bus_vtable bus_mctpd_vtable[] = {
 		SD_BUS_PARAM(net),
 		method_learn_endpoint,
 		0),
+	SD_BUS_VTABLE_END,
+};
 
-	// Testing code
+static const sd_bus_vtable testing_vtable[] = {
+	SD_BUS_VTABLE_START(0),
 	SD_BUS_METHOD_WITH_NAMES("SendToPhys",
 		"sayyay",
 		SD_BUS_PARAM(ifname)
@@ -1789,6 +1923,13 @@ static int bus_endpoint_get_prop(sd_bus *bus,
 	} else if (strcmp(property, "SupportedMessageTypes") == 0) {
 		rc = sd_bus_message_append_array(reply, 'y',
 			peer->message_types, peer->num_message_types);
+	} else if (strcmp(property, "UUID") == 0) {
+		if (peer->uuid) {
+			const char *s = bytes_to_uuid(peer->uuid);
+			rc = sd_bus_message_append(reply, "s", s);
+		} else {
+			rc = -ENOENT;
+		}
 	} else {
 		rc = -ENOENT;
 	}
@@ -1816,6 +1957,16 @@ static const sd_bus_vtable bus_endpoint_vtable[] = {
 	SD_BUS_VTABLE_END
 };
 
+static const sd_bus_vtable bus_endpoint_uuid_vtable[] = {
+	SD_BUS_VTABLE_START(0),
+	SD_BUS_PROPERTY("UUID",
+			"s",
+			bus_endpoint_get_prop,
+			0,
+			SD_BUS_VTABLE_PROPERTY_CONST),
+	SD_BUS_VTABLE_END
+};
+
 static int bus_endpoint_find(sd_bus *bus, const char *path,
 	const char *interface, void *userdata, void **ret_found,
 	sd_bus_error *ret_error)
@@ -1825,7 +1976,7 @@ static int bus_endpoint_find(sd_bus *bus, const char *path,
 	int rc;
 
 	rc = peer_from_path(ctx, path, &peer);
-	if (rc == 0) {
+	if (rc >= 0) {
 		*ret_found = peer;
 		return 1;
 	}
@@ -2003,6 +2154,17 @@ static int setup_bus(ctx *ctx)
 		goto out;
 	}
 
+	rc = sd_bus_add_fallback_vtable(ctx->bus, NULL,
+				       MCTP_DBUS_PATH,
+				       OPENBMC_IFACE_COMMON_UUID,
+				       bus_endpoint_uuid_vtable,
+				       bus_endpoint_find,
+				       ctx);
+	if (rc < 0) {
+		warnx("Failed dbus fallback endpoint uuid %s", strerror(-rc));
+		goto out;
+	}
+
 	rc = sd_bus_add_object_manager(ctx->bus, NULL, MCTP_DBUS_PATH);
 	if (rc < 0) {
 		warnx("%s failed %s", __func__, strerror(-rc));
@@ -2086,6 +2248,11 @@ int setup_nets(ctx *ctx)
 				continue;
 			}
 			peer->state = LOCAL;
+			rc = peer_set_uuid(peer, ctx->uuid);
+			if (rc < 0) {
+				warnx("Failed setting local UUID: %s",
+					strerror(-rc));
+			}
 		}
 		free(eids);
 	}
@@ -2110,44 +2277,60 @@ static int setup_testing(ctx *ctx) {
 	if (!ctx->testing)
 		return 0;
 
+	warnx("Running in development testing mode. Not safe for production");
+
 	if (ctx->num_nets > 0) {
-		warnx("Skipping setup_testing, have MCTP nets");
-		return 0;
+		warnx("Not populating fake MCTP nets, real ones exist");
+	} else {
+		warnx("Populating fake MCTP nets");
+
+		ctx->num_nets = 2;
+		ctx->nets = calloc(ctx->num_nets, sizeof(net_det));
+		ctx->nets[0].net = 10;
+		ctx->nets[1].net = 12;
+		for (j = 0; j < ctx->num_nets; j++)
+			for (i = 0; i < 0xff; i++)
+				ctx->nets[j].peeridx[i] = -1;
+
+		rc = add_peer(ctx, &dest, 7, 10, &peer);
+		if (rc < 0) {
+			warnx("%s failed add_peer, %s", __func__, strerror(-rc));
+			return rc;
+		}
+		peer->state = ASSIGNED;
+
+		rc = add_peer(ctx, &dest, 7, 12, &peer);
+		if (rc < 0) {
+			warnx("%s failed add_peer, %s", __func__, strerror(-rc));
+			return rc;
+		}
+		peer->state = ASSIGNED;
+		peer->num_message_types = 3;
+		peer->message_types = malloc(3);
+		peer->message_types[0] = 0x00;
+		peer->message_types[1] = 0x03;
+		peer->message_types[2] = 0x04;
+
+		rc = add_peer(ctx, &dest, 9, 12, &peer);
+		if (rc < 0) {
+			warnx("%s failed add_peer, %s", __func__, strerror(-rc));
+			return rc;
+		}
+		peer->state = ASSIGNED;
 	}
 
-	ctx->num_nets = 2;
-	ctx->nets = calloc(ctx->num_nets, sizeof(net_det));
-	ctx->nets[0].net = 10;
-	ctx->nets[1].net = 12;
-	for (j = 0; j < ctx->num_nets; j++)
-		for (i = 0; i < 0xff; i++)
-			ctx->nets[j].peeridx[i] = -1;
-
-	rc = add_peer(ctx, &dest, 7, 10, &peer);
+	/* Add extra interface with test methods */
+	rc = sd_bus_add_fallback_vtable(ctx->bus, NULL,
+				       MCTP_DBUS_PATH,
+				       CC_MCTP_DBUS_TESTING_IFACE,
+				       testing_vtable,
+				       bus_mctpd_find,
+				       ctx);
 	if (rc < 0) {
-		warnx("%s failed add_peer, %s", __func__, strerror(-rc));
+		warnx("Failed testing dbus object");
 		return rc;
 	}
-	peer->state = ASSIGNED;
 
-	rc = add_peer(ctx, &dest, 7, 12, &peer);
-	if (rc < 0) {
-		warnx("%s failed add_peer, %s", __func__, strerror(-rc));
-		return rc;
-	}
-	peer->state = ASSIGNED;
-	peer->num_message_types = 3;
-	peer->message_types = malloc(3);
-	peer->message_types[0] = 0x00;
-	peer->message_types[1] = 0x03;
-	peer->message_types[2] = 0x04;
-
-	rc = add_peer(ctx, &dest, 9, 12, &peer);
-	if (rc < 0) {
-		warnx("%s failed add_peer, %s", __func__, strerror(-rc));
-		return rc;
-	}
-	peer->state = ASSIGNED;
 
 	return 0;
 }
@@ -2156,7 +2339,7 @@ static void print_usage(ctx *ctx)
 {
 	fprintf(stderr, "mctpd [-v] [-N]\n");
 	fprintf(stderr, "      -v verbose\n");
-	fprintf(stderr, "      -N testing mode, no MTCP required to start\n");
+	fprintf(stderr, "      -N testing mode. Not safe for production\n");
 }
 
 static int parse_args(ctx *ctx, int argc, char **argv)
@@ -2190,11 +2373,37 @@ static int parse_args(ctx *ctx, int argc, char **argv)
 	return 0;
 }
 
+static int fill_uuid(ctx *ctx)
+{
+	int rc;
+	sd_id128_t *u = NULL;
+
+	// TODO should we hash the machineid?
+	// sd_id128_get_machine_app_specific()
+
+	// TODO better cast?
+	u = (void*)ctx->uuid;
+	rc = sd_id128_get_machine(u);
+	if (rc >= 0)
+		return 0;
+
+	warnx("No machine-id, fallback to boot ID");
+	rc = sd_id128_get_boot(u);
+	if (rc < 0)
+		warnx("Failed to get boot ID");
+
+	return rc;
+}
+
 static int setup_config(ctx *ctx)
 {
+	int rc;
 	// TODO: this will go in a config file or arguments.
 	ctx->mctp_timeout = 250000; // 250ms
 	ctx->bus_owner = true;
+	rc = fill_uuid(ctx);
+	if (rc < 0)
+		return rc;
 	return 0;
 }
 
