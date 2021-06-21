@@ -127,10 +127,10 @@ struct ctx {
 };
 typedef struct ctx ctx;
 
-static int emit_endpoint_added(ctx *ctx, const peer *peer);
-static int emit_endpoint_removed(ctx *ctx, const peer *peer);
-static int query_peer_properties(ctx *ctx, peer *peer);
-static int setup_added_peer(ctx *ctx, peer *peer);
+static int emit_endpoint_added(const peer *peer);
+static int emit_endpoint_removed(const peer *peer);
+static int query_peer_properties(peer *peer);
+static int setup_added_peer(peer *peer);
 static int peer_route_update(peer *peer, uint16_t type);
 static int peer_neigh_update(peer *peer, uint16_t type);
 
@@ -806,7 +806,7 @@ out:
  * req and resp buffers include the initial message type byte.
  * This is ignored, the addr.smctp_type is used instead.
  */
-static int endpoint_query_peer(ctx *ctx, const peer *peer,
+static int endpoint_query_peer(const peer *peer,
 	uint8_t req_type, const void* req, size_t req_len,
 	uint8_t **resp, size_t *resp_len, struct _sockaddr_mctp_ext *resp_addr)
 {
@@ -824,7 +824,7 @@ static int endpoint_query_peer(ctx *ctx, const peer *peer,
 	addr.smctp_base.smctp_type = req_type;
 	addr.smctp_base.smctp_tag = MCTP_TAG_OWNER;
 
-	return endpoint_query_addr(ctx, &addr, false, req, req_len,
+	return endpoint_query_addr(peer->ctx, &addr, false, req, req_len,
 		resp, resp_len, resp_addr);
 }
 
@@ -922,8 +922,7 @@ out:
 }
 
 /* returns -ECONNREFUSED if the endpoint returns failure. */
-static int endpoint_send_set_endpoint_id(ctx *ctx, const peer *peer,
-	mctp_eid_t *new_eid)
+static int endpoint_send_set_endpoint_id(const peer *peer, mctp_eid_t *new_eid)
 {
 	struct _sockaddr_mctp_ext addr;
 	struct mctp_ctrl_cmd_set_eid req = {0};
@@ -940,7 +939,7 @@ static int endpoint_send_set_endpoint_id(ctx *ctx, const peer *peer,
 	req.ctrl_msg_hdr.command_code = MCTP_CTRL_CMD_SET_ENDPOINT_ID;
 	req.operation = 0; // 00b Set EID. TODO: do we want Force?
 	req.eid = peer->eid;
-	rc = endpoint_query_phys(ctx, dest, MCTP_CTRL_HDR_MSG_TYPE, &req,
+	rc = endpoint_query_phys(peer->ctx, dest, MCTP_CTRL_HDR_MSG_TYPE, &req,
 		sizeof(req), &buf, &buf_size, &addr);
 	if (rc < 0)
 		goto out;
@@ -1058,9 +1057,11 @@ static int add_peer(ctx *ctx, const dest_phys *dest, mctp_eid_t eid,
 	return 0;
 }
 
-static int check_peer_struct(const ctx *ctx, const peer *peer, const struct net_det *n)
+static int check_peer_struct(const peer *peer, const struct net_det *n)
 {
 	ssize_t idx;
+    ctx *ctx = peer->ctx;
+
 	if (n->net != peer->net) {
 		warnx("BUG: Mismatching net %d vs peer net %d", n->net, peer->net);
 		return -1;
@@ -1086,7 +1087,7 @@ static int check_peer_struct(const ctx *ctx, const peer *peer, const struct net_
 	return 0;
 }
 
-static int remove_peer(ctx *ctx, peer *peer)
+static int remove_peer(peer *peer)
 {
 	int rc;
 	net_det *n = NULL;
@@ -1096,13 +1097,13 @@ static int remove_peer(ctx *ctx, peer *peer)
 		return -EPROTO;
 	}
 
-	n = lookup_net(ctx, peer->net);
+	n = lookup_net(peer->ctx, peer->net);
 	if (!n) {
 		warnx("BUG: %s: Bad net %d", __func__, peer->net);
 		return -EPROTO;
 	}
 
-	if (check_peer_struct(ctx, peer, n) != 0) {
+	if (check_peer_struct(peer, n) != 0) {
 		warnx("BUG: %s: Inconsistent state", __func__);
 		return -EPROTO;
 	}
@@ -1124,7 +1125,7 @@ static int remove_peer(ctx *ctx, peer *peer)
 					strerror(-rc));
 		}
 
-		emit_endpoint_removed(ctx, peer);
+		emit_endpoint_removed(peer);
 	}
 
 	// Clear it
@@ -1136,7 +1137,7 @@ static int remove_peer(ctx *ctx, peer *peer)
 }
 
 /* Returns -EEXIST if the new_eid is already used */
-static int change_peer_eid(ctx *ctx, peer *peer, mctp_eid_t new_eid) {
+static int change_peer_eid(peer *peer, mctp_eid_t new_eid) {
 	net_det *n = NULL;
 
 	if (peer->state == UNUSED) {
@@ -1144,13 +1145,13 @@ static int change_peer_eid(ctx *ctx, peer *peer, mctp_eid_t new_eid) {
 		return -EPROTO;
 	}
 
-	n = lookup_net(ctx, peer->net);
+	n = lookup_net(peer->ctx, peer->net);
 	if (!n) {
 		warnx("BUG: %s: Bad net %d", __func__, peer->net);
 		return -EPROTO;
 	}
 
-	if (check_peer_struct(ctx, peer, n) != 0) {
+	if (check_peer_struct(peer, n) != 0) {
 		warnx("BUG: %s: Inconsistent state", __func__);
 		return -EPROTO;
 	}
@@ -1159,12 +1160,12 @@ static int change_peer_eid(ctx *ctx, peer *peer, mctp_eid_t new_eid) {
 		return -EEXIST;
 
 	if (peer->state == ASSIGNED)
-		emit_endpoint_removed(ctx, peer);
+		emit_endpoint_removed(peer);
 	n->peeridx[new_eid] = n->peeridx[peer->eid];
 	n->peeridx[peer->eid] = -1;
 	peer->eid = new_eid;
 	if (peer->state == ASSIGNED)
-		emit_endpoint_added(ctx, peer);
+		emit_endpoint_added(peer);
 
 	return 0;
 }
@@ -1206,29 +1207,29 @@ static int endpoint_assign_eid(ctx *ctx, sd_bus_error *berr, const dest_phys *de
 		return -EADDRNOTAVAIL;
 	}
 
-	rc = endpoint_send_set_endpoint_id(ctx, peer, &new_eid);
+	rc = endpoint_send_set_endpoint_id(peer, &new_eid);
 	if (rc == -ECONNREFUSED)
 		sd_bus_error_setf(berr, SD_BUS_ERROR_FAILED,
 			"Endpoint returned failure to Set Endpoint ID");
 	if (rc < 0) {
-		remove_peer(ctx, peer);
+		remove_peer(peer);
 		return rc;
 	}
 
 	if (new_eid != peer->eid) {
-		rc = change_peer_eid(ctx, peer, new_eid);
+		rc = change_peer_eid(peer, new_eid);
 		if (rc == -EEXIST) {
 			sd_bus_error_setf(berr, SD_BUS_ERROR_FAILED,
 				"Endpoint requested EID %d instead of assigned %d, already used",
 				new_eid, peer->eid);
 		}
 		if (rc < 0) {
-			remove_peer(ctx, peer);
+			remove_peer(peer);
 			return rc;
 		}
 	}
 
-	rc = setup_added_peer(ctx, peer);
+	rc = setup_added_peer(peer);
 	if (rc < 0)
 		return rc;
 	*ret_peer = peer;
@@ -1359,10 +1360,10 @@ static int get_endpoint_peer(ctx *ctx, sd_bus_error *berr,
 
 		if (eid == 0) {
 			// EID not yet assigned
-			remove_peer(ctx, peer);
+			remove_peer(peer);
 			return 0;
 		} else if (peer->eid != eid) {
-			rc = change_peer_eid(ctx, peer, eid);
+			rc = change_peer_eid(peer, eid);
 			if (rc == -EEXIST)
 				return sd_bus_error_setf(berr, SD_BUS_ERROR_FAILED,
 					"Endpoint previously EID %d claimed EID %d which is already used",
@@ -1387,7 +1388,7 @@ static int get_endpoint_peer(ctx *ctx, sd_bus_error *berr,
 
 	peer->endpoint_type = ep_type;
 	peer->medium_spec = medium_spec;
-	rc = setup_added_peer(ctx, peer);
+	rc = setup_added_peer(peer);
 	if (rc < 0)
 		return rc;
 
@@ -1395,7 +1396,7 @@ static int get_endpoint_peer(ctx *ctx, sd_bus_error *berr,
 	return 0;
 }
 
-static int query_get_peer_msgtypes(ctx *ctx, peer *peer) {
+static int query_get_peer_msgtypes(peer *peer) {
 	struct _sockaddr_mctp_ext addr;
 	struct mctp_ctrl_cmd_get_msg_type_support req;
 	struct mctp_ctrl_resp_get_msg_type_support *resp = NULL;
@@ -1410,7 +1411,7 @@ static int query_get_peer_msgtypes(ctx *ctx, peer *peer) {
 	req.ctrl_msg_hdr.rq_dgram_inst = RQDI_REQ;
 	req.ctrl_msg_hdr.command_code = MCTP_CTRL_CMD_GET_MESSAGE_TYPE_SUPPORT;
 
-	rc = endpoint_query_peer(ctx, peer, MCTP_CTRL_HDR_MSG_TYPE,
+	rc = endpoint_query_peer(peer, MCTP_CTRL_HDR_MSG_TYPE,
 		&req, sizeof(req), &buf, &buf_size, &addr);
 	if (rc < 0)
 		goto out;
@@ -1460,7 +1461,7 @@ static int peer_set_uuid(peer *peer, const uint8_t uuid[16])
 	return 0;
 }
 
-static int query_get_peer_uuid(ctx *ctx, peer *peer) {
+static int query_get_peer_uuid(peer *peer) {
 	struct _sockaddr_mctp_ext addr;
 	struct mctp_ctrl_cmd_get_uuid req;
 	struct mctp_ctrl_resp_get_uuid *resp = NULL;
@@ -1476,7 +1477,7 @@ static int query_get_peer_uuid(ctx *ctx, peer *peer) {
 	req.ctrl_msg_hdr.rq_dgram_inst = RQDI_REQ;
 	req.ctrl_msg_hdr.command_code = MCTP_CTRL_CMD_GET_ENDPOINT_UUID;
 
-	rc = endpoint_query_peer(ctx, peer, MCTP_CTRL_HDR_MSG_TYPE,
+	rc = endpoint_query_peer(peer, MCTP_CTRL_HDR_MSG_TYPE,
 		&req, sizeof(req), &buf, &buf_size, &addr);
 	if (rc < 0)
 		goto out;
@@ -1565,7 +1566,7 @@ static int method_assign_endpoint(sd_bus_message *call, void *data, sd_bus_error
 	if (rc < 0)
 		goto err;
 
-	rc = setup_added_peer(ctx, peer);
+	rc = setup_added_peer(peer);
 	if (rc < 0)
 		goto err;
 
@@ -1609,7 +1610,7 @@ static int method_learn_endpoint(sd_bus_message *call, void *data, sd_bus_error 
 	if (!peer)
 		return sd_bus_reply_method_return(call, "byi", 0, 0, 0);
 
-	rc = query_peer_properties(ctx, peer);
+	rc = query_peer_properties(peer);
 	if (rc < 0)
 		goto err;
 
@@ -1621,11 +1622,11 @@ err:
 
 // Query various properties of a peer.
 // To be called when a new peer is discovered/assigned, once an EID is known
-static int query_peer_properties(ctx *ctx, peer *peer)
+static int query_peer_properties(peer *peer)
 {
 	int rc;
 
-	rc = query_get_peer_msgtypes(ctx, peer);
+	rc = query_get_peer_msgtypes(peer);
 	if (rc < 0) {
 		// Warn here, it's a mandatory command code.
 		// It might be too noisy if some devices don't implement it.
@@ -1634,9 +1635,9 @@ static int query_peer_properties(ctx *ctx, peer *peer)
 		rc = 0;
 	}
 
-	rc = query_get_peer_uuid(ctx, peer);
+	rc = query_get_peer_uuid(peer);
 	if (rc < 0) {
-		if (ctx->verbose)
+		if (peer->ctx->verbose)
 			warnx("Error getting UUID for %s. Ignoring error %d %s",
 				peer_tostr(peer), rc, strerror(-rc));
 		rc = 0;
@@ -1697,7 +1698,7 @@ static int peer_route_update(peer *peer, uint16_t type)
 	return mctp_nl_send(peer->ctx->nl, &msg.nh);
 }
 
-static int setup_added_peer(ctx *ctx, peer *peer)
+static int setup_added_peer(peer *peer)
 {
 	int rc;
 
@@ -1718,14 +1719,14 @@ static int setup_added_peer(ctx *ctx, peer *peer)
 	// Ready to send ordinary messages
 	peer->state = ASSIGNED;
 
-	rc = query_peer_properties(ctx, peer);
+	rc = query_peer_properties(peer);
 	if (rc < 0)
 		goto out;
 
-	rc = emit_endpoint_added(ctx, peer);
+	rc = emit_endpoint_added(peer);
 out:
 	if (rc < 0) {
-		remove_peer(ctx, peer);
+		remove_peer(peer);
 	}
 	return rc;
 }
@@ -1814,7 +1815,7 @@ static int method_endpoint_remove(sd_bus_message *call, void *data,
 		goto out;
 	}
 
-	rc = remove_peer(ctx, peer);
+	rc = remove_peer(peer);
 	if (rc < 0)
 		goto out;
 
@@ -2071,16 +2072,16 @@ static int bus_endpoint_find(sd_bus *bus, const char *path,
 	return 0;
 }
 
-static int emit_endpoint_added(ctx *ctx, const peer *peer) {
+static int emit_endpoint_added(const peer *peer) {
 	char *path = NULL;
 	int rc;
 
 	rc = path_from_peer(peer, &path);
 	if (rc < 0)
 		return rc;
-	if (ctx->verbose)
+	if (peer->ctx->verbose)
 		warnx("%s: %s", __func__, path);
-	rc = sd_bus_emit_object_added(ctx->bus, dfree(path));
+	rc = sd_bus_emit_object_added(peer->ctx->bus, dfree(path));
 	// rc = sd_bus_emit_interfaces_added(ctx->bus, dfree(path),
 	// 	MCTP_DBUS_IFACE_ENDPOINT, NULL);
 	if (rc < 0)
@@ -2088,16 +2089,16 @@ static int emit_endpoint_added(ctx *ctx, const peer *peer) {
 	return rc;
 }
 
-static int emit_endpoint_removed(ctx *ctx, const peer *peer) {
+static int emit_endpoint_removed(const peer *peer) {
 	char *path = NULL;
 	int rc;
 
 	rc = path_from_peer(peer, &path);
 	if (rc < 0)
 		return rc;
-	if (ctx->verbose)
+	if (peer->ctx->verbose)
 		warnx("%s: %s", __func__, path);
-	rc = sd_bus_emit_object_removed(ctx->bus, dfree(path));
+	rc = sd_bus_emit_object_removed(peer->ctx->bus, dfree(path));
 	if (rc < 0)
 		warnx("%s: error emitting, %s", __func__, strerror(errno));
 	return rc;
