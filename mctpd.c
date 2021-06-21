@@ -33,7 +33,8 @@
 
 #define MCTP_DBUS_PATH "/xyz/openbmc_project/mctp"
 #define CC_MCTP_DBUS_IFACE "au.com.CodeConstruct.MCTP"
-#define CC_MCTP_DBUS_TESTING_IFACE "au.com.CodeConstruct.MCTPTesting"
+#define CC_MCTP_DBUS_IFACE_ENDPOINT "au.com.CodeConstruct.MCTP.Endpoint"
+#define CC_MCTP_DBUS_IFACE_TESTING "au.com.CodeConstruct.MCTPTesting"
 #define MCTP_DBUS_IFACE "xyz.openbmc_project.MCTP"
 #define MCTP_DBUS_IFACE_ENDPOINT "xyz.openbmc_project.MCTP.Endpoint"
 #define OPENBMC_IFACE_COMMON_UUID "xyz.openbmc_project.Common.UUID"
@@ -46,7 +47,6 @@ static size_t MAX_PEER_SIZE = 1000000;
 
 static const uint8_t RQDI_REQ = 1<<7;
 static const uint8_t RQDI_RESP = 0x0;
-static const uint8_t RQDI_MASK = 0xc0;
 
 struct dest_phys {
 	int ifindex;
@@ -62,6 +62,8 @@ struct net_det {
 	ssize_t peeridx[0xff];
 };
 typedef struct net_det net_det;
+
+struct ctx;
 
 struct peer {
 	int net;
@@ -79,6 +81,8 @@ struct peer {
 		LOCAL,
 		// CONFLICT,
 	} state;
+
+	struct ctx *ctx;
 
 	// malloc()ed list of supported message types, from Get Message Type
 	uint8_t *message_types;
@@ -122,6 +126,7 @@ typedef struct ctx ctx;
 static int emit_endpoint_added(ctx *ctx, const peer *peer);
 static int emit_endpoint_removed(ctx *ctx, const peer *peer);
 static int query_peer_properties(ctx *ctx, peer *peer);
+static int setup_added_peer(ctx *ctx, peer *peer);
 
 mctp_eid_t local_addr(const ctx *ctx, int ifindex) {
 	mctp_eid_t *eids, ret = 0;
@@ -1038,6 +1043,7 @@ static int add_peer(ctx *ctx, const dest_phys *dest, mctp_eid_t eid,
 	peer->net = net;
 	memcpy(&peer->phys, dest, sizeof(*dest));
 	peer->state = NEW;
+	peer->ctx = ctx;
 
 	// Update network eid map
 	n->peeridx[eid] = idx;
@@ -1080,18 +1086,18 @@ static int remove_peer(ctx *ctx, peer *peer)
 
 	if (peer->state == UNUSED) {
 		warnx("BUG: %s: unused peer", __func__);
-		return -1;
+		return -EPROTO;
 	}
 
 	n = lookup_net(ctx, peer->net);
 	if (!n) {
 		warnx("BUG: %s: Bad net %d", __func__, peer->net);
-		return -1;
+		return -EPROTO;
 	}
 
 	if (check_peer_struct(ctx, peer, n) != 0) {
 		warnx("BUG: %s: Inconsistent state", __func__);
-		return -1;
+		return -EPROTO;
 	}
 
 	if (peer->state == ASSIGNED)
@@ -1197,8 +1203,10 @@ static int endpoint_assign_eid(ctx *ctx, sd_bus_error *berr, const dest_phys *de
 			return rc;
 		}
 	}
-	peer->state = ASSIGNED;
-	emit_endpoint_added(ctx, peer);
+
+	rc = setup_added_peer(ctx, peer);
+	if (rc < 0)
+		return rc;
 	*ret_peer = peer;
 
 	return 0;
@@ -1355,8 +1363,9 @@ static int get_endpoint_peer(ctx *ctx, sd_bus_error *berr,
 
 	peer->endpoint_type = ep_type;
 	peer->medium_spec = medium_spec;
-	peer->state = ASSIGNED;
-	emit_endpoint_added(ctx, peer);
+	rc = setup_added_peer(ctx, peer);
+	if (rc < 0)
+		return rc;
 
 	*ret_peer = peer;
 	return 0;
@@ -1432,28 +1441,6 @@ static int peer_set_uuid(peer *peer, const uint8_t uuid[16])
 	return 0;
 }
 
-/* Returns a deferred free pointer */
-static const char* bytes_to_uuid(const uint8_t u[16])
-{
-	char *buf = dfree(malloc(37));
-	if (!buf) {
-		return "Out of memory                                    ";
-	}
-	snprintf(buf, 37,
-		"%02x%02x%02x%02x"
-		"-"
-		"%02x%02x"
-		"-"
-		"%02x%02x"
-		"-"
-		"%02x%02x"
-		"-"
-		"%02x%02x%02x%02x%02x%02x",
-		u[0], u[1], u[2], u[3], u[4], u[5], u[6], u[7],
-		u[8], u[9], u[10], u[11], u[12], u[13], u[14], u[15]);
-	return buf;
-}
-
 static int query_get_peer_uuid(ctx *ctx, peer *peer) {
 	struct _sockaddr_mctp_ext addr;
 	struct mctp_ctrl_cmd_get_uuid req;
@@ -1496,43 +1483,6 @@ static int query_get_peer_uuid(ctx *ctx, peer *peer) {
 out:
 	free(buf);
 	return rc;
-}
-
-
-static int assign_peer(ctx *ctx, sd_bus_error *berr,
-	const dest_phys *dest, peer **ret_peer)
-{
-	int rc;
-	// bool supported;
-	// struct version_entry min_version;
-
-	*ret_peer = NULL;
-
-	rc = endpoint_assign_eid(ctx, berr, dest, ret_peer);
-	if (rc)
-		return rc;
-
-	// rc = endpoint_send_get_mctp_version(ctx, dest, 0xff, &supported, &min_version);
-	// if (rc == -ETIMEDOUT) {
-	// 	sd_bus_error_setf(berr, SD_BUS_ERROR_TIMEOUT,
-	// 		"No response from %s", dest_phys_tostr(dest));
-	// 	return rc;
-	// } else if (rc < 0) {
-	// 	sd_bus_error_setf(berr, SD_BUS_ERROR_NO_SERVER,
-	// 		"Bad response from %s", dest_phys_tostr(dest));
-	// 	return rc;
-	// }
-
-	// if (!supported) {
-	// 	// Just warn and keep going
-	// 	warn("Incongruous response, no MCTP support from %s", dest_phys_tostr(dest));
-	// }
-
-	// // TODO: disregard mismatch for now
-	// if ((min_version.major & 0xf) != 0x01)
-	// 		warn("Unexpected version 0x%08x from %s", version_val(&min_version),
-	// 			dest_phys_tostr(dest));
-	return 0;
 }
 
 int validate_dest_phys(ctx *ctx, const dest_phys *dest)
@@ -1592,11 +1542,11 @@ static int method_assign_endpoint(sd_bus_message *call, void *data, sd_bus_error
 			peer->eid, peer->net, 0);
 	}
 
-	rc = assign_peer(ctx, berr, dest, &peer);
+	rc = endpoint_assign_eid(ctx, berr, dest, &peer);
 	if (rc < 0)
 		goto err;
 
-	rc = query_peer_properties(ctx, peer);
+	rc = setup_added_peer(ctx, peer);
 	if (rc < 0)
 		goto err;
 
@@ -1677,6 +1627,31 @@ static int query_peer_properties(ctx *ctx, peer *peer)
 	return rc;
 }
 
+// static int add_peer_route(ctx *ctx, peer *peer)
+// {
+// 	return 0;
+// }
+
+static int setup_added_peer(ctx *ctx, peer *peer)
+{
+	int rc;
+
+	// rc = add_peer_route(ctx, peer);
+	// if (rc < 0)
+	// 	goto out;
+
+	rc = query_peer_properties(ctx, peer);
+	if (rc < 0)
+		goto out;
+
+	peer->state = ASSIGNED;
+	rc = emit_endpoint_added(ctx, peer);
+out:
+	if (rc < 0) {
+		remove_peer(ctx, peer);
+	}
+	return rc;
+}
 
 // Testing code
 static int method_sendto_phys(sd_bus_message *call, void *data, sd_bus_error *berr)
@@ -1746,6 +1721,33 @@ err:
 	set_berr(ctx, rc, berr);
 	return rc;
 }
+
+static int method_endpoint_remove(sd_bus_message *call, void *data,
+	sd_bus_error *berr)
+{
+	peer *peer = data;
+	int rc;
+	ctx *ctx = peer->ctx;
+
+	if (peer->state == LOCAL)
+		return sd_bus_error_setf(berr, SD_BUS_ERROR_FAILED,
+			"Cannot remove mctpd-local endpoint");
+	if (peer->state != ASSIGNED) {
+		rc = -EPROTO;
+		goto out;
+	}
+
+	rc = remove_peer(ctx, peer);
+	if (rc < 0)
+		goto out;
+
+	rc = sd_bus_reply_method_return(call, "");
+out:
+	set_berr(ctx, rc, berr);
+	return rc;
+}
+
+// Testing code
 static int cb_test_timer(sd_event_source *s, uint64_t t, void* data)
 {
 	sd_bus_message *call = data;
@@ -1759,7 +1761,6 @@ static int cb_test_timer(sd_event_source *s, uint64_t t, void* data)
 	return 0;
 }
 
-// Testing code
 static int method_test_timer_async(sd_bus_message *call, void *data, sd_bus_error *sderr)
 {
 	int rc;
@@ -1925,7 +1926,7 @@ static int bus_endpoint_get_prop(sd_bus *bus,
 			peer->message_types, peer->num_message_types);
 	} else if (strcmp(property, "UUID") == 0) {
 		if (peer->uuid) {
-			const char *s = bytes_to_uuid(peer->uuid);
+			const char *s = dfree(bytes_to_uuid(peer->uuid));
 			rc = sd_bus_message_append(reply, "s", s);
 		} else {
 			rc = -ENOENT;
@@ -1964,6 +1965,16 @@ static const sd_bus_vtable bus_endpoint_uuid_vtable[] = {
 			bus_endpoint_get_prop,
 			0,
 			SD_BUS_VTABLE_PROPERTY_CONST),
+	SD_BUS_VTABLE_END
+};
+
+static const sd_bus_vtable bus_endpoint_cc_vtable[] = {
+	SD_BUS_VTABLE_START(0),
+	SD_BUS_METHOD_WITH_ARGS("Remove",
+		SD_BUS_NO_ARGS,
+		SD_BUS_NO_RESULT,
+		method_endpoint_remove,
+		0),
 	SD_BUS_VTABLE_END
 };
 
@@ -2156,6 +2167,18 @@ static int setup_bus(ctx *ctx)
 
 	rc = sd_bus_add_fallback_vtable(ctx->bus, NULL,
 				       MCTP_DBUS_PATH,
+				       CC_MCTP_DBUS_IFACE_ENDPOINT,
+				       bus_endpoint_cc_vtable,
+				       bus_endpoint_find,
+				       ctx);
+	if (rc < 0) {
+		warnx("Failed dbus fallback endpoint %s", strerror(-rc));
+		goto out;
+	}
+
+
+	rc = sd_bus_add_fallback_vtable(ctx->bus, NULL,
+				       MCTP_DBUS_PATH,
 				       OPENBMC_IFACE_COMMON_UUID,
 				       bus_endpoint_uuid_vtable,
 				       bus_endpoint_find,
@@ -2322,7 +2345,7 @@ static int setup_testing(ctx *ctx) {
 	/* Add extra interface with test methods */
 	rc = sd_bus_add_fallback_vtable(ctx->bus, NULL,
 				       MCTP_DBUS_PATH,
-				       CC_MCTP_DBUS_TESTING_IFACE,
+				       CC_MCTP_DBUS_IFACE_TESTING,
 				       testing_vtable,
 				       bus_mctpd_find,
 				       ctx);

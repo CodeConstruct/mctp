@@ -134,3 +134,25 @@ int parse_int32(const char *str, int32_t *out)
 	*out = v;
 	return 0;
 }
+
+/* Returns a malloced pointer */
+char* bytes_to_uuid(const uint8_t u[16])
+{
+	char *buf = malloc(37);
+	if (!buf) {
+		return NULL;
+	}
+	snprintf(buf, 37,
+		"%02x%02x%02x%02x"
+		"-"
+		"%02x%02x"
+		"-"
+		"%02x%02x"
+		"-"
+		"%02x%02x"
+		"-"
+		"%02x%02x%02x%02x%02x%02x",
+		u[0], u[1], u[2], u[3], u[4], u[5], u[6], u[7],
+		u[8], u[9], u[10], u[11], u[12], u[13], u[14], u[15]);
+	return buf;
+}
