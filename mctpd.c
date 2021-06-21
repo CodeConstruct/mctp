@@ -26,7 +26,7 @@
 #include "mctp.h"
 #include "mctp-util.h"
 #include "mctp-netlink.h"
-#include "libmctp-cmds.h"
+#include "mctp-control-spec.h"
 
 #define max(a, b) ((a) > (b) ? (a) : (b))
 #define min(a, b) ((a) < (b) ? (a) : (b))
@@ -209,9 +209,11 @@ static const char* ext_addr_tostr(const struct _sockaddr_mctp_ext *addr)
 	}
 
 	write_hex_addr(addr->smctp_haddr, addr->smctp_halen, hex, sizeof(hex));
-	snprintf(buf, l, "sockaddr_mctp_ext eid %d net %d if %d hw len %hhu 0x%s",
+	snprintf(buf, l, "sockaddr_mctp_ext eid %d net %d type 0x%02x if %d hw len %hhu 0x%s",
 		addr->smctp_base.smctp_addr.s_addr,
-		addr->smctp_base.smctp_network, addr->smctp_ifindex,
+		addr->smctp_base.smctp_network,
+		addr->smctp_base.smctp_type,
+		addr->smctp_ifindex,
 		addr->smctp_halen, hex);
 	return dfree(buf);
 }
@@ -272,7 +274,7 @@ static int cb_exit_loop_timeout(sd_event_source *s, uint64_t usec, void *userdat
 
 /* Events are EPOLLIN, EPOLLOUT etc.
    Returns 0 on ready, negative on error. -ETIMEDOUT on timeout */
-int wait_fd_timeout(int fd, short events, uint64_t timeout_usec)
+static int wait_fd_timeout(int fd, short events, uint64_t timeout_usec)
 {
 	int rc;
 	sd_event *ev = NULL;
@@ -303,7 +305,7 @@ out:
 /* Returns the message from a socket.
    The first byte is filled with the message type byte.
    ret_buf is allocated, should be freed by the caller */
-int read_message(ctx *ctx, int sd, uint8_t **ret_buf, size_t *ret_buf_size,
+static int read_message(ctx *ctx, int sd, uint8_t **ret_buf, size_t *ret_buf_size,
 		struct _sockaddr_mctp_ext *ret_addr)
 {
 	int rc;
@@ -311,8 +313,6 @@ int read_message(ctx *ctx, int sd, uint8_t **ret_buf, size_t *ret_buf_size,
 	ssize_t len;
 	uint8_t* buf = NULL;
 	size_t buf_size;
-	// struct iovec v;
-	// struct msghdr msg = {0};
 
 	len = recvfrom(sd, NULL, 0, MSG_PEEK | MSG_TRUNC, NULL, 0);
 	if (len < 0) {
@@ -320,8 +320,7 @@ int read_message(ctx *ctx, int sd, uint8_t **ret_buf, size_t *ret_buf_size,
 		goto out;
 	}
 
-	// +1 for space for addition type prefix byte
-	buf_size = len+1;
+	buf_size = len;
 	buf = malloc(buf_size);
 	if (!buf) {
 		rc = -ENOMEM;
@@ -330,22 +329,14 @@ int read_message(ctx *ctx, int sd, uint8_t **ret_buf, size_t *ret_buf_size,
 
 	addrlen = sizeof(struct _sockaddr_mctp_ext);
 	memset(ret_addr, 0x0, addrlen);
-	// skip the initial prefix byte
-	// msg.msg_name = ret_addr;
-	// msg.msg_namelen = sizeof(struct _sockaddr_mctp_ext);
-	// msg.msg_iov = &v;
-	// msg.msg_iovlen = 1;
-	// v.iov_base = buf+1;
-	// v.iov_len = buf_size-1
-	// len = recvmsg(sd, &msg, MSG_TRUNC);
-	len = recvfrom(sd, buf+1, buf_size-1, MSG_TRUNC, (struct sockaddr *)ret_addr,
+	len = recvfrom(sd, buf, buf_size, MSG_TRUNC, (struct sockaddr *)ret_addr,
 		&addrlen);
 	if (len < 0) {
 		rc = -errno;
 		goto out;
 	}
-	if ((size_t)len != buf_size-1) {
-		warnx("BUG: incorrect recvfrom %zd, expected %zu", len, buf_size-1);
+	if ((size_t)len != buf_size) {
+		warnx("BUG: incorrect recvfrom %zd, expected %zu", len, buf_size);
 		rc = -EPROTO;
 		goto out;
 	}
@@ -356,14 +347,11 @@ int read_message(ctx *ctx, int sd, uint8_t **ret_buf, size_t *ret_buf_size,
 	}
 
 	if (ctx->verbose) {
-		warnx("read_message got from %s type 0x%02x, len %zu",
+		warnx("read_message got from %s len %zu",
 			ext_addr_tostr(ret_addr),
-			ret_addr->smctp_base.smctp_type,
 			buf_size);
 	}
 
-	// populate it for good measure
-	buf[0] = ret_addr->smctp_base.smctp_type;
 	*ret_buf = buf;
 	*ret_buf_size = buf_size;
 	rc = 0;
@@ -377,13 +365,10 @@ out:
 	return rc;
 }
 
-/* First byte of resp is the type. It is ignored, addr smctp_type is used */
 /* Replies to a real EID, not physical addressing */
 static int reply_message(ctx *ctx, int sd, const void *resp, size_t resp_len,
 	const struct _sockaddr_mctp_ext *addr)
 {
-	uint8_t *send_ptr;
-	size_t send_len;
 	ssize_t len;
 	struct _sockaddr_mctp reply_addr;
 
@@ -397,28 +382,21 @@ static int reply_message(ctx *ctx, int sd, const void *resp, size_t resp_len,
 		return -EPROTO;
 	}
 
-	if (resp_len < 1) {
-		warnx("BUG: reply_message requires type in first byte");
-		return -EPROTO;
-	}
-
-	send_len = resp_len - 1;
-	send_ptr = (uint8_t*)resp + 1;
-	len = sendto(sd, send_ptr, send_len, 0,
+	len = sendto(sd, resp, resp_len, 0,
 		(struct sockaddr*)&reply_addr, sizeof(reply_addr));
 	if (len < 0) {
 		return -errno;
 	}
 
-	if ((size_t)len != send_len) {
-		warnx("BUG: short sendto %zd, expected %zu", len, send_len);
+	if ((size_t)len != resp_len) {
+		warnx("BUG: short sendto %zd, expected %zu", len, resp_len);
 		return -EPROTO;
 	}
 	return 0;
 }
 
 // Handles new Incoming Set Endpoint ID request
-int handle_control_set_endpoint_id(ctx *ctx,
+static int handle_control_set_endpoint_id(ctx *ctx,
 	int sd, struct _sockaddr_mctp_ext *addr,
 	const uint8_t *buf, const size_t buf_size)
 {
@@ -432,7 +410,7 @@ int handle_control_set_endpoint_id(ctx *ctx,
 	}
 	req = (void*)buf;
 
-	resp->ctrl_hdr.command_code = req->ctrl_msg_hdr.command_code;
+	resp->ctrl_hdr.command_code = req->ctrl_hdr.command_code;
 	resp->ctrl_hdr.rq_dgram_inst = RQDI_RESP;
 	resp->completion_code = 0;
 	resp->status = 0x01 << 4; // Already assigned, TODO
@@ -445,7 +423,7 @@ int handle_control_set_endpoint_id(ctx *ctx,
 	return reply_message(ctx, sd, resp, resp_len, addr);
 }
 
-int handle_control_get_version_support(ctx *ctx,
+static int handle_control_get_version_support(ctx *ctx,
 	int sd, const struct _sockaddr_mctp_ext *addr,
 	const uint8_t *buf, const size_t buf_size)
 {
@@ -473,7 +451,7 @@ int handle_control_get_version_support(ctx *ctx,
 	}
 
 	resp = (void*)buffer;
-	resp->ctrl_hdr.command_code = req->ctrl_msg_hdr.command_code;
+	resp->ctrl_hdr.command_code = req->ctrl_hdr.command_code;
 	resp->ctrl_hdr.rq_dgram_inst = RQDI_RESP;
 
 	if (version == 0) {
@@ -490,7 +468,7 @@ int handle_control_get_version_support(ctx *ctx,
 	return reply_message(ctx, sd, resp, resp_len, addr);
 }
 
-int handle_control_get_endpoint_id(ctx *ctx,
+static int handle_control_get_endpoint_id(ctx *ctx,
 	int sd, const struct _sockaddr_mctp_ext *addr,
 	const uint8_t *buf, const size_t buf_size)
 {
@@ -503,7 +481,7 @@ int handle_control_get_endpoint_id(ctx *ctx,
 	}
 
 	req = (void*)buf;
-	resp->ctrl_hdr.command_code = req->ctrl_msg_hdr.command_code;
+	resp->ctrl_hdr.command_code = req->ctrl_hdr.command_code;
 	resp->ctrl_hdr.rq_dgram_inst = RQDI_RESP;
 
 	resp->eid = local_addr(ctx, addr->smctp_ifindex);
@@ -516,7 +494,7 @@ int handle_control_get_endpoint_id(ctx *ctx,
 	return reply_message(ctx, sd, resp, sizeof(*resp), addr);
 }
 
-int handle_control_get_endpoint_uuid(ctx *ctx,
+static int handle_control_get_endpoint_uuid(ctx *ctx,
 	int sd, const struct _sockaddr_mctp_ext *addr,
 	const uint8_t *buf, const size_t buf_size)
 {
@@ -529,14 +507,14 @@ int handle_control_get_endpoint_uuid(ctx *ctx,
 	}
 
 	req = (void*)buf;
-	resp->ctrl_hdr.command_code = req->ctrl_msg_hdr.command_code;
+	resp->ctrl_hdr.command_code = req->ctrl_hdr.command_code;
 	resp->ctrl_hdr.rq_dgram_inst = RQDI_RESP;
-	memcpy(resp->uuid.raw, ctx->uuid, sizeof(resp->uuid));
+	memcpy(resp->uuid, ctx->uuid, sizeof(resp->uuid));
 	return reply_message(ctx, sd, resp, sizeof(*resp), addr);
 }
 
 
-int handle_control_get_message_type_support(ctx *ctx,
+static int handle_control_get_message_type_support(ctx *ctx,
 	int sd, const struct _sockaddr_mctp_ext *addr,
 	const uint8_t *buf, const size_t buf_size)
 {
@@ -551,7 +529,7 @@ int handle_control_get_message_type_support(ctx *ctx,
 
 	req = (void*)buf;
 	resp = (void*)resp_buf;
-	resp->ctrl_hdr.command_code = req->ctrl_msg_hdr.command_code;
+	resp->ctrl_hdr.command_code = req->ctrl_hdr.command_code;
 	resp->ctrl_hdr.rq_dgram_inst = RQDI_RESP;
 
 	// Only control messages supported
@@ -561,7 +539,43 @@ int handle_control_get_message_type_support(ctx *ctx,
 	return reply_message(ctx, sd, resp, sizeof(*resp), addr);
 }
 
-int handle_control_unsupported(ctx *ctx,
+static int handle_control_resolve_endpoint_id(ctx *ctx,
+	int sd, const struct _sockaddr_mctp_ext *addr,
+	const uint8_t *buf, const size_t buf_size)
+{
+	struct mctp_ctrl_cmd_resolve_endpoint_id *req = NULL;
+	struct mctp_ctrl_resp_resolve_endpoint_id *resp = NULL;
+	uint8_t resp_buf[sizeof(*resp) + MAX_ADDR_LEN];
+	size_t resp_len;
+	peer *peer = NULL;
+
+	if (buf_size < sizeof(*req)) {
+		warnx("short Resolve Endpoint ID message");
+		return -ENOMSG;
+	}
+
+	req = (void*)buf;
+	resp = (void*)resp_buf;
+	resp->ctrl_hdr.command_code = req->ctrl_hdr.command_code;
+	resp->ctrl_hdr.rq_dgram_inst = RQDI_RESP;
+
+	peer = find_peer_by_addr(ctx, req->eid,
+		addr->smctp_base.smctp_network);
+	if (!peer) {
+		resp->completion_code = 1;
+		resp_len = sizeof(*resp);
+	} else {
+		// TODO: bridging
+		resp->eid = req->eid;
+		memcpy((void*)(resp+1),
+			peer->phys.hwaddr, peer->phys.hwaddr_len);
+		resp_len = sizeof(*resp) + peer->phys.hwaddr_len;
+	}
+
+	return reply_message(ctx, sd, resp, resp_len, addr);
+}
+
+static int handle_control_unsupported(ctx *ctx,
 	int sd, const struct _sockaddr_mctp_ext *addr,
 	const uint8_t *buf, const size_t buf_size)
 {
@@ -637,6 +651,10 @@ static int cb_listen_control_msg(sd_event_source *s, int sd, uint32_t revents,
 			rc = handle_control_get_message_type_support(ctx,
 				sd, &addr, buf, buf_size);
 			break;
+		case MCTP_CTRL_CMD_RESOLVE_ENDPOINT_ID:
+			rc = handle_control_resolve_endpoint_id(ctx,
+				sd, &addr, buf, buf_size);
+			break;
 		default:
 			if (ctx->verbose) {
 				warnx("Ignoring unsupported command code 0x%02x",
@@ -700,10 +718,9 @@ out:
 	}
 	return rc;
 }
-/* Use endpoint_query_peer() or endpoint_query_phys() instead.
 
- * req and resp buffers include the initial message type byte.
- * This is ignored, the addr.smctp_type is used instead.
+/* Use endpoint_query_peer() or endpoint_query_phys() instead.
+ *
  * resp buffer is allocated, caller to free.
  * Extended addressing is used optionally, depending on ext_addr arg. */
 static int endpoint_query_addr(ctx *ctx,
@@ -714,8 +731,7 @@ static int endpoint_query_addr(ctx *ctx,
 	size_t req_addr_len;
 	int sd = -1, val;
 	ssize_t rc;
-	uint8_t *send_ptr = NULL;
-	size_t send_len, buf_size;
+	size_t buf_size;
 
 	uint8_t* buf = NULL;
 
@@ -749,20 +765,18 @@ static int endpoint_query_addr(ctx *ctx,
 		rc = -EPROTO;
 		goto out;
 	}
-	send_len = req_len - 1;
-	send_ptr = (uint8_t*)req + 1;
-	rc = sendto(sd, send_ptr, send_len, 0, (struct sockaddr*)req_addr, req_addr_len);
+	rc = sendto(sd, req, req_len, 0, (struct sockaddr*)req_addr, req_addr_len);
 	if (rc < 0) {
 		rc = -errno;
 		if (ctx->verbose) {
 			warnx("%s: sendto(%s) %zu bytes failed. %s", __func__,
-				ext_addr_tostr(req_addr), send_len,
+				ext_addr_tostr(req_addr), req_len,
 				strerror(errno));
 		}
 		goto out;
 	}
-	if ((size_t)rc != send_len) {
-		warnx("BUG: incorrect sendto %zd, expected %zu", rc, send_len);
+	if ((size_t)rc != req_len) {
+		warnx("BUG: incorrect sendto %zd, expected %zu", rc, req_len);
 		rc = -EPROTO;
 		goto out;
 	}
@@ -876,8 +890,8 @@ static int endpoint_send_get_mctp_version(ctx *ctx, const dest_phys *dest,
 	memset(ret_version, 0x0, sizeof(*ret_version));
 	*ret_supported = false;
 
-	req.ctrl_msg_hdr.rq_dgram_inst = RQDI_REQ;
-	req.ctrl_msg_hdr.command_code = MCTP_CTRL_CMD_GET_VERSION_SUPPORT;
+	req.ctrl_hdr.rq_dgram_inst = RQDI_REQ;
+	req.ctrl_hdr.command_code = MCTP_CTRL_CMD_GET_VERSION_SUPPORT;
 	req.msg_type_number = query_type;
 	// TODO: shouldn't use query_phys, can use normal addressing.
 	rc = endpoint_query_phys(ctx, dest, MCTP_CTRL_HDR_MSG_TYPE, &req,
@@ -935,8 +949,8 @@ static int endpoint_send_set_endpoint_id(const peer *peer, mctp_eid_t *new_eid)
 
 	rc = -1;
 
-	req.ctrl_msg_hdr.rq_dgram_inst = RQDI_REQ;
-	req.ctrl_msg_hdr.command_code = MCTP_CTRL_CMD_SET_ENDPOINT_ID;
+	req.ctrl_hdr.rq_dgram_inst = RQDI_REQ;
+	req.ctrl_hdr.command_code = MCTP_CTRL_CMD_SET_ENDPOINT_ID;
 	req.operation = 0; // 00b Set EID. TODO: do we want Force?
 	req.eid = peer->eid;
 	rc = endpoint_query_phys(peer->ctx, dest, MCTP_CTRL_HDR_MSG_TYPE, &req,
@@ -1264,16 +1278,16 @@ static void set_berr(ctx *ctx, int errcode, sd_bus_error *berr) {
 			break;
 		case -ENOTSUP:
 			// MCTP_CTRL_CC_ERROR_UNSUPPORTED_CMD
- 			sd_bus_error_setf(berr, SD_BUS_ERROR_FAILED,
+			sd_bus_error_setf(berr, SD_BUS_ERROR_FAILED,
 				"Endpoint replied 'unsupported'");
 			break;
- 		case -EPROTO:
- 			// BUG
- 			sd_bus_error_setf(berr, SD_BUS_ERROR_FAILED,
+		case -EPROTO:
+			// BUG
+			sd_bus_error_setf(berr, SD_BUS_ERROR_FAILED,
 				"Internal error");
 			break;
- 		default:
- 			sd_bus_error_setf(berr, SD_BUS_ERROR_FAILED,
+		default:
+			sd_bus_error_setf(berr, SD_BUS_ERROR_FAILED,
 				"Request failed");
 			break;
 	}
@@ -1299,8 +1313,8 @@ static int query_get_endpoint_id(ctx *ctx, const dest_phys *dest,
 	size_t buf_size;
 	int rc;
 
-	req.ctrl_msg_hdr.rq_dgram_inst = RQDI_REQ;
-	req.ctrl_msg_hdr.command_code = MCTP_CTRL_CMD_GET_ENDPOINT_ID;
+	req.ctrl_hdr.rq_dgram_inst = RQDI_REQ;
+	req.ctrl_hdr.command_code = MCTP_CTRL_CMD_GET_ENDPOINT_ID;
 	rc = endpoint_query_phys(ctx, dest, MCTP_CTRL_HDR_MSG_TYPE, &req,
 		sizeof(req), &buf, &buf_size, &addr);
 	if (rc < 0)
@@ -1408,8 +1422,8 @@ static int query_get_peer_msgtypes(peer *peer) {
 	free(peer->message_types);
 	peer->message_types = NULL;
 
-	req.ctrl_msg_hdr.rq_dgram_inst = RQDI_REQ;
-	req.ctrl_msg_hdr.command_code = MCTP_CTRL_CMD_GET_MESSAGE_TYPE_SUPPORT;
+	req.ctrl_hdr.rq_dgram_inst = RQDI_REQ;
+	req.ctrl_hdr.command_code = MCTP_CTRL_CMD_GET_MESSAGE_TYPE_SUPPORT;
 
 	rc = endpoint_query_peer(peer, MCTP_CTRL_HDR_MSG_TYPE,
 		&req, sizeof(req), &buf, &buf_size, &addr);
@@ -1474,8 +1488,8 @@ static int query_get_peer_uuid(peer *peer) {
 		return -EPROTO;
 	}
 
-	req.ctrl_msg_hdr.rq_dgram_inst = RQDI_REQ;
-	req.ctrl_msg_hdr.command_code = MCTP_CTRL_CMD_GET_ENDPOINT_UUID;
+	req.ctrl_hdr.rq_dgram_inst = RQDI_REQ;
+	req.ctrl_hdr.command_code = MCTP_CTRL_CMD_GET_ENDPOINT_UUID;
 
 	rc = endpoint_query_peer(peer, MCTP_CTRL_HDR_MSG_TYPE,
 		&req, sizeof(req), &buf, &buf_size, &addr);
@@ -1495,7 +1509,7 @@ static int query_get_peer_uuid(peer *peer) {
 		goto out;
 	}
 
-	rc = peer_set_uuid(peer, (uint8_t*)(&resp->uuid));
+	rc = peer_set_uuid(peer, resp->uuid);
 	if (rc < 0)
 		goto out;
 	rc = 0;
@@ -1505,7 +1519,7 @@ out:
 	return rc;
 }
 
-int validate_dest_phys(ctx *ctx, const dest_phys *dest)
+static int validate_dest_phys(ctx *ctx, const dest_phys *dest)
 {
 	if (dest->hwaddr_len > MAX_ADDR_LEN) {
 		warnx("bad hwaddr_len %zu", dest->hwaddr_len);
@@ -1771,8 +1785,8 @@ static int method_sendto_phys(sd_bus_message *call, void *data, sd_bus_error *be
 		return sd_bus_error_setf(berr, SD_BUS_ERROR_INVALID_ARGS,
 			"Bad physaddr");
 
-	rc = endpoint_query_phys(ctx, dest, MCTP_CTRL_HDR_MSG_TYPE, req-1,
-		req_len+1, &resp, &resp_len, &addr);
+	rc = endpoint_query_phys(ctx, dest, MCTP_CTRL_HDR_MSG_TYPE, req,
+		req_len, &resp, &resp_len, &addr);
 	if (rc < 0)
 		goto err;
 
@@ -1787,7 +1801,59 @@ static int method_sendto_phys(sd_bus_message *call, void *data, sd_bus_error *be
 	if (rc < 0)
 		goto err;
 
-	rc = sd_bus_message_append_array(m, 'y', resp+1, resp_len-1);
+	rc = sd_bus_message_append_array(m, 'y', resp, resp_len);
+	if (rc < 0)
+		goto err;
+
+	rc = sd_bus_send(sd_bus_message_get_bus(m), m, NULL);
+	sd_bus_message_unref(m);
+	return rc;
+
+err:
+	set_berr(ctx, rc, berr);
+	return rc;
+}
+
+static int method_sendto_addr(sd_bus_message *call, void *data, sd_bus_error *berr)
+{
+	int rc;
+	struct _sockaddr_mctp_ext req_addr = {0};
+	struct _sockaddr_mctp_ext addr;
+	ctx *ctx = data;
+	uint8_t *req = NULL, *resp = NULL;
+	size_t req_len, resp_len;
+	sd_bus_message *m = NULL;
+
+	req_addr.smctp_base.smctp_family = AF_MCTP;
+	req_addr.smctp_base.smctp_tag = MCTP_TAG_OWNER;
+
+	rc = sd_bus_message_read(call, "y", &req_addr.smctp_base.smctp_addr);
+	if (rc < 0)
+		goto err;
+
+	rc = sd_bus_message_read(call, "i", &req_addr.smctp_base.smctp_network);
+	if (rc < 0)
+		goto err;
+
+	rc = sd_bus_message_read(call, "y", &req_addr.smctp_base.smctp_type);
+	if (rc < 0)
+		goto err;
+
+	rc = sd_bus_message_read_array(call, 'y', (const void**)&req, &req_len);
+	if (rc < 0)
+		goto err;
+
+	rc = endpoint_query_addr(ctx, &req_addr, false, req, req_len,
+		&resp, &resp_len, &addr);
+	if (rc < 0)
+		goto err;
+
+	dfree(resp);
+	rc = sd_bus_message_new_method_return(call, &m);
+	if (rc < 0)
+		goto err;
+
+	rc = sd_bus_message_append_array(m, 'y', resp, resp_len);
 	if (rc < 0)
 		goto err;
 
@@ -1970,6 +2036,16 @@ static const sd_bus_vtable testing_vtable[] = {
 		SD_BUS_PARAM(resp),
 		method_sendto_phys,
 		0),
+	SD_BUS_METHOD_WITH_NAMES("SendTo",
+		"yiyay",
+		SD_BUS_PARAM(eid)
+		SD_BUS_PARAM(net)
+		SD_BUS_PARAM(type)
+		SD_BUS_PARAM(req),
+		"ay",
+		SD_BUS_PARAM(resp),
+		method_sendto_addr,
+		0),
 	SD_BUS_METHOD_WITH_NAMES("TestTimer",
 		"i",
 		SD_BUS_PARAM(seconds),
@@ -2124,7 +2200,7 @@ static int mctpd_dbus_enumerate(sd_bus *bus, const char* path,
 	int rc;
 
 	// NULL terminator
- 	num_nodes = 1;
+	num_nodes = 1;
 	// .../mctp object
 	num_nodes++;
 
@@ -2222,33 +2298,33 @@ static int setup_bus(ctx *ctx)
 	/* mctp object needs to use _fallback_vtable() since we can't
 	   mix non-fallback and fallback vtables on MCTP_DBUS_PATH */
 	rc = sd_bus_add_fallback_vtable(ctx->bus, NULL,
-				       MCTP_DBUS_PATH,
-				       CC_MCTP_DBUS_IFACE,
-				       bus_mctpd_vtable,
-				       bus_mctpd_find,
-				       ctx);
+					MCTP_DBUS_PATH,
+					CC_MCTP_DBUS_IFACE,
+					bus_mctpd_vtable,
+					bus_mctpd_find,
+					ctx);
 	if (rc < 0) {
 		warnx("Failed dbus object");
 		goto out;
 	}
 
 	rc = sd_bus_add_fallback_vtable(ctx->bus, NULL,
-				       MCTP_DBUS_PATH,
-				       MCTP_DBUS_IFACE_ENDPOINT,
-				       bus_endpoint_vtable,
-				       bus_endpoint_find,
-				       ctx);
+					MCTP_DBUS_PATH,
+					MCTP_DBUS_IFACE_ENDPOINT,
+					bus_endpoint_vtable,
+					bus_endpoint_find,
+					ctx);
 	if (rc < 0) {
 		warnx("Failed dbus fallback endpoint %s", strerror(-rc));
 		goto out;
 	}
 
 	rc = sd_bus_add_fallback_vtable(ctx->bus, NULL,
-				       MCTP_DBUS_PATH,
-				       CC_MCTP_DBUS_IFACE_ENDPOINT,
-				       bus_endpoint_cc_vtable,
-				       bus_endpoint_find,
-				       ctx);
+					MCTP_DBUS_PATH,
+					CC_MCTP_DBUS_IFACE_ENDPOINT,
+					bus_endpoint_cc_vtable,
+					bus_endpoint_find,
+					ctx);
 	if (rc < 0) {
 		warnx("Failed dbus fallback endpoint %s", strerror(-rc));
 		goto out;
@@ -2256,11 +2332,11 @@ static int setup_bus(ctx *ctx)
 
 
 	rc = sd_bus_add_fallback_vtable(ctx->bus, NULL,
-				       MCTP_DBUS_PATH,
-				       OPENBMC_IFACE_COMMON_UUID,
-				       bus_endpoint_uuid_vtable,
-				       bus_endpoint_find,
-				       ctx);
+					MCTP_DBUS_PATH,
+					OPENBMC_IFACE_COMMON_UUID,
+					bus_endpoint_uuid_vtable,
+					bus_endpoint_find,
+					ctx);
 	if (rc < 0) {
 		warnx("Failed dbus fallback endpoint uuid %s", strerror(-rc));
 		goto out;
@@ -2290,7 +2366,7 @@ out:
 	return rc;
 }
 
-int setup_nets(ctx *ctx)
+static int setup_nets(ctx *ctx)
 {
 	int *netlist = NULL;
 	size_t num_nets, i, j, num_ifs;
@@ -2422,11 +2498,11 @@ static int setup_testing(ctx *ctx) {
 
 	/* Add extra interface with test methods */
 	rc = sd_bus_add_fallback_vtable(ctx->bus, NULL,
-				       MCTP_DBUS_PATH,
-				       CC_MCTP_DBUS_IFACE_TESTING,
-				       testing_vtable,
-				       bus_mctpd_find,
-				       ctx);
+					MCTP_DBUS_PATH,
+					CC_MCTP_DBUS_IFACE_TESTING,
+					testing_vtable,
+					bus_mctpd_find,
+					ctx);
 	if (rc < 0) {
 		warnx("Failed testing dbus object");
 		return rc;
