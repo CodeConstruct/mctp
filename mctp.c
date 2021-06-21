@@ -1035,7 +1035,7 @@ struct mctp_neighalter_msg {
 	struct nlmsghdr		nh;
 	struct ndmsg		ndmsg;
 	uint8_t			rta_buff[RTA_SPACE(1) + RTA_SPACE(MAX_ADDR_LEN)];
-} msg;
+};
 
 static int fill_neighalter_args(struct ctx *ctx,
 		struct mctp_neighalter_msg *msg,

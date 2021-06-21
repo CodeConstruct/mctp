@@ -74,6 +74,7 @@ struct peer {
 	enum {
 		UNUSED = 0,
 		NEW,
+		// Assigned once EID and routing has been set up
 		ASSIGNED,
 		// Own address placeholder. Only (net, eid) are used.
 		// Note that multiple interfaces in a network may have
@@ -81,6 +82,9 @@ struct peer {
 		LOCAL,
 		// CONFLICT,
 	} state;
+
+	bool have_neigh;
+	bool have_route;
 
 	struct ctx *ctx;
 
@@ -127,6 +131,8 @@ static int emit_endpoint_added(ctx *ctx, const peer *peer);
 static int emit_endpoint_removed(ctx *ctx, const peer *peer);
 static int query_peer_properties(ctx *ctx, peer *peer);
 static int setup_added_peer(ctx *ctx, peer *peer);
+static int peer_route_update(peer *peer, uint16_t type);
+static int peer_neigh_update(peer *peer, uint16_t type);
 
 mctp_eid_t local_addr(const ctx *ctx, int ifindex) {
 	mctp_eid_t *eids, ret = 0;
@@ -1082,6 +1088,7 @@ static int check_peer_struct(const ctx *ctx, const peer *peer, const struct net_
 
 static int remove_peer(ctx *ctx, peer *peer)
 {
+	int rc;
 	net_det *n = NULL;
 
 	if (peer->state == UNUSED) {
@@ -1100,8 +1107,25 @@ static int remove_peer(ctx *ctx, peer *peer)
 		return -EPROTO;
 	}
 
-	if (peer->state == ASSIGNED)
+	if (peer->state == ASSIGNED) {
+		if (peer->have_neigh) {
+			rc = peer_neigh_update(peer, RTM_DELNEIGH);
+			if (rc < 0)
+					warnx("Failed removing neigh for %s: %s", 
+					peer_tostr(peer),
+					strerror(-rc));
+		}
+
+		if (peer->have_route) {
+			rc = peer_route_update(peer, RTM_DELROUTE);
+			if (rc < 0)
+				warnx("Failed removing route for %s: %s", 
+					peer_tostr(peer),
+					strerror(-rc));
+		}
+
 		emit_endpoint_removed(ctx, peer);
+	}
 
 	// Clear it
 	n->peeridx[peer->eid] = -1;
@@ -1379,11 +1403,6 @@ static int query_get_peer_msgtypes(ctx *ctx, peer *peer) {
 	size_t buf_size, expect_size;
 	int rc;
 
-	if (peer->state != ASSIGNED) {
-		warnx("%s: Wrong state for peer %s", __func__, peer_tostr(peer));
-		return -EPROTO;
-	}
-
 	peer->num_message_types = 0;
 	free(peer->message_types);
 	peer->message_types = NULL;
@@ -1627,24 +1646,82 @@ static int query_peer_properties(ctx *ctx, peer *peer)
 	return rc;
 }
 
-// static int add_peer_route(ctx *ctx, peer *peer)
-// {
-// 	return 0;
-// }
+static int peer_neigh_update(peer *peer, uint16_t type)
+{
+	struct {
+		struct nlmsghdr		nh;
+		struct ndmsg		ndmsg;
+		uint8_t			rta_buff[RTA_SPACE(1) + RTA_SPACE(MAX_ADDR_LEN)];
+	} msg = {0};
+	size_t rta_len = sizeof(msg.rta_buff);
+	struct rtattr *rta = (void*)msg.rta_buff;
+
+	msg.nh.nlmsg_type = type;
+	msg.nh.nlmsg_flags = NLM_F_REQUEST | NLM_F_ACK;
+	msg.ndmsg.ndm_ifindex = peer->phys.ifindex;
+	msg.ndmsg.ndm_family = AF_MCTP;
+	msg.nh.nlmsg_len = NLMSG_LENGTH(sizeof(msg.ndmsg));
+	msg.nh.nlmsg_len += mctp_put_rtnlmsg_attr(&rta, &rta_len,
+		NDA_DST, &peer->eid, sizeof(peer->eid));
+	msg.nh.nlmsg_len += mctp_put_rtnlmsg_attr(&rta, &rta_len,
+		NDA_LLADDR, peer->phys.hwaddr, peer->phys.hwaddr_len);
+	return mctp_nl_send(peer->ctx->nl, &msg.nh);
+}
+
+static int peer_route_update(peer *peer, uint16_t type)
+{
+	struct {
+		struct nlmsghdr		nh;
+		struct rtmsg		rtmsg;
+		uint8_t			rta_buff[
+					RTA_SPACE(sizeof(mctp_eid_t)) + // eid
+					RTA_SPACE(sizeof(int)) + // ifindex
+					100 // space for MTU, nexthop etc
+					];
+	} msg = {0};
+	size_t rta_len = sizeof(msg.rta_buff);
+	struct rtattr *rta = (void*)msg.rta_buff;
+
+	msg.nh.nlmsg_type = type;
+	msg.nh.nlmsg_flags = NLM_F_REQUEST | NLM_F_ACK;
+	msg.rtmsg.rtm_family = AF_MCTP;
+	msg.rtmsg.rtm_type = RTN_UNICAST;
+	// TODO add eid range handling?
+	msg.rtmsg.rtm_dst_len = 0;
+	msg.nh.nlmsg_len = NLMSG_LENGTH(sizeof(msg.rtmsg));
+	msg.nh.nlmsg_len += mctp_put_rtnlmsg_attr(&rta, &rta_len,
+		RTA_DST, &peer->eid, sizeof(peer->eid));
+	msg.nh.nlmsg_len += mctp_put_rtnlmsg_attr(&rta, &rta_len,
+		RTA_OIF, &peer->phys.ifindex, sizeof(peer->phys.ifindex));
+	// TODO: mtu, metric?
+	return mctp_nl_send(peer->ctx->nl, &msg.nh);
+}
 
 static int setup_added_peer(ctx *ctx, peer *peer)
 {
 	int rc;
 
-	// rc = add_peer_route(ctx, peer);
-	// if (rc < 0)
-	// 	goto out;
+	rc = peer_neigh_update(peer, RTM_NEWNEIGH);
+	if (rc < 0 && rc != EEXIST)
+		warnx("Failed adding neigh for %s: %s", peer_tostr(peer),
+			strerror(-rc));
+	else
+		peer->have_neigh = true;
+
+	rc = peer_route_update(peer, RTM_NEWROUTE);
+	if (rc < 0 && rc != EEXIST)
+		warnx("Failed adding route for %s: %s", peer_tostr(peer),
+			strerror(-rc));
+	else
+		peer->have_route = true;
+
+	// Ready to send ordinary messages
+	peer->state = ASSIGNED;
 
 	rc = query_peer_properties(ctx, peer);
 	if (rc < 0)
 		goto out;
 
-	peer->state = ASSIGNED;
 	rc = emit_endpoint_added(ctx, peer);
 out:
 	if (rc < 0) {
