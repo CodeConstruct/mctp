@@ -556,6 +556,7 @@ static int handle_control_resolve_endpoint_id(ctx *ctx,
 
 	req = (void*)buf;
 	resp = (void*)resp_buf;
+	memset(resp, 0x0, sizeof(*resp));
 	resp->ctrl_hdr.command_code = req->ctrl_hdr.command_code;
 	resp->ctrl_hdr.rq_dgram_inst = RQDI_RESP;
 
@@ -572,6 +573,9 @@ static int handle_control_resolve_endpoint_id(ctx *ctx,
 		resp_len = sizeof(*resp) + peer->phys.hwaddr_len;
 	}
 
+	printf("resp_len %zu ... 0x%02x 0x%02x\n", resp_len,
+		((uint8_t*)resp)[resp_len-2],
+		((uint8_t*)resp)[resp_len-1]);
 	return reply_message(ctx, sd, resp, resp_len, addr);
 }
 

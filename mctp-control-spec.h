@@ -157,6 +157,7 @@ struct mctp_ctrl_resp_endpoint_discovery {
 	struct mctp_ctrl_msg_hdr ctrl_hdr;
 	uint8_t completion_code;
 } __attribute__((__packed__));
+
 struct mctp_ctrl_cmd_resolve_endpoint_id {
 	struct mctp_ctrl_msg_hdr ctrl_hdr;
 	uint8_t eid;
@@ -166,7 +167,7 @@ struct mctp_ctrl_resp_resolve_endpoint_id {
 	struct mctp_ctrl_msg_hdr ctrl_hdr;
 	uint8_t completion_code;
 	uint8_t eid;
-	// uint8_t physical_address[...]
+	// ... uint8_t physical_address[N]
 } __attribute__((__packed__));
 
 
