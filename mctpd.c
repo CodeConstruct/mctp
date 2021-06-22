@@ -303,7 +303,6 @@ out:
 }
 
 /* Returns the message from a socket.
-   The first byte is filled with the message type byte.
    ret_buf is allocated, should be freed by the caller */
 static int read_message(ctx *ctx, int sd, uint8_t **ret_buf, size_t *ret_buf_size,
 		struct _sockaddr_mctp_ext *ret_addr)
@@ -821,8 +820,6 @@ out:
 }
 
 /* Queries an endpoint peer. Addressing is standard eid/net.
- * req and resp buffers include the initial message type byte.
- * This is ignored, the addr.smctp_type is used instead.
  */
 static int endpoint_query_peer(const peer *peer,
 	uint8_t req_type, const void* req, size_t req_len,
@@ -847,8 +844,6 @@ static int endpoint_query_peer(const peer *peer,
 }
 
 /* Queries an endpoint using physical addressing, null EID.
- * req and resp buffers include the initial message type byte.
- * This is ignored, the addr.smctp_type is used instead.
  */
 static int endpoint_query_phys(ctx *ctx, const dest_phys *dest,
 	uint8_t req_type, const void* req, size_t req_len,
