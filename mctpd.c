@@ -2429,6 +2429,15 @@ static int setup_nets(ctx *ctx)
 				warnx("Failed setting local UUID: %s",
 					strerror(-rc));
 			}
+
+			// Only advertise supporting control messages
+			peer->message_types = malloc(1);
+			if (peer->message_types) {
+				peer->num_message_types = 1;
+				peer->message_types[0] = MCTP_CTRL_HDR_MSG_TYPE;
+			} else {
+				warnx("Out of memory");
+			}
 		}
 		free(eids);
 	}
