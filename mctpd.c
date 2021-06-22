@@ -1621,13 +1621,13 @@ static int method_learn_endpoint(sd_bus_message *call, void *data, sd_bus_error 
 	if (rc < 0)
 		goto err;
 	if (!peer)
-		return sd_bus_reply_method_return(call, "byi", 0, 0, 0);
+		return sd_bus_reply_method_return(call, "yib", 0, 0, 0);
 
 	rc = query_peer_properties(peer);
 	if (rc < 0)
 		goto err;
 
-	return sd_bus_reply_method_return(call, "byi", 1, peer->eid, peer->net);
+	return sd_bus_reply_method_return(call, "yib", peer->eid, peer->net, 1);
 err:
 	set_berr(ctx, rc, berr);
 	return rc;
@@ -2012,10 +2012,10 @@ static const sd_bus_vtable bus_mctpd_vtable[] = {
 		"say",
 		SD_BUS_PARAM(ifname)
 		SD_BUS_PARAM(physaddr),
-		"byi",
-		SD_BUS_PARAM(found)
+		"yib",
 		SD_BUS_PARAM(eid)
-		SD_BUS_PARAM(net),
+		SD_BUS_PARAM(net)
+		SD_BUS_PARAM(found),
 		method_learn_endpoint,
 		0),
 	SD_BUS_VTABLE_END,
