@@ -11,6 +11,10 @@ SD_LIBS := $(shell pkg-config --libs libsystemd)
 endif
 SD_CFLAGS := $(shell pkg-config --cflags libsystemd)
 
+ifdef BUILT_LIBSYSTEMD
+SD_LIBS := /home/matt/3rd/systemd/build/libsystemd.a -lcap -lrt -lpthread -lselinux
+endif
+
 LDLIBS += -Wl,--gc-sections
 
 utils = mctp mctp-req mctp-echo
