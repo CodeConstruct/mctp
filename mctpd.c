@@ -1753,7 +1753,8 @@ static int method_sendto_phys(sd_bus_message *call, void *data, sd_bus_error *be
 	dest_phys desti, *dest = &desti;
 	ctx *ctx = data;
 	uint8_t type;
-	uint8_t *req = NULL, *resp = NULL;
+	uint8_t *resp = NULL;
+	const uint8_t *req = NULL;
 	size_t req_len, resp_len;
 	sd_bus_message *m = NULL;
 

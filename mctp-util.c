@@ -5,8 +5,8 @@
 #include <errno.h>
 #include "mctp-util.h"
 
-void mctp_hexdump(void *b, int len, const char *indent) {
-    char* buf = b;
+void mctp_hexdump(const void *b, int len, const char *indent) {
+    const char* buf = b;
     const int row_len = 16;
     int i, j;
 
