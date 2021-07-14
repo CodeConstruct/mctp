@@ -1785,7 +1785,7 @@ static int method_sendto_phys(sd_bus_message *call, void *data, sd_bus_error *be
 		return sd_bus_error_setf(berr, SD_BUS_ERROR_INVALID_ARGS,
 			"Bad physaddr");
 
-	rc = endpoint_query_phys(ctx, dest, MCTP_CTRL_HDR_MSG_TYPE, req,
+	rc = endpoint_query_phys(ctx, dest, type, req,
 		req_len, &resp, &resp_len, &addr);
 	if (rc < 0)
 		goto err;
