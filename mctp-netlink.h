@@ -29,6 +29,7 @@ int mctp_nl_query(mctp_nl *nl, struct nlmsghdr *msg,
 int mctp_nl_ifindex_byname(const mctp_nl *nl, const char *ifname);
 const char* mctp_nl_if_byindex(const mctp_nl *nl, int index);
 int mctp_nl_net_byindex(const mctp_nl *nl, int index);
+bool mctp_nl_up_byindex(const mctp_nl *nl, int index);
 /* Caller to free */
 mctp_eid_t *mctp_nl_addrs_byindex(const mctp_nl *nl, int index,
 	size_t *ret_num);

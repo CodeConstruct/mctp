@@ -2400,6 +2400,10 @@ static int setup_nets(ctx *ctx)
 		size_t num;
 		peer *peer = NULL;
 
+		if (!mctp_nl_up_byindex(ctx->nl, ifs[i]))
+			warnx("Warning, interface %s is down",
+				mctp_nl_if_byindex(ctx->nl, ifs[i]));
+
 		eids = mctp_nl_addrs_byindex(ctx->nl, ifs[i], &num);
 		for (j = 0; j < num; j++) {
 			int net = mctp_nl_net_byindex(ctx->nl, ifs[i]);

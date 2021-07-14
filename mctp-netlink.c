@@ -23,6 +23,7 @@ struct linkmap_entry {
 	char	ifname[IFNAMSIZ+1];
 	int	net;
 	uint8_t	medium;
+	bool 	up;
 
 	mctp_eid_t *local_eids;
 	size_t num_local;
@@ -45,7 +46,8 @@ static int fill_local_addrs(mctp_nl *nl);
 static void sort_local_addrs(mctp_nl *nl);
 static int fill_linkmap(mctp_nl *nl);
 static int linkmap_add_entry(mctp_nl *nl, struct ifinfomsg *info,
-		const char *ifname, size_t ifname_len, int net, uint8_t medium);
+		const char *ifname, size_t ifname_len, int net, uint8_t medium,
+		bool up);
 static struct linkmap_entry *entry_byindex(const mctp_nl *nl,
 	int index);
 
@@ -390,6 +392,7 @@ static int parse_getlink_dump(mctp_nl *nl, struct nlmsghdr *nlh, int len)
 		size_t ifname_len, rlen, nlen, mlen;
 		uint32_t net;
 		uint8_t medium = 0x00;
+		bool up;
 
 		if (nlh->nlmsg_type == NLMSG_DONE)
 			return 0;
@@ -427,7 +430,8 @@ static int parse_getlink_dump(mctp_nl *nl, struct nlmsghdr *nlh, int len)
 			continue;
 		}
 		ifname_len = strnlen(ifname, ifname_len);
-		linkmap_add_entry(nl, info, ifname, ifname_len, net, medium);
+		up = info->ifi_flags & IFF_UP;
+		linkmap_add_entry(nl, info, ifname, ifname_len, net, medium, up);
 	}
 	// Not done.
 	return 1;
@@ -585,9 +589,10 @@ void mctp_nl_linkmap_dump(const mctp_nl *nl)
 	printf("linkmap\n");
 	for (i = 0; i < nl->linkmap_count; i++) {
 		struct linkmap_entry *entry = &nl->linkmap[i];
-		printf("  %2d: %s, net %d med 0x%02x local addrs [",
+		const char* updown = entry->up ? "up" : "DOWN";
+		printf("  %2d: %s, net %d med 0x%02x %s local addrs [",
 			entry->ifindex, entry->ifname,
-			entry->net, entry->medium);
+			entry->net, entry->medium, updown);
 		for (j = 0; j < entry->num_local; j++) {
 			if (j != 0)
 				printf(", ");
@@ -626,7 +631,15 @@ int mctp_nl_net_byindex(const mctp_nl *nl, int index)
 	return 0;
 }
 
-mctp_eid_t *mctp_nl_addrs_byindex(const mctp_nl *nl, int index, 
+bool mctp_nl_up_byindex(const mctp_nl *nl, int index)
+{
+	struct linkmap_entry *entry = entry_byindex(nl, index);
+	if (entry)
+		return entry->up;
+	return false;
+}
+
+mctp_eid_t *mctp_nl_addrs_byindex(const mctp_nl *nl, int index,
 	size_t *ret_num)
 {
 	struct linkmap_entry *entry = entry_byindex(nl, index);
@@ -707,7 +720,8 @@ int *mctp_nl_if_list(const mctp_nl *nl, size_t *ret_num_ifs)
 }
 
 static int linkmap_add_entry(mctp_nl *nl, struct ifinfomsg *info,
-		const char *ifname, size_t ifname_len, int net, uint8_t medium)
+		const char *ifname, size_t ifname_len, int net, uint8_t medium,
+		bool up)
 {
 	struct linkmap_entry *entry;
 	size_t newsz;
@@ -742,5 +756,6 @@ static int linkmap_add_entry(mctp_nl *nl, struct ifinfomsg *info,
 	entry->ifindex = info->ifi_index;
 	entry->net = net;
 	entry->medium = medium;
+	entry->up = up;
 	return 0;
 }
