@@ -56,7 +56,7 @@ enum {
 #define IFLA_MCTP_MAX (__IFLA_MCTP_MAX - 1)
 
 /* setsockopt(2) options */
-#define SOL_MCTP (SOL_SOCKET + 1)
+#define SOL_MCTP 0
 #define MCTP_OPT_ADDR_EXT	1
 
 #endif /* _MCTP_H */
