@@ -680,16 +680,15 @@ static int cmd_addr_show(struct ctx *ctx, int argc, const char **argv)
 		char			ifname[16];
 	} msg = {0};
 	const char *ifname = NULL;
-	size_t ifnamelen;
+	int ifindex = 0;
 	size_t len;
 	int rc;
 
 	if (argc > 1) {
-		// filter by ifname
 		ifname = argv[1];
-		ifnamelen = strlen(ifname);
-		if (ifnamelen > sizeof(msg.ifname)) {
-			warnx("interface name '%s' too long", ifname);
+		ifindex = mctp_nl_ifindex_byname(ctx->nl, ifname);
+		if (ifindex == 0) {
+			warnx("Unknown interface '%s'", ifname);
 			return -1;
 		}
 	}
@@ -701,12 +700,7 @@ static int cmd_addr_show(struct ctx *ctx, int argc, const char **argv)
 
 	msg.ifmsg.ifa_index = 1; // TODO: check this, could be 0?
 	msg.ifmsg.ifa_family = AF_MCTP;
-
-	if (ifname) {
-		msg.rta.rta_type = IFA_LABEL;
-		msg.rta.rta_len = RTA_LENGTH(ifnamelen);
-		strncpy(RTA_DATA(&msg.rta), ifname, ifnamelen);
-	}
+	msg.ifmsg.ifa_index = ifindex;
 
 	rc = mctp_nl_query(ctx->nl, &msg.nh, &resp, &len);
 	if (rc)
