@@ -711,7 +711,12 @@ static int cmd_addr_show(struct ctx *ctx, int argc, const char **argv)
 	return 0;
 }
 
-static int cmd_addr_add(struct ctx *ctx, int argc, const char **argv)
+
+// cmdname is for error messages.
+// rtm_command is RTM_NEWADDR or RTM_DELADDR
+static int cmd_addr_addremove(struct ctx *ctx,
+	const char* cmdname, int rtm_command,
+	int argc, const char **argv)
 {
 	struct {
 		struct nlmsghdr		nh;
@@ -726,7 +731,7 @@ static int cmd_addr_add(struct ctx *ctx, int argc, const char **argv)
 	char *endp;
 
 	if (argc != 4) {
-		warnx("add: invalid arguments");
+		warnx("%s: invalid arguments", cmdname);
 		return -1;
 	}
 
@@ -751,7 +756,7 @@ static int cmd_addr_add(struct ctx *ctx, int argc, const char **argv)
 	}
 	eid = tmp & 0xff;
 
-	msg.nh.nlmsg_type = RTM_NEWADDR;
+	msg.nh.nlmsg_type = rtm_command;
 	// request an error status since there's no other reply
 	msg.nh.nlmsg_flags = NLM_F_REQUEST | NLM_F_ACK;
 
@@ -768,6 +773,16 @@ static int cmd_addr_add(struct ctx *ctx, int argc, const char **argv)
 	return mctp_nl_send(ctx->nl, &msg.nh);
 }
 
+static int cmd_addr_add(struct ctx *ctx, int argc, const char **argv)
+{
+	return cmd_addr_addremove(ctx, "add", RTM_NEWADDR, argc, argv);
+}
+
+static int cmd_addr_remove(struct ctx *ctx, int argc, const char **argv)
+{
+	return cmd_addr_addremove(ctx, "del", RTM_DELADDR, argc, argv);
+}
+
 static int cmd_addr(struct ctx *ctx, int argc, const char **argv)
 {
 	const char* subcmd;
@@ -775,7 +790,7 @@ static int cmd_addr(struct ctx *ctx, int argc, const char **argv)
 		fprintf(stderr, "%s address\n", ctx->top_cmd);
 		fprintf(stderr, "%s address show [IFNAME]\n", ctx->top_cmd);
 		fprintf(stderr, "%s address add <eid> dev <IFNAME>\n", ctx->top_cmd);
-		fprintf(stderr, "%s address remove <eid> dev <IFNAME>  {unimplemented}\n", ctx->top_cmd);
+		fprintf(stderr, "%s address del <eid> dev <IFNAME>\n", ctx->top_cmd);
 		return 255;
 	}
 
@@ -790,6 +805,8 @@ static int cmd_addr(struct ctx *ctx, int argc, const char **argv)
 		return cmd_addr_show(ctx, argc, argv);
 	else if (!strcmp(subcmd, "add"))
 		return cmd_addr_add(ctx, argc, argv);
+	else if (!strcmp(subcmd, "del"))
+		return cmd_addr_remove(ctx, argc, argv);
 
 	warnx("unknown address command '%s'", subcmd);
 	return -1;
