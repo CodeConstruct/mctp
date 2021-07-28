@@ -66,7 +66,7 @@ static int mctp_req(unsigned int net, mctp_eid_t eid,
 
 	/* send data */
 	rc = sendto(sd, buf, len, 0,
-			(struct sockaddr *)&addr, sizeof(addr));
+			(struct sockaddr *)&addr, addrlen);
 	if (rc != (int)len)
 		err(EXIT_FAILURE, "sendto(%zd)", len);
 
