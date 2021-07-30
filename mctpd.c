@@ -302,6 +302,58 @@ out:
 	return rc;
 }
 
+static int peer_from_path(ctx *ctx, const char* path, peer **ret_peer)
+{
+	char *netstr = NULL, *eidstr = NULL;
+	uint32_t tmp, net;
+	mctp_eid_t eid;
+	int rc;
+
+	*ret_peer = NULL;
+	rc = sd_bus_path_decode_many(path, MCTP_DBUS_PATH "/%/%",
+		&netstr, &eidstr);
+	if (rc == 0)
+		return -ENOENT;
+	if (rc < 0)
+		return rc;
+	dfree(netstr);
+	dfree(eidstr);
+
+	if (parse_uint32(eidstr, &tmp) < 0 || tmp > 0xff)
+		return -EINVAL;
+	eid = tmp & 0xff;
+
+	if (parse_uint32(netstr, &net) < 0)
+		return -EINVAL;
+
+	*ret_peer = find_peer_by_addr(ctx, eid, net);
+	if (!*ret_peer)
+		return -ENOENT;
+	return 0;
+}
+
+static int path_from_peer(const peer *peer, char ** ret_path) {
+	size_t l;
+	char* buf;
+
+	if (peer->state == UNUSED || peer->state == NEW) {
+		warnx("BUG: %s on peer %s", __func__, peer_tostr(peer));
+		return -EPROTO;
+	}
+
+	l = strlen(MCTP_DBUS_PATH) + 60;
+	buf = malloc(l);
+	if (!buf)
+		return -ENOMEM;
+	/* can't use sd_bus_path_encode_many() since it escapes
+	   leading digits */
+	snprintf(buf, l, "%s/%d/%d", MCTP_DBUS_PATH,
+		peer->net, peer->eid);
+	*ret_path = buf;
+	return 0;
+}
+
+
 /* Returns the message from a socket.
    ret_buf is allocated, should be freed by the caller */
 static int read_message(ctx *ctx, int sd, uint8_t **ret_buf, size_t *ret_buf_size,
@@ -1960,57 +2012,6 @@ static int method_test_timer(sd_bus_message *call, void *data, sd_bus_error *sde
 
 	rc = sd_bus_reply_method_return(call, "i", seconds*10);
 	return rc;
-}
-
-static int peer_from_path(ctx *ctx, const char* path, peer **ret_peer) 
-{
-	char *netstr = NULL, *eidstr = NULL;
-	uint32_t tmp, net;
-	mctp_eid_t eid;
-	int rc;
-
-	*ret_peer = NULL;
-	rc = sd_bus_path_decode_many(path, MCTP_DBUS_PATH "/%/%",
-		&netstr, &eidstr);
-	if (rc == 0)
-		return -ENOENT;
-	if (rc < 0)
-		return rc;
-	dfree(netstr);
-	dfree(eidstr);
-
-	if (parse_uint32(eidstr, &tmp) < 0 || tmp > 0xff)
-		return -EINVAL;
-	eid = tmp & 0xff;
-
-	if (parse_uint32(netstr, &net) < 0)
-		return -EINVAL;
-
-	*ret_peer = find_peer_by_addr(ctx, eid, net);
-	if (!*ret_peer)
-		return -ENOENT;
-	return 0;
-}
-
-static int path_from_peer(const peer *peer, char ** ret_path) {
-	size_t l;
-	char* buf;
-
-	if (peer->state == UNUSED || peer->state == NEW) {
-		warnx("BUG: %s on peer %s", __func__, peer_tostr(peer));
-		return -EPROTO;
-	}
-
-	l = strlen(MCTP_DBUS_PATH) + 60;
-	buf = malloc(l);
-	if (!buf)
-		return -ENOMEM;
-	/* can't use sd_bus_path_encode_many() since it escapes
-	   leading digits */
-	snprintf(buf, l, "%s/%d/%d", MCTP_DBUS_PATH,
-		peer->net, peer->eid);
-	*ret_path = buf;
-	return 0;
 }
 
 static const sd_bus_vtable bus_mctpd_vtable[] = {
