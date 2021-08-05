@@ -905,6 +905,12 @@ static int endpoint_query_phys(ctx *ctx, const dest_phys *dest,
 
 	addr.smctp_base.smctp_family = AF_MCTP;
 	addr.smctp_base.smctp_network = 0;
+	// Physical addressed requests may receive a response where the
+	// source-eid that isn't the same as the dest-eid of the request,
+	// for example Set Endpoint Id.
+	// The kernel mctp stack has special handling for eid=0 to make sure we
+	// can recv a response on the socket, so it's important to set eid=0
+	// here in the request.
 	addr.smctp_base.smctp_addr.s_addr = 0;
 
 	addr.smctp_ifindex = dest->ifindex;
