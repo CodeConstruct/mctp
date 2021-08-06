@@ -1792,14 +1792,14 @@ static int setup_added_peer(peer *peer)
 	int rc;
 
 	rc = peer_neigh_update(peer, RTM_NEWNEIGH);
-	if (rc < 0 && rc != EEXIST)
+	if (rc < 0 && rc != -EEXIST)
 		warnx("Failed adding neigh for %s: %s", peer_tostr(peer),
 			strerror(-rc));
 	else
 		peer->have_neigh = true;
 
 	rc = peer_route_update(peer, RTM_NEWROUTE);
-	if (rc < 0 && rc != EEXIST)
+	if (rc < 0 && rc != -EEXIST)
 		warnx("Failed adding route for %s: %s", peer_tostr(peer),
 			strerror(-rc));
 	else
