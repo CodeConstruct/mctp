@@ -1540,6 +1540,7 @@ static int method_assign_endpoint(sd_bus_message *call, void *data, sd_bus_error
 	int rc;
 	const char *ifname = NULL;
 	dest_phys desti, *dest = &desti;
+	char *peer_path = NULL;
 	ctx *ctx = data;
 	peer *peer = NULL;
 
@@ -1571,8 +1572,14 @@ static int method_assign_endpoint(sd_bus_message *call, void *data, sd_bus_error
 			rc = -EPROTO;
 			goto err;
 		}
-		return sd_bus_reply_method_return(call, "yib",
-			peer->eid, peer->net, 0);
+
+		rc = path_from_peer(peer, &peer_path);
+		if (rc < 0)
+			goto err;
+		dfree(peer_path);
+
+		return sd_bus_reply_method_return(call, "yibs",
+			peer->eid, peer->net, 0, peer_path);
 	}
 
 	rc = endpoint_assign_eid(ctx, berr, dest, &peer);
@@ -1583,8 +1590,13 @@ static int method_assign_endpoint(sd_bus_message *call, void *data, sd_bus_error
 	if (rc < 0)
 		goto err;
 
-	return sd_bus_reply_method_return(call, "yib",
-		peer->eid, peer->net, 1);
+	rc = path_from_peer(peer, &peer_path);
+	if (rc < 0)
+		goto err;
+	dfree(peer_path);
+
+	return sd_bus_reply_method_return(call, "yibs",
+		peer->eid, peer->net, 1, peer_path);
 err:
 	set_berr(ctx, rc, berr);
 	return rc;
@@ -1594,6 +1606,7 @@ static int method_learn_endpoint(sd_bus_message *call, void *data, sd_bus_error 
 {
 	int rc;
 	const char *ifname = NULL;
+	char *peer_path = NULL;
 	dest_phys desti, *dest = &desti;
 	ctx *ctx = data;
 	peer *peer = NULL;
@@ -1621,13 +1634,18 @@ static int method_learn_endpoint(sd_bus_message *call, void *data, sd_bus_error 
 	if (rc < 0)
 		goto err;
 	if (!peer)
-		return sd_bus_reply_method_return(call, "yib", 0, 0, 0);
+		return sd_bus_reply_method_return(call, "yibs", 0, 0, 0, "");
 
 	rc = query_peer_properties(peer);
 	if (rc < 0)
 		goto err;
 
-	return sd_bus_reply_method_return(call, "yib", peer->eid, peer->net, 1);
+	rc = path_from_peer(peer, &peer_path);
+	if (rc < 0)
+		goto err;
+	dfree(peer_path);
+	return sd_bus_reply_method_return(call, "yibs", peer->eid, peer->net,
+		1, peer_path);
 err:
 	set_berr(ctx, rc, berr);
 	return rc;
@@ -2002,10 +2020,11 @@ static const sd_bus_vtable bus_mctpd_vtable[] = {
 		"say",
 		SD_BUS_PARAM(ifname)
 		SD_BUS_PARAM(physaddr),
-		"yib",
+		"yibs",
 		SD_BUS_PARAM(eid)
 		SD_BUS_PARAM(net)
-		SD_BUS_PARAM(new), // TODO, better semantics?
+		SD_BUS_PARAM(new) // TODO, better semantics?
+		SD_BUS_PARAM(path),
 		method_assign_endpoint,
 		0),
 
@@ -2013,10 +2032,11 @@ static const sd_bus_vtable bus_mctpd_vtable[] = {
 		"say",
 		SD_BUS_PARAM(ifname)
 		SD_BUS_PARAM(physaddr),
-		"yib",
+		"yibs",
 		SD_BUS_PARAM(eid)
 		SD_BUS_PARAM(net)
-		SD_BUS_PARAM(found),
+		SD_BUS_PARAM(found)
+		SD_BUS_PARAM(path),
 		method_learn_endpoint,
 		0),
 	SD_BUS_VTABLE_END,
