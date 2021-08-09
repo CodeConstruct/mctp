@@ -202,7 +202,7 @@ static const char* ext_addr_tostr(const struct _sockaddr_mctp_ext *addr)
 {
 	char hex[MAX_ADDR_LEN*4];
 	char* buf;
-	size_t l = 100;
+	size_t l = 256;
 	buf = malloc(l);
 	if (!buf) {
 		return "Out of memory";
@@ -931,9 +931,9 @@ static uint32_t version_val(const struct version_entry *vers)
 }
 
 /* Returns the min version supported */
-static int endpoint_send_get_mctp_version(ctx *ctx, const dest_phys *dest,
-	uint8_t query_type,
-	bool *ret_supported, struct version_entry *ret_version)
+static int __attribute__((unused)) endpoint_send_get_mctp_version(ctx *ctx,
+	const dest_phys *dest, uint8_t query_type, bool *ret_supported,
+	struct version_entry *ret_version)
 {
 	struct _sockaddr_mctp_ext addr;
 	struct mctp_ctrl_cmd_get_mctp_ver_support req = {0};
@@ -1393,6 +1393,8 @@ static int query_get_endpoint_id(ctx *ctx, const dest_phys *dest,
 	}
 
 	*ret_eid = resp->eid;
+	*ret_ep_type = resp->eid_type;
+	*ret_media_spec = resp->medium_data;
 out:
 	free(buf);
 	return rc;
