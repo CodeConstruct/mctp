@@ -27,7 +27,7 @@ static int mctp_req(unsigned int net, mctp_eid_t eid,
 	unsigned int ifindex, uint8_t *lladdr, int lladdrlen,
 	uint8_t *data, size_t len)
 {
-	struct _sockaddr_mctp_ext addr;
+	struct sockaddr_mctp_ext addr;
 	unsigned char *buf, *rxbuf;
 	socklen_t addrlen;
 	int rc, sd, val;
@@ -38,7 +38,7 @@ static int mctp_req(unsigned int net, mctp_eid_t eid,
 		err(EXIT_FAILURE, "socket");
 
 	memset(&addr, 0x0, sizeof(addr));
-	addrlen = sizeof(struct _sockaddr_mctp);
+	addrlen = sizeof(struct sockaddr_mctp);
 	addr.smctp_base.smctp_family = AF_MCTP;
 	addr.smctp_base.smctp_network = net;
 	addr.smctp_base.smctp_addr.s_addr = eid;
@@ -60,7 +60,7 @@ static int mctp_req(unsigned int net, mctp_eid_t eid,
 
 	/* extended addressing */
 	if (lladdrlen != -1) {
-		addrlen = sizeof(struct _sockaddr_mctp_ext);
+		addrlen = sizeof(struct sockaddr_mctp_ext);
 		addr.smctp_halen = lladdrlen;
 		memcpy(addr.smctp_haddr, lladdr, lladdrlen);
 		addr.smctp_ifindex = ifindex;
@@ -91,18 +91,18 @@ static int mctp_req(unsigned int net, mctp_eid_t eid,
 		errx(EXIT_FAILURE, "unexpected length: got %d, exp %zd",
 				rc, len);
 
-	if (!(addrlen == sizeof(struct _sockaddr_mctp_ext) ||
-		addrlen == sizeof(struct _sockaddr_mctp)))
+	if (!(addrlen == sizeof(struct sockaddr_mctp_ext) ||
+		addrlen == sizeof(struct sockaddr_mctp)))
 		errx(EXIT_FAILURE, "unknown recv address length %d, exp %zu or %zu)",
-				addrlen, sizeof(struct _sockaddr_mctp_ext),
-				sizeof(struct _sockaddr_mctp));
+				addrlen, sizeof(struct sockaddr_mctp_ext),
+				sizeof(struct sockaddr_mctp));
 
 
 	printf("req:  message from (net %d, eid %d) type %d: 0x%02x..\n",
 			addr.smctp_base.smctp_network, addr.smctp_base.smctp_addr.s_addr,
 			addr.smctp_base.smctp_type,
 			rxbuf[0]);
-	if (addrlen == sizeof(struct _sockaddr_mctp_ext)) {
+	if (addrlen == sizeof(struct sockaddr_mctp_ext)) {
 		printf("      ext ifindex %d ha[0]=0x%02x len %hhu\n",
 			addr.smctp_ifindex,
 			addr.smctp_haddr[0], addr.smctp_halen);

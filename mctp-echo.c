@@ -16,7 +16,7 @@
 
 int main(void)
 {
-	struct _sockaddr_mctp addr;
+	struct sockaddr_mctp addr;
 	unsigned char *buf;
 	socklen_t addrlen;
 	size_t buflen;

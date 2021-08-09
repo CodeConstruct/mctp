@@ -32,5 +32,7 @@ PKG_CHECK_MODULES(SYSTEMD, [libsystemd], [have_systemd=yes])
 
 AM_CONDITIONAL([HAVE_SYSTEMD], [test x$have_systemd = xyes])
 
+AC_CHECK_HEADERS([linux/mctp.h])
+
 AC_CONFIG_FILES([Makefile])
 AC_OUTPUT

@@ -200,7 +200,7 @@ static const char* dest_phys_tostr(const dest_phys *dest)
 	return dfree(buf);
 }
 
-static const char* ext_addr_tostr(const struct _sockaddr_mctp_ext *addr)
+static const char* ext_addr_tostr(const struct sockaddr_mctp_ext *addr)
 {
 	char hex[MAX_ADDR_LEN*4];
 	char* buf;
@@ -359,7 +359,7 @@ static int path_from_peer(const peer *peer, char ** ret_path) {
 /* Returns the message from a socket.
    ret_buf is allocated, should be freed by the caller */
 static int read_message(ctx *ctx, int sd, uint8_t **ret_buf, size_t *ret_buf_size,
-		struct _sockaddr_mctp_ext *ret_addr)
+		struct sockaddr_mctp_ext *ret_addr)
 {
 	int rc;
 	socklen_t addrlen;
@@ -380,7 +380,7 @@ static int read_message(ctx *ctx, int sd, uint8_t **ret_buf, size_t *ret_buf_siz
 		goto out;
 	}
 
-	addrlen = sizeof(struct _sockaddr_mctp_ext);
+	addrlen = sizeof(struct sockaddr_mctp_ext);
 	memset(ret_addr, 0x0, addrlen);
 	len = recvfrom(sd, buf, buf_size, MSG_TRUNC, (struct sockaddr *)ret_addr,
 		&addrlen);
@@ -393,7 +393,7 @@ static int read_message(ctx *ctx, int sd, uint8_t **ret_buf, size_t *ret_buf_siz
 		rc = -EPROTO;
 		goto out;
 	}
-	if (addrlen != sizeof(struct _sockaddr_mctp_ext)) {
+	if (addrlen != sizeof(struct sockaddr_mctp_ext)) {
 		warnx("Unexpected address size %u.", addrlen);
 		rc = -EPROTO;
 		goto out;
@@ -420,10 +420,10 @@ out:
 
 /* Replies to a real EID, not physical addressing */
 static int reply_message(ctx *ctx, int sd, const void *resp, size_t resp_len,
-	const struct _sockaddr_mctp_ext *addr)
+	const struct sockaddr_mctp_ext *addr)
 {
 	ssize_t len;
-	struct _sockaddr_mctp reply_addr;
+	struct sockaddr_mctp reply_addr;
 
 	memcpy(&reply_addr, &addr->smctp_base, sizeof(reply_addr));
 	reply_addr.smctp_tag &= ~MCTP_TAG_OWNER;
@@ -450,7 +450,7 @@ static int reply_message(ctx *ctx, int sd, const void *resp, size_t resp_len,
 
 // Handles new Incoming Set Endpoint ID request
 static int handle_control_set_endpoint_id(ctx *ctx,
-	int sd, struct _sockaddr_mctp_ext *addr,
+	int sd, struct sockaddr_mctp_ext *addr,
 	const uint8_t *buf, const size_t buf_size)
 {
 	struct mctp_ctrl_cmd_set_eid *req = NULL;
@@ -477,7 +477,7 @@ static int handle_control_set_endpoint_id(ctx *ctx,
 }
 
 static int handle_control_get_version_support(ctx *ctx,
-	int sd, const struct _sockaddr_mctp_ext *addr,
+	int sd, const struct sockaddr_mctp_ext *addr,
 	const uint8_t *buf, const size_t buf_size)
 {
 	struct mctp_ctrl_cmd_get_mctp_ver_support *req = NULL;
@@ -519,7 +519,7 @@ static int handle_control_get_version_support(ctx *ctx,
 }
 
 static int handle_control_get_endpoint_id(ctx *ctx,
-	int sd, const struct _sockaddr_mctp_ext *addr,
+	int sd, const struct sockaddr_mctp_ext *addr,
 	const uint8_t *buf, const size_t buf_size)
 {
 	struct mctp_ctrl_cmd_get_eid *req = NULL;
@@ -545,7 +545,7 @@ static int handle_control_get_endpoint_id(ctx *ctx,
 }
 
 static int handle_control_get_endpoint_uuid(ctx *ctx,
-	int sd, const struct _sockaddr_mctp_ext *addr,
+	int sd, const struct sockaddr_mctp_ext *addr,
 	const uint8_t *buf, const size_t buf_size)
 {
 	struct mctp_ctrl_cmd_get_uuid *req = NULL;;
@@ -565,7 +565,7 @@ static int handle_control_get_endpoint_uuid(ctx *ctx,
 
 
 static int handle_control_get_message_type_support(ctx *ctx,
-	int sd, const struct _sockaddr_mctp_ext *addr,
+	int sd, const struct sockaddr_mctp_ext *addr,
 	const uint8_t *buf, const size_t buf_size)
 {
 	struct mctp_ctrl_cmd_get_msg_type_support *req = NULL;;
@@ -590,7 +590,7 @@ static int handle_control_get_message_type_support(ctx *ctx,
 }
 
 static int handle_control_resolve_endpoint_id(ctx *ctx,
-	int sd, const struct _sockaddr_mctp_ext *addr,
+	int sd, const struct sockaddr_mctp_ext *addr,
 	const uint8_t *buf, const size_t buf_size)
 {
 	struct mctp_ctrl_cmd_resolve_endpoint_id *req = NULL;
@@ -630,7 +630,7 @@ static int handle_control_resolve_endpoint_id(ctx *ctx,
 }
 
 static int handle_control_unsupported(ctx *ctx,
-	int sd, const struct _sockaddr_mctp_ext *addr,
+	int sd, const struct sockaddr_mctp_ext *addr,
 	const uint8_t *buf, const size_t buf_size)
 {
 	struct mctp_ctrl_msg_hdr *req = NULL;
@@ -655,7 +655,7 @@ static int handle_control_unsupported(ctx *ctx,
 static int cb_listen_control_msg(sd_event_source *s, int sd, uint32_t revents,
 	void *userdata)
 {
-	struct _sockaddr_mctp_ext addr = {0};
+	struct sockaddr_mctp_ext addr = {0};
 	ctx *ctx = userdata;
 	uint8_t *buf = NULL;
 	size_t buf_size;
@@ -732,7 +732,7 @@ out:
 
 static int listen_control_msg(ctx *ctx, int net)
 {
-	struct _sockaddr_mctp addr;
+	struct sockaddr_mctp addr;
 	int rc, sd = -1, val;
 
 	sd = socket(AF_MCTP, SOCK_DGRAM, 0);
@@ -778,9 +778,9 @@ out:
  * resp buffer is allocated, caller to free.
  * Extended addressing is used optionally, depending on ext_addr arg. */
 static int endpoint_query_addr(ctx *ctx,
-	const struct _sockaddr_mctp_ext *req_addr, bool ext_addr,
+	const struct sockaddr_mctp_ext *req_addr, bool ext_addr,
 	const void* req, size_t req_len,
-	uint8_t **resp, size_t *resp_len, struct _sockaddr_mctp_ext *resp_addr)
+	uint8_t **resp, size_t *resp_len, struct sockaddr_mctp_ext *resp_addr)
 {
 	size_t req_addr_len;
 	int sd = -1, val;
@@ -809,9 +809,9 @@ static int endpoint_query_addr(ctx *ctx,
 	}
 
 	if (ext_addr) {
-		req_addr_len = sizeof(struct _sockaddr_mctp_ext);
+		req_addr_len = sizeof(struct sockaddr_mctp_ext);
 	} else {
-		req_addr_len = sizeof(struct _sockaddr_mctp);
+		req_addr_len = sizeof(struct sockaddr_mctp);
 	}
 
 	if (req_len == 0) {
@@ -874,9 +874,9 @@ out:
  */
 static int endpoint_query_peer(const peer *peer,
 	uint8_t req_type, const void* req, size_t req_len,
-	uint8_t **resp, size_t *resp_len, struct _sockaddr_mctp_ext *resp_addr)
+	uint8_t **resp, size_t *resp_len, struct sockaddr_mctp_ext *resp_addr)
 {
-	struct _sockaddr_mctp_ext addr = {0};
+	struct sockaddr_mctp_ext addr = {0};
 
 	if (peer->state != ASSIGNED) {
 		warnx("BUG: %s bad peer %s", __func__, peer_tostr(peer));
@@ -898,9 +898,9 @@ static int endpoint_query_peer(const peer *peer,
  */
 static int endpoint_query_phys(ctx *ctx, const dest_phys *dest,
 	uint8_t req_type, const void* req, size_t req_len,
-	uint8_t **resp, size_t *resp_len, struct _sockaddr_mctp_ext *resp_addr)
+	uint8_t **resp, size_t *resp_len, struct sockaddr_mctp_ext *resp_addr)
 {
-	struct _sockaddr_mctp_ext addr = {0};
+	struct sockaddr_mctp_ext addr = {0};
 
 	addr.smctp_base.smctp_family = AF_MCTP;
 	addr.smctp_base.smctp_network = 0;
@@ -926,7 +926,7 @@ static int endpoint_query_phys(ctx *ctx, const dest_phys *dest,
 /* returns -ECONNREFUSED if the endpoint returns failure. */
 static int endpoint_send_set_endpoint_id(const peer *peer, mctp_eid_t *new_eid)
 {
-	struct _sockaddr_mctp_ext addr;
+	struct sockaddr_mctp_ext addr;
 	struct mctp_ctrl_cmd_set_eid req = {0};
 	struct mctp_ctrl_resp_set_eid *resp = NULL;
 	int rc;
@@ -1294,7 +1294,7 @@ static void set_berr(ctx *ctx, int errcode, sd_bus_error *berr) {
 static int query_get_endpoint_id(ctx *ctx, const dest_phys *dest,
 	mctp_eid_t *ret_eid, uint8_t *ret_ep_type, uint8_t *ret_media_spec)
 {
-	struct _sockaddr_mctp_ext addr;
+	struct sockaddr_mctp_ext addr;
 	struct mctp_ctrl_cmd_get_eid req = {0};
 	struct mctp_ctrl_resp_get_eid *resp = NULL;
 	uint8_t *buf = NULL;
@@ -1401,7 +1401,7 @@ static int get_endpoint_peer(ctx *ctx, sd_bus_error *berr,
 }
 
 static int query_get_peer_msgtypes(peer *peer) {
-	struct _sockaddr_mctp_ext addr;
+	struct sockaddr_mctp_ext addr;
 	struct mctp_ctrl_cmd_get_msg_type_support req;
 	struct mctp_ctrl_resp_get_msg_type_support *resp = NULL;
 	uint8_t* buf = NULL;
@@ -1466,7 +1466,7 @@ static int peer_set_uuid(peer *peer, const uint8_t uuid[16])
 }
 
 static int query_get_peer_uuid(peer *peer) {
-	struct _sockaddr_mctp_ext addr;
+	struct sockaddr_mctp_ext addr;
 	struct mctp_ctrl_cmd_get_uuid req;
 	struct mctp_ctrl_resp_get_uuid *resp = NULL;
 	uint8_t* buf = NULL;
@@ -1831,7 +1831,7 @@ static int method_sendto_phys(sd_bus_message *call, void *data, sd_bus_error *be
 {
 	int rc;
 	const char *ifname = NULL;
-	struct _sockaddr_mctp_ext addr;
+	struct sockaddr_mctp_ext addr;
 	dest_phys desti, *dest = &desti;
 	ctx *ctx = data;
 	uint8_t type;
@@ -1899,8 +1899,8 @@ err:
 static int method_sendto_addr(sd_bus_message *call, void *data, sd_bus_error *berr)
 {
 	int rc;
-	struct _sockaddr_mctp_ext req_addr = {0};
-	struct _sockaddr_mctp_ext addr;
+	struct sockaddr_mctp_ext req_addr = {0};
+	struct sockaddr_mctp_ext addr;
 	ctx *ctx = data;
 	uint8_t *req = NULL, *resp = NULL;
 	size_t req_len, resp_len;
