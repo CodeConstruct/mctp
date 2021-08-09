@@ -39,6 +39,8 @@
 #define MCTP_DBUS_IFACE_ENDPOINT "xyz.openbmc_project.MCTP.Endpoint"
 #define OPENBMC_IFACE_COMMON_UUID "xyz.openbmc_project.Common.UUID"
 
+static const char* mctpd_appid = "67369c05-4b97-4b7e-be72-65cfd8639f10";
+
 static mctp_eid_t eid_alloc_min = 0x08;
 static mctp_eid_t eid_alloc_max = 0xfe;
 
@@ -2107,14 +2109,11 @@ static int bus_endpoint_get_prop(sd_bus *bus,
 	} else if (strcmp(property, "SupportedMessageTypes") == 0) {
 		rc = sd_bus_message_append_array(reply, 'y',
 			peer->message_types, peer->num_message_types);
-	} else if (strcmp(property, "UUID") == 0) {
-		if (peer->uuid) {
-			const char *s = dfree(bytes_to_uuid(peer->uuid));
-			rc = sd_bus_message_append(reply, "s", s);
-		} else {
-			rc = -ENOENT;
-		}
+	} else if (strcmp(property, "UUID") == 0 && peer->uuid) {
+		const char *s = dfree(bytes_to_uuid(peer->uuid));
+		rc = sd_bus_message_append(reply, "s", s);
 	} else {
+		printf("Unknown property '%s' for %s iface %s\n", property, path, interface);
 		rc = -ENOENT;
 	}
 
@@ -2173,6 +2172,25 @@ static int bus_endpoint_find(sd_bus *bus, const char *path,
 	if (rc >= 0) {
 		*ret_found = peer;
 		return 1;
+	}
+	return 0;
+}
+
+/* Common.UUID interface is only added for peers that have a UUID. */
+static int bus_endpoint_find_uuid(sd_bus *bus, const char *path,
+	const char *interface, void *userdata, void **ret_found,
+	sd_bus_error *ret_error)
+{
+	ctx *ctx = userdata;
+	peer *peer = NULL;
+	int rc;
+
+	rc = peer_from_path(ctx, path, &peer);
+	if (rc >= 0) {
+		if (peer->uuid) {
+			*ret_found = peer;
+			return 1;
+		}
 	}
 	return 0;
 }
@@ -2364,7 +2382,7 @@ static int setup_bus(ctx *ctx)
 					MCTP_DBUS_PATH,
 					OPENBMC_IFACE_COMMON_UUID,
 					bus_endpoint_uuid_vtable,
-					bus_endpoint_find,
+					bus_endpoint_find_uuid,
 					ctx);
 	if (rc < 0) {
 		warnx("Failed dbus fallback endpoint uuid %s", strerror(-rc));
@@ -2517,6 +2535,8 @@ static int setup_testing(ctx *ctx) {
 			return rc;
 		}
 		peer->state = ASSIGNED;
+		peer->uuid = malloc(16);
+		sd_id128_randomize((void*)peer->uuid);
 
 		rc = add_peer(ctx, &dest, 7, 12, &peer);
 		if (rc < 0) {
@@ -2536,6 +2556,9 @@ static int setup_testing(ctx *ctx) {
 			return rc;
 		}
 		peer->state = ASSIGNED;
+		peer->uuid = malloc(16);
+		// a UUID that remains constant across runs
+		memcpy(peer->uuid, ctx->uuid, 16);
 	}
 
 	/* Add extra interface with test methods */
@@ -2595,19 +2618,21 @@ static int parse_args(ctx *ctx, int argc, char **argv)
 static int fill_uuid(ctx *ctx)
 {
 	int rc;
-	sd_id128_t *u = NULL;
+	sd_id128_t appid;
+	sd_id128_t *u = (void*)ctx->uuid;
 
-	// TODO should we hash the machineid?
-	// sd_id128_get_machine_app_specific()
+	rc = sd_id128_from_string(mctpd_appid, &appid);
+	if (rc < 0) {
+		warnx("Failed to get appid");
+		return rc;
+	}
 
-	// TODO better cast?
-	u = (void*)ctx->uuid;
-	rc = sd_id128_get_machine(u);
+	rc = sd_id128_get_machine_app_specific(appid, u);
 	if (rc >= 0)
 		return 0;
 
 	warnx("No machine-id, fallback to boot ID");
-	rc = sd_id128_get_boot(u);
+	rc = sd_id128_get_boot_app_specific(appid, u);
 	if (rc < 0)
 		warnx("Failed to get boot ID");
 
