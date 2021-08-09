@@ -1114,7 +1114,7 @@ static int remove_peer(peer *peer)
 		if (peer->have_neigh) {
 			rc = peer_neigh_update(peer, RTM_DELNEIGH);
 			if (rc < 0)
-					warnx("Failed removing neigh for %s: %s", 
+				warnx("Failed removing neigh for %s: %s",
 					peer_tostr(peer),
 					strerror(-rc));
 		}
@@ -1122,7 +1122,7 @@ static int remove_peer(peer *peer)
 		if (peer->have_route) {
 			rc = peer_route_update(peer, RTM_DELROUTE);
 			if (rc < 0)
-				warnx("Failed removing route for %s: %s", 
+				warnx("Failed removing route for %s: %s",
 					peer_tostr(peer),
 					strerror(-rc));
 		}
@@ -1526,6 +1526,85 @@ static int validate_dest_phys(ctx *ctx, const dest_phys *dest)
 	return 0;
 }
 
+/* SetupEndpoint method tries the following in order:
+  - return a peer that already is known
+  - request Get Endpoint ID to add to the known table, return that
+  - request Set Endpoint ID, return that */
+static int method_setup_endpoint(sd_bus_message *call, void *data, sd_bus_error *berr)
+{
+	int rc;
+	const char *ifname = NULL;
+	dest_phys desti, *dest = &desti;
+	char *peer_path = NULL;
+	ctx *ctx = data;
+	peer *peer = NULL;
+
+	rc = sd_bus_message_read(call, "s", &ifname);
+	if (rc < 0)
+		goto err;
+
+	rc = sd_bus_message_read_array(call, 'y',
+		(const void**)&dest->hwaddr, &dest->hwaddr_len);
+	if (rc < 0)
+		goto err;
+
+	dest->ifindex = mctp_nl_ifindex_byname(ctx->nl, ifname);
+	if (dest->ifindex <= 0)
+		return sd_bus_error_setf(berr, SD_BUS_ERROR_INVALID_ARGS,
+			"Unknown MCTP ifname '%s'", ifname);
+
+	rc = validate_dest_phys(ctx, dest);
+	if (rc < 0)
+		return sd_bus_error_setf(berr, SD_BUS_ERROR_INVALID_ARGS,
+			"Bad physaddr");
+
+	/* Check for existing record */
+	peer = find_peer_by_phys(ctx, dest);
+	if (peer) {
+		if (peer->state != ASSIGNED) {
+			warnx("BUG: Bad state for peer %d, eid %d",
+				peer->state, peer->eid);
+			rc = -EPROTO;
+			goto err;
+		}
+
+		rc = path_from_peer(peer, &peer_path);
+		if (rc < 0)
+			goto err;
+		return sd_bus_reply_method_return(call, "yisb",
+			peer->eid, peer->net, dfree(peer_path), 0);
+	}
+
+	/* Get Endpoint ID */
+	rc = get_endpoint_peer(ctx, berr, dest, &peer);
+	if (rc < 0)
+		goto err;
+
+	if (peer) {
+		rc = path_from_peer(peer, &peer_path);
+		if (rc < 0)
+			goto err;
+		return sd_bus_reply_method_return(call, "yisb",
+			peer->eid, peer->net, dfree(peer_path), 0);
+	}
+
+
+	/* Set Endpoint ID */
+	rc = endpoint_assign_eid(ctx, berr, dest, &peer);
+	if (rc < 0)
+		goto err;
+
+	rc = path_from_peer(peer, &peer_path);
+	if (rc < 0)
+		goto err;
+	return sd_bus_reply_method_return(call, "yisb",
+		peer->eid, peer->net, dfree(peer_path), 1);
+
+err:
+	set_berr(ctx, rc, berr);
+	return rc;
+}
+
 static int method_assign_endpoint(sd_bus_message *call, void *data, sd_bus_error *berr)
 {
 	int rc;
@@ -1569,15 +1648,11 @@ static int method_assign_endpoint(sd_bus_message *call, void *data, sd_bus_error
 			goto err;
 		dfree(peer_path);
 
-		return sd_bus_reply_method_return(call, "yibs",
-			peer->eid, peer->net, 0, peer_path);
+		return sd_bus_reply_method_return(call, "yisb",
+			peer->eid, peer->net, peer_path, 0);
 	}
 
 	rc = endpoint_assign_eid(ctx, berr, dest, &peer);
-	if (rc < 0)
-		goto err;
-
-	rc = setup_added_peer(peer);
 	if (rc < 0)
 		goto err;
 
@@ -1586,8 +1661,8 @@ static int method_assign_endpoint(sd_bus_message *call, void *data, sd_bus_error
 		goto err;
 	dfree(peer_path);
 
-	return sd_bus_reply_method_return(call, "yibs",
-		peer->eid, peer->net, 1, peer_path);
+	return sd_bus_reply_method_return(call, "yisb",
+		peer->eid, peer->net, peer_path, 1);
 err:
 	set_berr(ctx, rc, berr);
 	return rc;
@@ -1625,18 +1700,14 @@ static int method_learn_endpoint(sd_bus_message *call, void *data, sd_bus_error 
 	if (rc < 0)
 		goto err;
 	if (!peer)
-		return sd_bus_reply_method_return(call, "yibs", 0, 0, 0, "");
-
-	rc = query_peer_properties(peer);
-	if (rc < 0)
-		goto err;
+		return sd_bus_reply_method_return(call, "yisb", 0, 0, "", 0);
 
 	rc = path_from_peer(peer, &peer_path);
 	if (rc < 0)
 		goto err;
 	dfree(peer_path);
-	return sd_bus_reply_method_return(call, "yibs", peer->eid, peer->net,
-		1, peer_path);
+	return sd_bus_reply_method_return(call, "yisb", peer->eid, peer->net,
+		peer_path, 1);
 err:
 	set_berr(ctx, rc, berr);
 	return rc;
@@ -1644,6 +1715,7 @@ err:
 
 // Query various properties of a peer.
 // To be called when a new peer is discovered/assigned, once an EID is known
+// and routable.
 static int query_peer_properties(peer *peer)
 {
 	int rc;
@@ -1720,6 +1792,7 @@ static int peer_route_update(peer *peer, uint16_t type)
 	return mctp_nl_send(peer->ctx->nl, &msg.nh);
 }
 
+/* Called when a new peer is discovered. Sets up routes and properties */
 static int setup_added_peer(peer *peer)
 {
 	int rc;
@@ -1956,15 +2029,27 @@ static int method_test_timer(sd_bus_message *call, void *data, sd_bus_error *sde
 static const sd_bus_vtable bus_mctpd_vtable[] = {
 	SD_BUS_VTABLE_START(0),
 
+	SD_BUS_METHOD_WITH_NAMES("SetupEndpoint",
+		"say",
+		SD_BUS_PARAM(ifname)
+		SD_BUS_PARAM(physaddr),
+		"yisb",
+		SD_BUS_PARAM(eid)
+		SD_BUS_PARAM(net)
+		SD_BUS_PARAM(path)
+		SD_BUS_PARAM(new),
+		method_setup_endpoint,
+		0),
+
 	SD_BUS_METHOD_WITH_NAMES("AssignEndpoint",
 		"say",
 		SD_BUS_PARAM(ifname)
 		SD_BUS_PARAM(physaddr),
-		"yibs",
+		"yisb",
 		SD_BUS_PARAM(eid)
 		SD_BUS_PARAM(net)
-		SD_BUS_PARAM(new) // TODO, better semantics?
-		SD_BUS_PARAM(path),
+		SD_BUS_PARAM(path)
+		SD_BUS_PARAM(new),
 		method_assign_endpoint,
 		0),
 
@@ -1972,14 +2057,15 @@ static const sd_bus_vtable bus_mctpd_vtable[] = {
 		"say",
 		SD_BUS_PARAM(ifname)
 		SD_BUS_PARAM(physaddr),
-		"yibs",
+		"yisb",
 		SD_BUS_PARAM(eid)
 		SD_BUS_PARAM(net)
-		SD_BUS_PARAM(found)
-		SD_BUS_PARAM(path),
+		SD_BUS_PARAM(path)
+		SD_BUS_PARAM(found),
 		method_learn_endpoint,
 		0),
 	SD_BUS_VTABLE_END,
+
 };
 
 static const sd_bus_vtable testing_vtable[] = {
