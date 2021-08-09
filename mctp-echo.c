@@ -42,8 +42,10 @@ int main(void)
 
 	for (;;) {
 		len = recvfrom(sd, NULL, 0, MSG_PEEK | MSG_TRUNC, NULL, 0);
-		if (len < 0)
-			err(EXIT_FAILURE, "recvfrom(MSG_PEEK)");
+		if (len < 0) {
+			warn("recvfrom(MSG_PEEK)");
+			continue;
+		}
 
 		if ((size_t)len > buflen) {
 			buflen = len;
@@ -55,13 +57,16 @@ int main(void)
 		addrlen = sizeof(addr);
 		len = recvfrom(sd, buf, buflen, 0,
 				(struct sockaddr *)&addr, &addrlen);
-		if (len < 0)
-			err(EXIT_FAILURE, "recvfrom");
+		if (len < 0) {
+			warn("recvfrom");
+			continue;
+		}
 
-		if (addrlen != sizeof(addr))
-			errx(EXIT_FAILURE,
-				"unknown address length %d, exp %zd",
+		if (addrlen != sizeof(addr)) {
+			warnx("unknown address length %d, exp %zd",
 				addrlen, sizeof(addr));
+			continue;
+		}
 
 		printf("echo: message from (net %d, eid %d), tag %d, type %d: len %zd, 0x%02x ..., responding\n",
 				addr.smctp_network, addr.smctp_addr.s_addr,
@@ -74,8 +79,10 @@ int main(void)
 		rc = sendto(sd, buf, len, 0,
 				(struct sockaddr *)&addr, sizeof(addr));
 
-		if (rc != (int)len)
-			err(EXIT_FAILURE, "sendto");
+		if (rc != (int)len) {
+			warn("sendto");
+			continue;
+		}
 	}
 
 	return EXIT_SUCCESS;

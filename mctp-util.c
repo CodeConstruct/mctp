@@ -2,11 +2,11 @@
 #include <string.h>
 #include <ctype.h>
 #include <stdlib.h>
-
+#include <errno.h>
 #include "mctp-util.h"
 
-void mctp_hexdump(void *b, int len, const char *indent) {
-    char* buf = b;
+void mctp_hexdump(const void *b, int len, const char *indent) {
+    const char* buf = b;
     const int row_len = 16;
     int i, j;
 
@@ -40,6 +40,32 @@ void print_hex_addr(const uint8_t *data, size_t len)
         }
         printf("%02x", data[i]);
     }
+}
+
+int write_hex_addr(const uint8_t *data, size_t len, char* dest, size_t dest_len)
+{
+    size_t l;
+    if (dest_len < len*3) {
+        snprintf(dest, dest_len, "XXXX");
+        return -EINVAL;
+    }
+
+    dest[0] = '\0';
+    for (size_t i = 0; i < len; i++) {
+        if (i > 0) {
+            l = snprintf(dest, dest_len, ":");
+            if (l >= dest_len)
+                return -EPROTO;
+            dest_len -= l;
+            dest += l;
+        }
+        l = snprintf(dest, dest_len, "%02x", data[i]);
+        if (l >= dest_len)
+            return -EPROTO;
+        dest_len -= l;
+        dest += l;
+    }
+    return 0;
 }
 
 // Accepts colon separated hex bytes
@@ -83,3 +109,50 @@ int parse_hex_addr(const char* in, uint8_t *out, size_t *out_len)
     return rc;
 }
 
+int parse_uint32(const char *str, uint32_t *out)
+{
+	unsigned long v;
+	char *endp;
+	v = strtoul(str, &endp, 0);
+	if (endp == str || *endp != '\0')
+		return -EINVAL;
+	if (v > UINT32_MAX)
+		return -EOVERFLOW;
+	*out = v;
+	return 0;
+}
+
+int parse_int32(const char *str, int32_t *out)
+{
+	long v;
+	char *endp;
+	v = strtol(str, &endp, 0);
+	if (endp == str || *endp != '\0')
+		return -EINVAL;
+	if (v > INT32_MAX || v < INT32_MIN)
+		return -EOVERFLOW;
+	*out = v;
+	return 0;
+}
+
+/* Returns a malloced pointer */
+char* bytes_to_uuid(const uint8_t u[16])
+{
+	char *buf = malloc(37);
+	if (!buf) {
+		return NULL;
+	}
+	snprintf(buf, 37,
+		"%02x%02x%02x%02x"
+		"-"
+		"%02x%02x"
+		"-"
+		"%02x%02x"
+		"-"
+		"%02x%02x"
+		"-"
+		"%02x%02x%02x%02x%02x%02x",
+		u[0], u[1], u[2], u[3], u[4], u[5], u[6], u[7],
+		u[8], u[9], u[10], u[11], u[12], u[13], u[14], u[15]);
+	return buf;
+}

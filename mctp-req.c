@@ -30,7 +30,7 @@ static int mctp_req(unsigned int net, mctp_eid_t eid,
 	struct _sockaddr_mctp_ext addr;
 	unsigned char *buf, *rxbuf;
 	socklen_t addrlen;
-	int rc, sd;
+	int rc, sd, val;
 	size_t i;
 
 	sd = socket(AF_MCTP, SOCK_DGRAM, 0);
@@ -39,13 +39,13 @@ static int mctp_req(unsigned int net, mctp_eid_t eid,
 
 	memset(&addr, 0x0, sizeof(addr));
 	addrlen = sizeof(struct _sockaddr_mctp);
-	addr.smctp_family = AF_MCTP;
-	addr.smctp_network = net;
-	addr.smctp_addr.s_addr = eid;
-	addr.smctp_type = 1;
-	addr.smctp_tag = MCTP_TAG_OWNER;
+	addr.smctp_base.smctp_family = AF_MCTP;
+	addr.smctp_base.smctp_network = net;
+	addr.smctp_base.smctp_addr.s_addr = eid;
+	addr.smctp_base.smctp_type = 1;
+	addr.smctp_base.smctp_tag = MCTP_TAG_OWNER;
 	printf("req:  sending to (net %d, eid %d), type %d\n",
-		net, eid, addr.smctp_type);
+		net, eid, addr.smctp_base.smctp_type);
 
 	rxbuf = malloc(len);
 	if (!rxbuf)
@@ -69,9 +69,15 @@ static int mctp_req(unsigned int net, mctp_eid_t eid,
 			addr.smctp_haddr[0], addr.smctp_halen);
 	}
 
+	val = 1;
+	rc = setsockopt(sd, SOL_MCTP, MCTP_OPT_ADDR_EXT, &val, sizeof(val));
+	if (rc < 0)
+		errx(EXIT_FAILURE,
+			"Kernel does not support MCTP extended addressing");
+
 	/* send data */
 	rc = sendto(sd, buf, len, 0,
-			(struct sockaddr *)&addr, sizeof(addr));
+			(struct sockaddr *)&addr, addrlen);
 	if (rc != (int)len)
 		err(EXIT_FAILURE, "sendto(%zd)", len);
 
@@ -93,8 +99,8 @@ static int mctp_req(unsigned int net, mctp_eid_t eid,
 
 
 	printf("req:  message from (net %d, eid %d) type %d: 0x%02x..\n",
-			addr.smctp_network, addr.smctp_addr.s_addr,
-			addr.smctp_type,
+			addr.smctp_base.smctp_network, addr.smctp_base.smctp_addr.s_addr,
+			addr.smctp_base.smctp_type,
 			rxbuf[0]);
 	if (addrlen == sizeof(struct _sockaddr_mctp_ext)) {
 		printf("      ext ifindex %d ha[0]=0x%02x len %hhu\n",

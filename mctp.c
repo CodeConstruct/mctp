@@ -578,9 +578,9 @@ static int do_link_set(struct ctx *ctx, int ifindex, bool have_updown, bool up,
 static int cmd_link_set(struct ctx *ctx, int argc, const char **argv) {
 	bool have_updown = false, up, have_net = false;
 	int i;
-	int ifindex, mtu = 0, net = 0;
+	int ifindex;
+	uint32_t mtu = 0, net = 0;
 	const char *curr, *linkstr, *mtustr = NULL, *netstr = NULL;
-	char *endp;
 	const char **next = NULL;
 
 	if (argc < 3)
@@ -624,16 +624,14 @@ static int cmd_link_set(struct ctx *ctx, int argc, const char **argv) {
 	}
 
 	if (mtustr) {
-		mtu = strtoul(mtustr, &endp, 0);
-		if (endp == mtustr || mtu <= 0) {
+		if (parse_uint32(mtustr, &mtu) < 0 || mtu == 0) {
 			warnx("invalid mtu %s", mtustr);
 			return -1;
 		}
 	}
 
 	if (netstr) {
-		net = strtoul(netstr, &endp, 0);
-		if (endp == netstr) {
+		if (parse_uint32(netstr, &net) < 0 || net == 0) {
 			warnx("invalid net %s", netstr);
 			return -1;
 		}
@@ -713,16 +711,15 @@ static int cmd_addr_show(struct ctx *ctx, int argc, const char **argv)
 		char			ifname[16];
 	} msg = {0};
 	const char *ifname = NULL;
-	size_t ifnamelen;
+	int ifindex = 0;
 	size_t len;
 	int rc;
 
 	if (argc > 1) {
-		// filter by ifname
 		ifname = argv[1];
-		ifnamelen = strlen(ifname);
-		if (ifnamelen > sizeof(msg.ifname)) {
-			warnx("interface name '%s' too long", ifname);
+		ifindex = mctp_nl_ifindex_byname(ctx->nl, ifname);
+		if (ifindex == 0) {
+			warnx("Unknown interface '%s'", ifname);
 			return -1;
 		}
 	}
@@ -731,15 +728,8 @@ static int cmd_addr_show(struct ctx *ctx, int argc, const char **argv)
 
 	msg.nh.nlmsg_type = RTM_GETADDR;
 	msg.nh.nlmsg_flags = NLM_F_REQUEST | NLM_F_DUMP;
-
-	msg.ifmsg.ifa_index = 1; // TODO: check this, could be 0?
 	msg.ifmsg.ifa_family = AF_MCTP;
-
-	if (ifname) {
-		msg.rta.rta_type = IFA_LABEL;
-		msg.rta.rta_len = RTA_LENGTH(ifnamelen);
-		strncpy(RTA_DATA(&msg.rta), ifname, ifnamelen);
-	}
+	msg.ifmsg.ifa_index = ifindex;
 
 	rc = mctp_nl_query(ctx->nl, &msg.nh, &resp, &len);
 	if (rc)
@@ -750,7 +740,12 @@ static int cmd_addr_show(struct ctx *ctx, int argc, const char **argv)
 	return 0;
 }
 
-static int cmd_addr_add(struct ctx *ctx, int argc, const char **argv)
+
+// cmdname is for error messages.
+// rtm_command is RTM_NEWADDR or RTM_DELADDR
+static int cmd_addr_addremove(struct ctx *ctx,
+	const char* cmdname, int rtm_command,
+	int argc, const char **argv)
 {
 	struct {
 		struct nlmsghdr		nh;
@@ -759,13 +754,12 @@ static int cmd_addr_add(struct ctx *ctx, int argc, const char **argv)
 		uint8_t			data[4];
 	} msg = {0};
 	const char *eidstr, *linkstr;
-	unsigned long tmp;
+	uint32_t tmp;
 	uint8_t eid;
 	int ifindex;
-	char *endp;
 
 	if (argc != 4) {
-		warnx("add: invalid arguments");
+		warnx("%s: invalid arguments", cmdname);
 		return -1;
 	}
 
@@ -783,14 +777,13 @@ static int cmd_addr_add(struct ctx *ctx, int argc, const char **argv)
 		return -1;
 	}
 
-	tmp = strtoul(eidstr, &endp, 0);
-	if (endp == eidstr || tmp > 0xff) {
+	if (parse_uint32(eidstr, &tmp) < 0 || tmp > 0xff) {
 		warnx("invalid address %s", eidstr);
 		return -1;
 	}
 	eid = tmp & 0xff;
 
-	msg.nh.nlmsg_type = RTM_NEWADDR;
+	msg.nh.nlmsg_type = rtm_command;
 	// request an error status since there's no other reply
 	msg.nh.nlmsg_flags = NLM_F_REQUEST | NLM_F_ACK;
 
@@ -807,6 +800,16 @@ static int cmd_addr_add(struct ctx *ctx, int argc, const char **argv)
 	return mctp_nl_send(ctx->nl, &msg.nh);
 }
 
+static int cmd_addr_add(struct ctx *ctx, int argc, const char **argv)
+{
+	return cmd_addr_addremove(ctx, "add", RTM_NEWADDR, argc, argv);
+}
+
+static int cmd_addr_remove(struct ctx *ctx, int argc, const char **argv)
+{
+	return cmd_addr_addremove(ctx, "del", RTM_DELADDR, argc, argv);
+}
+
 static int cmd_addr(struct ctx *ctx, int argc, const char **argv)
 {
 	const char* subcmd;
@@ -814,7 +817,7 @@ static int cmd_addr(struct ctx *ctx, int argc, const char **argv)
 		fprintf(stderr, "%s address\n", ctx->top_cmd);
 		fprintf(stderr, "%s address show [IFNAME]\n", ctx->top_cmd);
 		fprintf(stderr, "%s address add <eid> dev <IFNAME>\n", ctx->top_cmd);
-		fprintf(stderr, "%s address remove <eid> dev <IFNAME>  {unimplemented}\n", ctx->top_cmd);
+		fprintf(stderr, "%s address del <eid> dev <IFNAME>\n", ctx->top_cmd);
 		return 255;
 	}
 
@@ -829,6 +832,8 @@ static int cmd_addr(struct ctx *ctx, int argc, const char **argv)
 		return cmd_addr_show(ctx, argc, argv);
 	else if (!strcmp(subcmd, "add"))
 		return cmd_addr_add(ctx, argc, argv);
+	else if (!strcmp(subcmd, "del"))
+		return cmd_addr_remove(ctx, argc, argv);
 
 	warnx("unknown address command '%s'", subcmd);
 	return -1;
@@ -879,8 +884,7 @@ static int fill_rtalter_args(struct ctx *ctx, struct mctp_rtalter_msg *msg,
 {
 	int ifindex;
 	mctp_eid_t eid;
-	char *endp;
-	unsigned long tmp;
+	uint32_t tmp;
 	struct rtattr *rta;
 	size_t rta_len;
 
@@ -890,8 +894,7 @@ static int fill_rtalter_args(struct ctx *ctx, struct mctp_rtalter_msg *msg,
 		return -1;
 	}
 
-	tmp = strtoul(eidstr, &endp, 0);
-	if (endp == eidstr || tmp > 0xff) {
+	if (parse_uint32(eidstr, &tmp) < 0 || tmp > 0xff) {
 		warnx("invalid address %s", eidstr);
 		return -1;
 	}
@@ -904,6 +907,7 @@ static int fill_rtalter_args(struct ctx *ctx, struct mctp_rtalter_msg *msg,
 	msg->rtmsg.rtm_type = RTN_UNICAST;
 	// TODO add eid range handling
 	msg->rtmsg.rtm_dst_len = 0;
+	msg->rtmsg.rtm_type = RTN_UNICAST;
 
 	msg->nh.nlmsg_len = NLMSG_LENGTH(sizeof(msg->rtmsg));
 	rta_len = sizeof(msg->rta_buff);
@@ -1064,16 +1068,15 @@ struct mctp_neighalter_msg {
 	struct nlmsghdr		nh;
 	struct ndmsg		ndmsg;
 	uint8_t			rta_buff[RTA_SPACE(1) + RTA_SPACE(MAX_ADDR_LEN)];
-} msg;
+};
 
 static int fill_neighalter_args(struct ctx *ctx,
 		struct mctp_neighalter_msg *msg,
 		struct rtattr **prta, size_t *prta_len,
 		const char *eidstr, const char *linkstr) {
 	struct rtattr *rta;
-	unsigned long tmp;
+	uint32_t tmp;
 	uint8_t eid;
-	char* endp;
 	int ifindex;
 	size_t rta_len;
 
@@ -1083,8 +1086,7 @@ static int fill_neighalter_args(struct ctx *ctx,
 		return -1;
 	}
 
-	tmp = strtoul(eidstr, &endp, 0);
-	if (endp == eidstr || tmp > 0xff) {
+	if (parse_uint32(eidstr, &tmp) < 0 || tmp > 0xff) {
 		warnx("invalid address %s", eidstr);
 		return -1;
 	}
@@ -1335,9 +1337,10 @@ int main(int argc, char **argv)
 		errx(EXIT_FAILURE, "no such command '%s'", cmdname);
 
 	ctx->nl = mctp_nl_new(ctx->verbose);
-	if (!ctx->nl) {
+	if (!ctx->nl)
 		errx(EXIT_FAILURE, "Error creating netlink object");
-	}
+	if (ctx->verbose)
+		mctp_nl_linkmap_dump(ctx->nl);
 
 	argc--;
 	argv++;
