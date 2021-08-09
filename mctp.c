@@ -576,7 +576,7 @@ static int do_link_set(struct ctx *ctx, int ifindex, bool have_updown, bool up,
 }
 
 static int cmd_link_set(struct ctx *ctx, int argc, const char **argv) {
-	bool have_updown = false, up, have_net = false;
+	bool have_updown = false, up = false, have_net = false;
 	int i;
 	int ifindex;
 	uint32_t mtu = 0, net = 0;
