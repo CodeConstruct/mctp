@@ -482,9 +482,9 @@ static int handle_control_get_version_support(ctx *ctx,
 {
 	struct mctp_ctrl_cmd_get_mctp_ver_support *req = NULL;
 	struct mctp_ctrl_resp_get_mctp_ver_support *resp = NULL;
-	uint32_t version;
-	// space for a single version
-	uint8_t buffer[sizeof(*resp) + sizeof(version)];
+	uint32_t *versions = NULL;
+	// space for 4 versions
+	uint8_t respbuf[sizeof(*resp) + 4*sizeof(*versions)];
 	size_t resp_len;
 
 	if (buf_size < sizeof(struct mctp_ctrl_cmd_get_mctp_ver_support)) {
@@ -493,31 +493,28 @@ static int handle_control_get_version_support(ctx *ctx,
 	}
 
 	req = (void*)buf;
-	// TODO: check these version numbers
+	resp = (void*)respbuf;
+	versions = (void*)(resp+1);
 	switch (req->msg_type_number) {
 		case 0xff: // Base Protocol
 		case 0x00: // Control protocol
-			version = 0xf1f3f100; // 1.3.1
+			// from DSP0236 1.3.1  section 12.6.2. Big endian.
+			versions[0] = htonl(0xF1F0FF00);
+			versions[1] = htonl(0xF1F1FF00);
+			versions[2] = htonl(0xF1F2FF00);
+			versions[3] = htonl(0xF1F3F100);
+			resp->number_of_entries = 4;
+			resp->completion_code = 0x00;
+			resp_len = sizeof(*resp) + 4*sizeof(*versions);
 			break;
 		default:
-			version = 0;
+			// Unsupported message type
+			resp->completion_code = 0x80;
+			resp_len = sizeof(*resp);
 	}
 
-	resp = (void*)buffer;
 	resp->ctrl_hdr.command_code = req->ctrl_hdr.command_code;
 	resp->ctrl_hdr.rq_dgram_inst = RQDI_RESP;
-
-	if (version == 0) {
-		// Unsupported message type
-		resp->completion_code = 0x80;
-		resp->number_of_entries = 0;
-		resp_len = sizeof(*resp);
-	} else {
-		resp->completion_code = 0x00;
-		resp->number_of_entries = 1;
-		resp_len = sizeof(*resp) + sizeof(version);
-		*((uint32_t*)(resp+1)) = htonl(version);
-	}
 	return reply_message(ctx, sd, resp, resp_len, addr);
 }
 
@@ -540,8 +537,8 @@ static int handle_control_get_endpoint_id(ctx *ctx,
 	resp->eid = local_addr(ctx, addr->smctp_ifindex);
 	if (ctx->bus_owner)
 		SET_ENDPOINT_TYPE(resp->eid_type, MCTP_BUS_OWNER_BRIDGE);
-	// TODO: dynamic EID?
-	SET_ENDPOINT_ID_TYPE(resp->eid_type, MCTP_STATIC_EID);
+	// 10b = 2 = static EID supported, matches currently assigned.
+	SET_ENDPOINT_ID_TYPE(resp->eid_type, 2);
 	// TODO: medium specific information
 
 	return reply_message(ctx, sd, resp, sizeof(*resp), addr);
@@ -924,74 +921,6 @@ static int endpoint_query_phys(ctx *ctx, const dest_phys *dest,
 
 	return endpoint_query_addr(ctx, &addr, true, req, req_len,
 		resp, resp_len, resp_addr);
-}
-
-
-static uint32_t version_val(const struct version_entry *vers)
-{
-	return ntohl(*((uint32_t*)vers));
-}
-
-/* Returns the min version supported */
-static int __attribute__((unused)) endpoint_send_get_mctp_version(ctx *ctx,
-	const dest_phys *dest, uint8_t query_type, bool *ret_supported,
-	struct version_entry *ret_version)
-{
-	struct _sockaddr_mctp_ext addr;
-	struct mctp_ctrl_cmd_get_mctp_ver_support req = {0};
-	struct mctp_ctrl_resp_get_mctp_ver_support *resp = NULL;
-	int rc;
-	uint8_t* buf = NULL;
-	size_t buf_size, expect_size;
-	uint8_t i;
-	struct version_entry *v;
-
-	memset(ret_version, 0x0, sizeof(*ret_version));
-	*ret_supported = false;
-
-	req.ctrl_hdr.rq_dgram_inst = RQDI_REQ;
-	req.ctrl_hdr.command_code = MCTP_CTRL_CMD_GET_VERSION_SUPPORT;
-	req.msg_type_number = query_type;
-	// TODO: shouldn't use query_phys, can use normal addressing.
-	rc = endpoint_query_phys(ctx, dest, MCTP_CTRL_HDR_MSG_TYPE, &req,
-		sizeof(req), &buf, &buf_size, &addr);
-	if (rc < 0)
-		goto out;
-
-	if (buf_size < sizeof(*resp)) {
-		warnx("%s: short reply %zu bytes. dest %s", __func__, buf_size,
-			dest_phys_tostr(dest));
-		rc = -ENOMSG;
-		goto out;
-	}
-	resp = (void*)buf;
-
-	expect_size = sizeof(resp) +
-		resp->number_of_entries * sizeof(struct version_entry);
-	if (buf_size != expect_size) {
-		warnx("%s: bad reply length. got %zu, expected %zu, %d entries. dest %s",
-			__func__, buf_size, expect_size, resp->number_of_entries,
-			dest_phys_tostr(dest));
-		rc = -ENOMSG;
-		goto out;
-	}
-
-	if (resp->completion_code == 0)
-		*ret_supported = true;
-
-	/* Entries are in ascending version order */
-	v = (void*)(resp+1);
-	for (i = 0; i < resp->number_of_entries; i++) {
-		if (ctx->verbose)
-			fprintf(stderr, "%s: %s supports 0x%08x\n", __func__,
-				dest_phys_tostr(dest), version_val(&v[i]));
-		if (i == 0)
-			memcpy(ret_version, &v[i], sizeof(struct version_entry));
-	}
-	rc = 0;
-out:
-	free(buf);
-	return rc;
 }
 
 /* returns -ECONNREFUSED if the endpoint returns failure. */
