@@ -752,6 +752,7 @@ static int linkmap_add_entry(mctp_nl *nl, struct ifinfomsg *info,
 	}
 
 	entry = &nl->linkmap[idx];
+	memset(entry, 0, sizeof(*entry));
 	snprintf(entry->ifname, IFNAMSIZ, "%*s", (int)ifname_len, ifname);
 	entry->ifindex = info->ifi_index;
 	entry->net = net;
