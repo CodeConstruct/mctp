@@ -18,3 +18,5 @@ mctpd_LDADD = $(SYSTEMD_LIBS)
 
 mctp_req_SOURCES = src/mctp-req.c $(util_sources)
 mctp_echo_SOURCES = src/mctp-echo.c $(util_sources)
+
+EXTRA_DIST = conf/mctpd-dbus.conf conf/mctpd.service
