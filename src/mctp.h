@@ -72,7 +72,6 @@ struct sockaddr_mctp_ext {
 enum {
 	IFLA_MCTP_UNSPEC,
 	IFLA_MCTP_NET,
-	IFLA_MCTP_MEDIA_TYPE,
 	__IFLA_MCTP_MAX,
 };
 

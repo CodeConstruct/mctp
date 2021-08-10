@@ -423,7 +423,9 @@ static int parse_getlink_dump(mctp_nl *nl, struct nlmsghdr *nlh, int len)
 			warnx("Missing IFLA_MCTP_NET");
 			continue;
 		}
-		mctp_get_rtnlmsg_attr_u8(IFLA_MCTP_MEDIA_TYPE, rt_mctp, mlen, &medium);
+
+		/* TODO: media type */
+
 		ifname = mctp_get_rtnlmsg_attr(IFLA_IFNAME, rta, rlen, &ifname_len);
 		if (!ifname) {
 			warnx("no ifname?");
