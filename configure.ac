@@ -24,7 +24,7 @@ AC_PROG_INSTALL
 
 AC_GNU_SOURCE
 
-AM_INIT_AUTOMAKE([foreign -Wportability -Woverride])
+AM_INIT_AUTOMAKE([subdir-objects foreign -Wportability -Woverride])
 AM_SILENT_RULES([yes])
 
 PKG_PROG_PKG_CONFIG

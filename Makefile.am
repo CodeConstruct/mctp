@@ -7,14 +7,14 @@ endif
 
 noinst_PROGRAMS = mctp-req mctp-echo
 
-util_sources = mctp-util.c mctp-util.h
-netlink_sources = mctp-netlink.c mctp-netlink.h
+util_sources = src/mctp-util.c src/mctp-util.h
+netlink_sources = src/mctp-netlink.c src/mctp-netlink.h
 
-mctp_SOURCES = mctp.c $(netlink_sources) $(util_sources)
+mctp_SOURCES = src/mctp.c $(netlink_sources) $(util_sources)
 
-mctpd_SOURCES = mctpd.c $(netlink_sources) $(util_sources)
+mctpd_SOURCES = src/mctpd.c $(netlink_sources) $(util_sources)
 mctpd_CPPFLAGS = $(SYSTEMD_CFLAGS)
 mctpd_LDADD = $(SYSTEMD_LIBS)
 
-mctp_req_SOURCES = mctp-req.c $(util_sources)
-mctp_echo_SOURCES = mctp-echo.c $(util_sources)
+mctp_req_SOURCES = src/mctp-req.c $(util_sources)
+mctp_echo_SOURCES = src/mctp-echo.c $(util_sources)
