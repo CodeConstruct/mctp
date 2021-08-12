@@ -2410,16 +2410,18 @@ static int setup_bus(ctx *ctx)
 		goto out;
 	}
 
-	rc = sd_bus_request_name(ctx->bus, MCTP_DBUS_IFACE, 0);
-	if (rc < 0) {
-		warnx("Failed requesting name %s", MCTP_DBUS_IFACE);
-		goto out;
-	}
-
 	rc = sd_bus_add_node_enumerator(ctx->bus, NULL,
 		MCTP_DBUS_PATH, mctpd_dbus_enumerate, ctx);
 	if (rc < 0) {
 		warnx("Failed add enumerator");
+		goto out;
+	}
+
+	// All setup must be complete by here, we might immediately
+	// get requests from waiting clients.
+	rc = sd_bus_request_name(ctx->bus, MCTP_DBUS_IFACE, 0);
+	if (rc < 0) {
+		warnx("Failed requesting name %s", MCTP_DBUS_IFACE);
 		goto out;
 	}
 
