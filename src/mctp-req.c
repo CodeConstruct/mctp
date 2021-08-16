@@ -67,13 +67,13 @@ static int mctp_req(unsigned int net, mctp_eid_t eid,
 		printf("      ext ifindex %d ha[0]=0x%02x len %hhu\n",
 			addr.smctp_ifindex,
 			addr.smctp_haddr[0], addr.smctp_halen);
+		val = 1;
+		rc = setsockopt(sd, SOL_MCTP, MCTP_OPT_ADDR_EXT, &val, sizeof(val));
+		if (rc < 0)
+			errx(EXIT_FAILURE,
+				"Kernel does not support MCTP extended addressing");
 	}
 
-	val = 1;
-	rc = setsockopt(sd, SOL_MCTP, MCTP_OPT_ADDR_EXT, &val, sizeof(val));
-	if (rc < 0)
-		errx(EXIT_FAILURE,
-			"Kernel does not support MCTP extended addressing");
 
 	/* send data */
 	rc = sendto(sd, buf, len, 0,
