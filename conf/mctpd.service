@@ -1,6 +1,8 @@
 
 [Unit]
 Description=MCTP control protocol daemon
+Wants=mctp-local.target
+After=mctp-local.target
 
 [Service]
 Type=dbus
@@ -8,4 +10,4 @@ BusName=xyz.openbmc_project.MCTP
 ExecStart=/usr/sbin/mctpd
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=mctp.target

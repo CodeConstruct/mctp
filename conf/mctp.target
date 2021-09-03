@@ -1,0 +1,6 @@
+[Unit]
+Description=MCTP infrastructure active
+Wants=mctp-local.target
+
+[Install]
+WantedBy=multi-user.target
