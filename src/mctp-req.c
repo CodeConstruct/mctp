@@ -98,9 +98,10 @@ static int mctp_req(unsigned int net, mctp_eid_t eid,
 				sizeof(struct sockaddr_mctp));
 
 
-	printf("req:  message from (net %d, eid %d) type %d: 0x%02x..\n",
+	printf("req:  message from (net %d, eid %d) type %d len %d: 0x%02x..\n",
 			addr.smctp_base.smctp_network, addr.smctp_base.smctp_addr.s_addr,
 			addr.smctp_base.smctp_type,
+			len,
 			rxbuf[0]);
 	if (addrlen == sizeof(struct sockaddr_mctp_ext)) {
 		printf("      ext ifindex %d ha[0]=0x%02x len %hhu\n",
