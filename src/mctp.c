@@ -929,24 +929,40 @@ static int fill_rtalter_args(struct ctx *ctx, struct mctp_rtalter_msg *msg,
 static int cmd_route_add(struct ctx *ctx, int argc, const char **argv)
 {
 	struct mctp_rtalter_msg msg;
-	const char *eidstr, *linkstr;
+	const char *eidstr, *linkstr, *mtustr = NULL;
+	uint32_t mtu = 0;
 	struct rtattr *rta;
 	size_t rta_len;
 	int rc = 0;
 
-	if (argc != 4) {
+	if (!(argc == 4 || argc == 6)) {
 		rc = -EINVAL;
 	} else {
 		if (strcmp(argv[2], "via")) {
 			rc = -EINVAL;
+		} else {
+			eidstr = argv[1];
+			linkstr = argv[3];
 		}
 	}
+	if (argc == 6) {
+		if (strcmp(argv[4], "mtu")) {
+			rc = -EINVAL;
+		} else {
+			mtustr = argv[5];
+		}
+	}
+
+	if (mtustr) {
+		if (parse_uint32(mtustr, &mtu) < 0) {
+			rc = -EINVAL;
+		}
+	}
+
 	if (rc) {
 		warnx("add: invalid arguments");
 		return -1;
 	}
-	eidstr = argv[1];
-	linkstr = argv[3];
 
 	rc = fill_rtalter_args(ctx, &msg, &rta, &rta_len, eidstr, linkstr);
 	if (rc) {
@@ -954,7 +970,24 @@ static int cmd_route_add(struct ctx *ctx, int argc, const char **argv)
 	}
 	msg.nh.nlmsg_type = RTM_NEWROUTE;
 
-	// TODO add mtu, metric
+	if (mtu != 0) {
+		/* Nested
+		RTA_METRICS
+			RTAX_MTU
+		*/
+		struct rtattr *rta1;
+		size_t rta_len1, space1;
+		uint8_t buff1[100];
+
+		rta1 = (void*)buff1;
+		rta_len1 = sizeof(buff1);
+		space1 = 0;
+		space1 += mctp_put_rtnlmsg_attr(&rta1, &rta_len1,
+			RTAX_MTU, &mtu, sizeof(mtu));
+		// TODO add metric
+		msg.nh.nlmsg_len += mctp_put_rtnlmsg_attr(&rta, &rta_len,
+			RTA_METRICS|NLA_F_NESTED, buff1, space1);
+	}
 
 	return mctp_nl_send(ctx->nl, &msg.nh);
 }
@@ -994,7 +1027,7 @@ static int cmd_route(struct ctx *ctx, int argc, const char **argv)
 	if (argc == 2 && !strcmp(argv[1], "help")) {
 		fprintf(stderr, "%s route\n", ctx->top_cmd);
 		fprintf(stderr, "%s route show [net <network>]\n", ctx->top_cmd);
-		fprintf(stderr, "%s route add <eid> via <dev>\n", ctx->top_cmd);
+		fprintf(stderr, "%s route add <eid> via <dev> [mtu <mtu>]\n", ctx->top_cmd);
 		fprintf(stderr, "%s route del <eid> via <dev>\n", ctx->top_cmd);
 		return 255;
 	}
