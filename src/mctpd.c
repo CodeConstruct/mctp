@@ -1172,6 +1172,29 @@ static int change_peer_eid(peer *peer, mctp_eid_t new_eid) {
 	return 0;
 }
 
+static int peer_set_mtu(ctx *ctx, peer *peer, uint32_t mtu) {
+	const char* ifname = NULL;
+	int rc;
+
+	ifname = mctp_nl_if_byindex(ctx->nl, peer->phys.ifindex);
+	if (!ifname) {
+		warnx("BUG %s: no interface for ifindex %d",
+			__func__, peer->phys.ifindex);
+		return -EPROTO;
+	}
+
+	rc = mctp_nl_route_del(ctx->nl, peer->eid, ifname);
+	if (rc < 0 && rc != -ENOENT) {
+		warnx("%s, Failed removing existing route for eid %d %s",
+			__func__,
+			peer->phys.ifindex, ifname);
+		// Continue regardless, route_add will likely fail with EEXIST
+	}
+
+	rc = mctp_nl_route_add(ctx->nl, peer->eid, ifname, mtu);
+	return rc;
+}
+
 static int endpoint_assign_eid(ctx *ctx, sd_bus_error *berr, const dest_phys *dest,
 	peer **ret_peer)
 {
@@ -1973,6 +1996,36 @@ out:
 	return rc;
 }
 
+static int method_endpoint_set_mtu(sd_bus_message *call, void *data,
+	sd_bus_error *berr)
+{
+	peer *peer = data;
+	ctx *ctx = peer->ctx;
+	int rc;
+	uint32_t mtu;
+
+	if (peer->state == LOCAL)
+		return sd_bus_error_setf(berr, SD_BUS_ERROR_FAILED,
+			"Cannot set local endpoint MTU");
+	if (peer->state != ASSIGNED) {
+		rc = -EPROTO;
+		goto out;
+	}
+
+	rc = sd_bus_message_read(call, "u", &mtu);
+	if (rc < 0)
+		goto out;
+
+	rc = peer_set_mtu(ctx, peer, mtu);
+	if (rc < 0)
+		goto out;
+
+	rc = sd_bus_reply_method_return(call, "");
+out:
+	set_berr(ctx, rc, berr);
+	return rc;
+}
+
 // Testing code
 static int cb_test_timer(sd_event_source *s, uint64_t t, void* data)
 {
@@ -2167,6 +2220,11 @@ static const sd_bus_vtable bus_endpoint_uuid_vtable[] = {
 
 static const sd_bus_vtable bus_endpoint_cc_vtable[] = {
 	SD_BUS_VTABLE_START(0),
+	SD_BUS_METHOD_WITH_ARGS("SetMTU",
+		SD_BUS_ARGS("u", mtu),
+		SD_BUS_NO_RESULT,
+		method_endpoint_set_mtu,
+		0),
 	SD_BUS_METHOD_WITH_ARGS("Remove",
 		SD_BUS_NO_ARGS,
 		SD_BUS_NO_RESULT,

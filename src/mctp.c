@@ -867,72 +867,10 @@ static int cmd_route_show(struct ctx *ctx, int argc, const char **argv)
 }
 
 
-struct mctp_rtalter_msg {
-	struct nlmsghdr		nh;
-	struct rtmsg		rtmsg;
-	uint8_t			rta_buff[
-				RTA_SPACE(sizeof(mctp_eid_t)) + // eid
-				RTA_SPACE(sizeof(int)) + // ifindex
-				100 // space for MTU, nexthop etc
-				];
-};
-
-/* Common parts of RTM_NEWROUTE and RTM_DELROUTE */
-static int fill_rtalter_args(struct ctx *ctx, struct mctp_rtalter_msg *msg,
-	struct rtattr **prta, size_t *prta_len,
-	const char *eidstr, const char* linkstr)
-{
-	int ifindex;
-	mctp_eid_t eid;
-	uint32_t tmp;
-	struct rtattr *rta;
-	size_t rta_len;
-
-	ifindex = mctp_nl_ifindex_byname(ctx->nl, linkstr);
-	if (!ifindex) {
-		warnx("invalid device %s", linkstr);
-		return -1;
-	}
-
-	if (parse_uint32(eidstr, &tmp) < 0 || tmp > 0xff) {
-		warnx("invalid address %s", eidstr);
-		return -1;
-	}
-	eid = tmp & 0xff;
-
-	memset(msg, 0x0, sizeof(*msg));
-	msg->nh.nlmsg_flags = NLM_F_REQUEST | NLM_F_ACK;
-
-	msg->rtmsg.rtm_family = AF_MCTP;
-	msg->rtmsg.rtm_type = RTN_UNICAST;
-	// TODO add eid range handling
-	msg->rtmsg.rtm_dst_len = 0;
-	msg->rtmsg.rtm_type = RTN_UNICAST;
-
-	msg->nh.nlmsg_len = NLMSG_LENGTH(sizeof(msg->rtmsg));
-	rta_len = sizeof(msg->rta_buff);
-	rta = (void*)msg->rta_buff;
-
-	msg->nh.nlmsg_len += mctp_put_rtnlmsg_attr(&rta, &rta_len,
-		RTA_DST, &eid, sizeof(eid));
-	msg->nh.nlmsg_len += mctp_put_rtnlmsg_attr(&rta, &rta_len,
-		RTA_OIF, &ifindex, sizeof(ifindex));
-
-	if (prta)
-		*prta = rta;
-	if (prta_len)
-		*prta_len = rta_len;
-
-	return 0;
-}
-
 static int cmd_route_add(struct ctx *ctx, int argc, const char **argv)
 {
-	struct mctp_rtalter_msg msg;
-	const char *eidstr, *linkstr, *mtustr = NULL;
-	uint32_t mtu = 0;
-	struct rtattr *rta;
-	size_t rta_len;
+	const char *eidstr = NULL, *linkstr = NULL, *mtustr = NULL;
+	uint32_t mtu = 0, eid = 0;
 	int rc = 0;
 
 	if (!(argc == 4 || argc == 6)) {
@@ -958,44 +896,25 @@ static int cmd_route_add(struct ctx *ctx, int argc, const char **argv)
 			rc = -EINVAL;
 		}
 	}
-
+	if (eidstr && parse_uint32(eidstr, &eid) < 0) {
+		rc = -EINVAL;
+	}
+	if (eid > 0xff) {
+		warnx("Bad eid");
+		rc = -EINVAL;
+	}
 	if (rc) {
 		warnx("add: invalid arguments");
 		return -1;
 	}
 
-	rc = fill_rtalter_args(ctx, &msg, &rta, &rta_len, eidstr, linkstr);
-	if (rc) {
-		return -1;
-	}
-	msg.nh.nlmsg_type = RTM_NEWROUTE;
-
-	if (mtu != 0) {
-		/* Nested
-		RTA_METRICS
-			RTAX_MTU
-		*/
-		struct rtattr *rta1;
-		size_t rta_len1, space1;
-		uint8_t buff1[100];
-
-		rta1 = (void*)buff1;
-		rta_len1 = sizeof(buff1);
-		space1 = 0;
-		space1 += mctp_put_rtnlmsg_attr(&rta1, &rta_len1,
-			RTAX_MTU, &mtu, sizeof(mtu));
-		// TODO add metric
-		msg.nh.nlmsg_len += mctp_put_rtnlmsg_attr(&rta, &rta_len,
-			RTA_METRICS|NLA_F_NESTED, buff1, space1);
-	}
-
-	return mctp_nl_send(ctx->nl, &msg.nh);
+	return mctp_nl_route_add(ctx->nl, eid, linkstr, mtu);
 }
 
 static int cmd_route_del(struct ctx *ctx, int argc, const char **argv)
 {
-	struct mctp_rtalter_msg msg;
-	const char *eidstr, *linkstr;
+	const char *linkstr = NULL, *eidstr = NULL;
+	int eid = 0;
 	int rc = 0;
 
 	if (argc != 4) {
@@ -1004,21 +923,22 @@ static int cmd_route_del(struct ctx *ctx, int argc, const char **argv)
 		if (strcmp(argv[2], "via")) {
 			rc = -EINVAL;
 		}
+		eidstr = argv[1];
+	}
+	if (eidstr && parse_uint32(eidstr, &eid) < 0) {
+		rc = -EINVAL;
+	}
+	if (eid > 0xff) {
+		warnx("Bad eid");
+		rc = -EINVAL;
 	}
 	if (rc) {
 		warnx("del: invalid arguments");
 		return -1;
 	}
-	eidstr = argv[1];
 	linkstr = argv[3];
 
-	rc = fill_rtalter_args(ctx, &msg, NULL, NULL, eidstr, linkstr);
-	if (rc) {
-		return -1;
-	}
-	msg.nh.nlmsg_type = RTM_DELROUTE;
-
-	return mctp_nl_send(ctx->nl, &msg.nh);
+	return mctp_nl_route_del(ctx->nl, eid, linkstr);
 }
 
 static int cmd_route(struct ctx *ctx, int argc, const char **argv)

@@ -39,6 +39,11 @@ int *mctp_nl_net_list(const mctp_nl *nl, size_t *ret_num_nets);
 /* Returns an allocated list of ifindex, caller to free */
 int *mctp_nl_if_list(const mctp_nl *nl, size_t *ret_num_if);
 
+/* MCTP route helper */
+int mctp_nl_route_add(struct mctp_nl *nl, uint8_t eid, const char* ifname,
+		uint32_t mtu);
+int mctp_nl_route_del(struct mctp_nl *nl, uint8_t eid, const char* ifname);
+
 /* Helpers */
 
 void* mctp_get_rtnlmsg_attr(int rta_type, struct rtattr *rta, size_t len,
