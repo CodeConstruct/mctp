@@ -232,6 +232,7 @@ static int handle_nlmsg_ack(mctp_nl *nl)
 	len = rc;
 	msg = (void*)resp;
 
+	rc = 0;
 	for (; NLMSG_OK(msg, len); msg = NLMSG_NEXT(msg, len)) {
 		if (msg->nlmsg_type == NLMSG_ERROR) {
 			struct nlmsgerr *errmsg = NLMSG_DATA(msg);
@@ -244,9 +245,11 @@ static int handle_nlmsg_ack(mctp_nl *nl)
 				rc = errmsg->error;
 			}
 		} else {
-			warnx("Unexpected message instead of status return:");
-			// TODO
-			// dump_rtnlmsg(nl, msg);
+			warnx("Received unexpected message type %d instead of status",
+				msg->nlmsg_type);
+			if (nl->verbose) {
+				mctp_hexdump(msg, msg->nlmsg_len, "    ");
+			}
 		}
 	}
 	return rc;
