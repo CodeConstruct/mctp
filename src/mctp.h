@@ -14,11 +14,9 @@
 #ifndef _MCTP_H
 #define _MCTP_H
 
-#ifdef HAVE_CONFIG_H
 #include "config.h"
-#endif
 
-#ifdef HAVE_LINUX_MCTP_H
+#if HAVE_LINUX_MCTP_H
 #include <linux/mctp.h>
 #endif
 
