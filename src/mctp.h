@@ -47,10 +47,12 @@ struct mctp_addr {
 
 struct sockaddr_mctp {
 	unsigned short int	smctp_family;
+	unsigned short		__smctp_pad0;
 	int			smctp_network;
 	struct mctp_addr	smctp_addr;
 	uint8_t			smctp_type;
 	uint8_t			smctp_tag;
+	uint8_t			__smctp_pad1;
 };
 
 struct sockaddr_mctp_ext {
