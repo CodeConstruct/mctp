@@ -781,7 +781,6 @@ static int fill_rtalter_args(struct mctp_nl *nl, struct mctp_rtalter_msg *msg,
 	mctp_eid_t eid, const char* linkstr)
 {
 	int ifindex;
-	uint32_t tmp;
 	struct rtattr *rta;
 	size_t rta_len;
 

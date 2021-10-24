@@ -5,6 +5,9 @@ project(
     meson_version: '>= 0.47.0',
     version: 'v0.1',
     license: 'GPLv2',
+    default_options: [
+        'warning_level=1',
+    ],
 )
 
 cc = meson.get_compiler('c')

@@ -914,7 +914,8 @@ static int cmd_route_add(struct ctx *ctx, int argc, const char **argv)
 static int cmd_route_del(struct ctx *ctx, int argc, const char **argv)
 {
 	const char *linkstr = NULL, *eidstr = NULL;
-	int eid = 0;
+	uint32_t tmp;
+	uint8_t eid;
 	int rc = 0;
 
 	if (argc != 4) {
@@ -925,10 +926,10 @@ static int cmd_route_del(struct ctx *ctx, int argc, const char **argv)
 		}
 		eidstr = argv[1];
 	}
-	if (eidstr && parse_uint32(eidstr, &eid) < 0) {
+	if (eidstr && parse_uint32(eidstr, &tmp) < 0) {
 		rc = -EINVAL;
 	}
-	if (eid > 0xff) {
+	if (tmp > 0xff) {
 		warnx("Bad eid");
 		rc = -EINVAL;
 	}
@@ -936,6 +937,7 @@ static int cmd_route_del(struct ctx *ctx, int argc, const char **argv)
 		warnx("del: invalid arguments");
 		return -1;
 	}
+	eid = tmp & 0xff;
 	linkstr = argv[3];
 
 	return mctp_nl_route_del(ctx->nl, eid, linkstr);
