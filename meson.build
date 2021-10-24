@@ -6,11 +6,12 @@ project(
     version: 'v0.1',
     license: 'GPLv2',
     default_options: [
-        'warning_level=1',
+        'warning_level=2',
     ],
 )
 
 cc = meson.get_compiler('c')
+add_project_arguments('-Wno-unused-parameter', language : 'c')
 
 libsystemd = dependency('libsystemd', required: false)
 
