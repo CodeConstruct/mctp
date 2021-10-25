@@ -12,6 +12,22 @@ machine:
    is to assign EIDs to remote endpoints, and manage the resulting routes and
    neighbour-table entries for those endpoints.
 
+Building & installing
+---------------------
+
+This project uses meson for building. To configure and compile:
+
+    $ meson obj
+    $ ninja -C obj
+
+to install to the default prefix (/usr/local), with optional `DESTDIR`:
+
+    $ meson install -C obj
+
+For integration with systemd, there are a few example configuration files and
+systemd target definitions under the `conf/` directory. These are not installed
+by default.
+
 `mctp` Usage
 -------------
 
