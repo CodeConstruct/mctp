@@ -57,6 +57,7 @@ struct sockaddr_mctp_ext {
 	struct sockaddr_mctp	smctp_base;
 	int			smctp_ifindex;
 	uint8_t			smctp_halen;
+	uint8_t			__smctp_pad0[3];
 	unsigned char		smctp_haddr[MAX_ADDR_LEN];
 };
 
@@ -81,7 +82,7 @@ enum {
 
 /* setsockopt(2) options */
 #ifndef SOL_MCTP
-#define SOL_MCTP 0
+#define SOL_MCTP 285
 #endif
 
 #ifndef MCTP_OPT_ADDR_EXT
