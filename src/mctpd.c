@@ -61,7 +61,7 @@ typedef struct dest_phys dest_phys;
 struct net_det {
 	int net;
 	// EID mappings, an index into ctx->peers. Value -1 is unused.
-	ssize_t peeridx[0xff];
+	ssize_t peeridx[256];
 };
 typedef struct net_det net_det;
 
