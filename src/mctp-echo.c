@@ -11,6 +11,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <err.h>
+#include <string.h>
 #include <sys/socket.h>
 #include "mctp.h"
 
@@ -27,6 +28,7 @@ int main(void)
 	if (sd < 0)
 		err(EXIT_FAILURE, "socket");
 
+	memset(&addr, 0, sizeof(addr));
 	addr.smctp_family = AF_MCTP;
 	addr.smctp_network = MCTP_NET_ANY;
 	addr.smctp_addr.s_addr = MCTP_ADDR_ANY;

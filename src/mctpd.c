@@ -732,7 +732,7 @@ out:
 
 static int listen_control_msg(ctx *ctx, int net)
 {
-	struct sockaddr_mctp addr;
+	struct sockaddr_mctp addr = { 0 };
 	int rc, sd = -1, val;
 
 	sd = socket(AF_MCTP, SOCK_DGRAM, 0);
