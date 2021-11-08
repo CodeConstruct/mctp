@@ -385,7 +385,7 @@ out:
 	return rc;
 }
 
-static int parse_getlink_dump(mctp_nl *nl, struct nlmsghdr *nlh, int len)
+static int parse_getlink_dump(mctp_nl *nl, struct nlmsghdr *nlh, uint32_t len)
 {
 	struct ifinfomsg *info;
 

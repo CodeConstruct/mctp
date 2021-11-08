@@ -914,7 +914,7 @@ static int cmd_route_add(struct ctx *ctx, int argc, const char **argv)
 static int cmd_route_del(struct ctx *ctx, int argc, const char **argv)
 {
 	const char *linkstr = NULL, *eidstr = NULL;
-	uint32_t tmp;
+	uint32_t tmp = 0;
 	uint8_t eid;
 	int rc = 0;
 
