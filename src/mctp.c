@@ -1192,6 +1192,31 @@ static int cmd_testhex(struct ctx *ctx, int argc, const char **argv) {
 	return 0;
 }
 
+static int cmd_monitor(struct ctx *ctx, int argc, const char **argv) {
+	int rc, sd;
+
+	rc = mctp_nl_monitor(ctx->nl, true);
+	if (rc < 0) {
+		warnx("Failed monitor: %s", strerror(-rc));
+		return -1;
+	} else {
+		sd = rc;
+	}
+
+	while (1) {
+		struct nlmsghdr *resp;
+		size_t resp_len;
+
+		rc = mctp_nl_recv_all(ctx->nl, sd, &resp, &resp_len);
+		if (rc < 0) {
+			warnx("error recv: %s", strerror(-rc));
+			continue;
+		}
+		dump_rtnlmsgs(ctx, resp, resp_len);
+		free(resp);
+	}
+	return 0;
+}
 
 static int cmd_help(struct ctx * ctx, int argc, const char** argv);
 
@@ -1205,6 +1230,7 @@ struct command {
 	{ "route", cmd_route, 0 },
 	{ "neighbour", cmd_neigh, 0 },
 	{ "testhex", cmd_testhex, 1 },
+	{ "monitor", cmd_monitor, 0 },
 	{ "help", cmd_help, 0 },
 };
 

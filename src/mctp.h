@@ -93,4 +93,8 @@ enum {
 #define SOL_MCTP 285
 #endif
 
+#ifndef RTNLGRP_MCTP_IFADDR
+#define RTNLGRP_MCTP_IFADDR (RTNLGRP_BRVLAN + 1)
+#endif
+
 #endif /* _MCTP_H */

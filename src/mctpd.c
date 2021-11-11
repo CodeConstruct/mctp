@@ -39,6 +39,7 @@
 #define MCTP_DBUS_IFACE_ENDPOINT "xyz.openbmc_project.MCTP.Endpoint"
 #define OPENBMC_IFACE_COMMON_UUID "xyz.openbmc_project.Common.UUID"
 
+// an arbitrary constant for use with sd_id128_get_machine_app_specific()
 static const char* mctpd_appid = "67369c05-4b97-4b7e-be72-65cfd8639f10";
 
 static mctp_eid_t eid_alloc_min = 0x08;
@@ -67,46 +68,58 @@ typedef struct net_det net_det;
 
 struct ctx;
 
+// all local peers have the same phys
+static const dest_phys local_phys = { .ifindex = 0 };
+
 struct peer {
 	int net;
 	mctp_eid_t eid;
 
+	// multiple local interfaces can have the same eid,
+	// so we store a refcount to use when removing peers.
+	int local_count;
+
+	// Only set for .state == REMOTE
 	dest_phys phys;
 
 	enum {
 		UNUSED = 0,
-		NEW,
-		// Assigned once EID and routing has been set up
-		ASSIGNED,
-		// Own address placeholder. Only (net, eid) are used.
-		// Note that multiple interfaces in a network may have
-		// the same local address.
+		REMOTE,
+		// Local address. Note that multiple interfaces
+		// in a network may have the same local address.
 		LOCAL,
-		// CONFLICT,
 	} state;
+
+	// visible to dbus, set by publish/unpublish_peer()
+	bool published;
 
 	bool have_neigh;
 	bool have_route;
-
-	struct ctx *ctx;
 
 	// malloc()ed list of supported message types, from Get Message Type
 	uint8_t *message_types;
 	size_t num_message_types;
 
-	// from Get Endpoint ID
+	// From Get Endpoint ID
 	uint8_t endpoint_type;
 	uint8_t medium_spec;
 
 	// From Get Endpoint UUID. A malloced 16 bytes */
 	uint8_t *uuid;
+
+	// Stuff the ctx pointer into peer for tidier parameter passing
+	struct ctx *ctx;
 };
 typedef struct peer peer;
 
 struct ctx {
 	sd_event *event;
 	sd_bus *bus;
+	// Main instance for link/address state and listening for updates
 	mctp_nl *nl;
+
+	// Second instance for sending mctp socket requests. State is unused.
+	mctp_nl *nl_query;
 
 	// Whether we are running as the bus owner
 	bool bus_owner;
@@ -131,10 +144,22 @@ typedef struct ctx ctx;
 
 static int emit_endpoint_added(const peer *peer);
 static int emit_endpoint_removed(const peer *peer);
+static int emit_net_added(ctx *ctx, int net);
+static int emit_net_removed(ctx *ctx, int net);
 static int query_peer_properties(peer *peer);
 static int setup_added_peer(peer *peer);
+static void add_peer_route(peer *peer);
+static int publish_peer(peer *peer, bool add_route);
+static int unpublish_peer(peer *peer);
 static int peer_route_update(peer *peer, uint16_t type);
 static int peer_neigh_update(peer *peer, uint16_t type);
+
+static int add_interface_local(ctx *ctx, int ifindex);
+static int del_interface(ctx *ctx, int old_ifindex);
+static int change_net_interface(ctx *ctx, int ifindex, int old_net);
+static int add_local_eid(ctx *ctx, int net, int eid);
+static int del_local_eid(ctx *ctx, int net, int eid);
+static int add_net(ctx *ctx, int net);
 
 mctp_eid_t local_addr(const ctx *ctx, int ifindex) {
 	mctp_eid_t *eids, ret = 0;
@@ -168,7 +193,7 @@ static peer * find_peer_by_phys(ctx *ctx, const dest_phys *dest)
 {
 	for (size_t i = 0; i < ctx->size_peers; i++) {
 		peer *peer = &ctx->peers[i];
-		if (peer->state != ASSIGNED)
+		if (peer->state != REMOTE)
 			continue;
 		if (match_phys(&peer->phys, dest))
 			return peer;
@@ -338,7 +363,7 @@ static int path_from_peer(const peer *peer, char ** ret_path) {
 	size_t l;
 	char* buf;
 
-	if (peer->state == UNUSED || peer->state == NEW) {
+	if (!peer->published) {
 		warnx("BUG: %s on peer %s", __func__, peer_tostr(peer));
 		return -EPROTO;
 	}
@@ -773,6 +798,100 @@ out:
 	return rc;
 }
 
+static int cb_listen_monitor(sd_event_source *s, int sd, uint32_t revents,
+	void *userdata)
+{
+	ctx *ctx = userdata;
+	mctp_nl_change *changes = NULL;
+	size_t num_changes;
+	int rc;
+	bool any_error = false;
+
+	rc = mctp_nl_handle_monitor(ctx->nl, &changes, &num_changes);
+	if (rc < 0) {
+		warnx("Error handling update from netlink, link state may now be outdated. %s",
+			strerror(-rc));
+		return rc;
+	}
+
+	for (size_t i = 0; i < num_changes; i++) {
+		struct mctp_nl_change *c = &changes[i];
+		switch (c->op) {
+		case MCTP_NL_ADD_LINK:
+		{
+			rc = add_interface_local(ctx, c->ifindex);
+			any_error |= (rc < 0);
+		}
+		break;
+
+		case MCTP_NL_DEL_LINK:
+		{
+			// Local addresses have already been deleted with DEL_EID
+			rc = del_interface(ctx, c->ifindex);
+			any_error |= (rc < 0);
+		}
+		break;
+
+		case MCTP_NL_CHANGE_NET:
+		{
+			// Local addresses have already been deleted with DEL_EID
+			rc = add_interface_local(ctx, c->ifindex);
+			any_error |= (rc < 0);
+
+			// Move remote endpoints
+			rc = change_net_interface(ctx, c->ifindex, c->old_net);
+			any_error |= (rc < 0);
+
+		}
+		break;
+
+		case MCTP_NL_ADD_EID:
+		{
+			int net = mctp_nl_net_byindex(ctx->nl, c->ifindex);
+			rc = add_local_eid(ctx, net, c->eid);
+			any_error |= (rc < 0);
+		}
+		break;
+
+		case MCTP_NL_DEL_EID:
+		{
+			rc = del_local_eid(ctx, c->old_net, c->eid);
+			any_error |= (rc < 0);
+		}
+		break;
+
+		case MCTP_NL_CHANGE_UP:
+		{
+			// 'up' state is currently unused
+		}
+		break;
+		}
+	}
+
+	if (ctx->verbose && any_error) {
+		printf("Error handling netlink update\n");
+		mctp_nl_changes_dump(ctx->nl, changes, num_changes);
+		mctp_nl_linkmap_dump(ctx->nl);
+	}
+
+	free(changes);
+	return 0;
+}
+
+static int listen_monitor(ctx *ctx)
+{
+	int rc, sd;
+
+	sd = mctp_nl_monitor(ctx->nl, true);
+	if (sd < 0) {
+		return sd;
+	}
+
+	rc = sd_event_add_io(ctx->event, NULL, sd, EPOLLIN,
+		cb_listen_monitor, ctx);
+	return rc;
+}
+
 /* Use endpoint_query_peer() or endpoint_query_phys() instead.
  *
  * resp buffer is allocated, caller to free.
@@ -825,7 +944,7 @@ static int endpoint_query_addr(ctx *ctx,
 		if (ctx->verbose) {
 			warnx("%s: sendto(%s) %zu bytes failed. %s", __func__,
 				ext_addr_tostr(req_addr), req_len,
-				strerror(errno));
+				strerror(-rc));
 		}
 		goto out;
 	}
@@ -878,7 +997,7 @@ static int endpoint_query_peer(const peer *peer,
 {
 	struct sockaddr_mctp_ext addr = {0};
 
-	if (peer->state != ASSIGNED) {
+	if (peer->state != REMOTE) {
 		warnx("BUG: %s bad peer %s", __func__, peer_tostr(peer));
 		return -EPROTO;
 	}
@@ -1046,10 +1165,11 @@ static int add_peer(ctx *ctx, const dest_phys *dest, mctp_eid_t eid,
 
 	// Populate it
 	peer = &ctx->peers[idx];
+	memset(peer, 0x0, sizeof(*peer));
 	peer->eid = eid;
 	peer->net = net;
 	memcpy(&peer->phys, dest, sizeof(*dest));
-	peer->state = NEW;
+	peer->state = REMOTE;
 	peer->ctx = ctx;
 
 	// Update network eid map
@@ -1091,7 +1211,6 @@ static int check_peer_struct(const peer *peer, const struct net_det *n)
 
 static int remove_peer(peer *peer)
 {
-	int rc;
 	net_det *n = NULL;
 
 	if (peer->state == UNUSED) {
@@ -1110,25 +1229,7 @@ static int remove_peer(peer *peer)
 		return -EPROTO;
 	}
 
-	if (peer->state == ASSIGNED) {
-		if (peer->have_neigh) {
-			rc = peer_neigh_update(peer, RTM_DELNEIGH);
-			if (rc < 0)
-				warnx("Failed removing neigh for %s: %s",
-					peer_tostr(peer),
-					strerror(-rc));
-		}
-
-		if (peer->have_route) {
-			rc = peer_route_update(peer, RTM_DELROUTE);
-			if (rc < 0)
-				warnx("Failed removing route for %s: %s",
-					peer_tostr(peer),
-					strerror(-rc));
-		}
-
-		emit_endpoint_removed(peer);
-	}
+	unpublish_peer(peer);
 
 	// Clear it
 	n->peeridx[peer->eid] = -1;
@@ -1141,11 +1242,6 @@ static int remove_peer(peer *peer)
 /* Returns -EEXIST if the new_eid is already used */
 static int change_peer_eid(peer *peer, mctp_eid_t new_eid) {
 	net_det *n = NULL;
-
-	if (peer->state == UNUSED) {
-		warnx("BUG: %s: unused peer", __func__);
-		return -EPROTO;
-	}
 
 	n = lookup_net(peer->ctx, peer->net);
 	if (!n) {
@@ -1161,13 +1257,11 @@ static int change_peer_eid(peer *peer, mctp_eid_t new_eid) {
 	if (n->peeridx[new_eid] != -1)
 		return -EEXIST;
 
-	if (peer->state == ASSIGNED)
-		emit_endpoint_removed(peer);
+	unpublish_peer(peer);
 	n->peeridx[new_eid] = n->peeridx[peer->eid];
 	n->peeridx[peer->eid] = -1;
 	peer->eid = new_eid;
-	if (peer->state == ASSIGNED)
-		emit_endpoint_added(peer);
+	publish_peer(peer, true);
 
 	return 0;
 }
@@ -1183,7 +1277,7 @@ static int peer_set_mtu(ctx *ctx, peer *peer, uint32_t mtu) {
 		return -EPROTO;
 	}
 
-	rc = mctp_nl_route_del(ctx->nl, peer->eid, ifname);
+	rc = mctp_nl_route_del(ctx->nl_query, peer->eid, ifname);
 	if (rc < 0 && rc != -ENOENT) {
 		warnx("%s, Failed removing existing route for eid %d %s",
 			__func__,
@@ -1191,7 +1285,7 @@ static int peer_set_mtu(ctx *ctx, peer *peer, uint32_t mtu) {
 		// Continue regardless, route_add will likely fail with EEXIST
 	}
 
-	rc = mctp_nl_route_add(ctx->nl, peer->eid, ifname, mtu);
+	rc = mctp_nl_route_add(ctx->nl_query, peer->eid, ifname, mtu);
 	return rc;
 }
 
@@ -1379,12 +1473,6 @@ static int get_endpoint_peer(ctx *ctx, sd_bus_error *berr,
 	peer = find_peer_by_phys(ctx, dest);
 	if (peer) {
 		/* Existing entry */
-		if (peer->state != ASSIGNED) {
-			warnx("BUG: Bad state %d for peer, eid %d",
-				peer->state, peer->eid);
-			return -EPROTO;
-		}
-
 		if (eid == 0) {
 			// EID not yet assigned
 			remove_peer(peer);
@@ -1496,7 +1584,7 @@ static int query_get_peer_uuid(peer *peer) {
 	size_t buf_size;
 	int rc;
 
-	if (peer->state != ASSIGNED) {
+	if (peer->state != REMOTE) {
 		warnx("%s: Wrong state for peer %s", __func__, peer_tostr(peer));
 		return -EPROTO;
 	}
@@ -1584,13 +1672,6 @@ static int method_setup_endpoint(sd_bus_message *call, void *data, sd_bus_error 
 	/* Check for existing record */
 	peer = find_peer_by_phys(ctx, dest);
 	if (peer) {
-		if (peer->state != ASSIGNED) {
-			warnx("BUG: Bad state for peer %d, eid %d",
-				peer->state, peer->eid);
-			rc = -EPROTO;
-			goto err;
-		}
-
 		rc = path_from_peer(peer, &peer_path);
 		if (rc < 0)
 			goto err;
@@ -1659,13 +1740,6 @@ static int method_assign_endpoint(sd_bus_message *call, void *data, sd_bus_error
 	peer = find_peer_by_phys(ctx, dest);
 	if (peer) {
 		// Return existing record.
-		if (peer->state != ASSIGNED) {
-			warnx("BUG: Bad state for peer %d, eid %d",
-				peer->state, peer->eid);
-			rc = -EPROTO;
-			goto err;
-		}
-
 		rc = path_from_peer(peer, &peer_path);
 		if (rc < 0)
 			goto err;
@@ -1783,7 +1857,7 @@ static int peer_neigh_update(peer *peer, uint16_t type)
 		NDA_DST, &peer->eid, sizeof(peer->eid));
 	msg.nh.nlmsg_len += mctp_put_rtnlmsg_attr(&rta, &rta_len,
 		NDA_LLADDR, peer->phys.hwaddr, peer->phys.hwaddr_len);
-	return mctp_nl_send(peer->ctx->nl, &msg.nh);
+	return mctp_nl_send(peer->ctx->nl_query, &msg.nh);
 }
 
 static int peer_route_update(peer *peer, uint16_t type)
@@ -1812,42 +1886,115 @@ static int peer_route_update(peer *peer, uint16_t type)
 	msg.nh.nlmsg_len += mctp_put_rtnlmsg_attr(&rta, &rta_len,
 		RTA_OIF, &peer->phys.ifindex, sizeof(peer->phys.ifindex));
 	// TODO: mtu, metric?
-	return mctp_nl_send(peer->ctx->nl, &msg.nh);
+	return mctp_nl_send(peer->ctx->nl_query, &msg.nh);
 }
 
-/* Called when a new peer is discovered. Sets up routes and properties */
+/* Called when a new peer is discovered. Queries properties and publishes */
 static int setup_added_peer(peer *peer)
 {
 	int rc;
 
-	rc = peer_neigh_update(peer, RTM_NEWNEIGH);
-	if (rc < 0 && rc != -EEXIST)
-		warnx("Failed adding neigh for %s: %s", peer_tostr(peer),
-			strerror(-rc));
-	else
-		peer->have_neigh = true;
-
-	rc = peer_route_update(peer, RTM_NEWROUTE);
-	if (rc < 0 && rc != -EEXIST)
-		warnx("Failed adding route for %s: %s", peer_tostr(peer),
-			strerror(-rc));
-	else
-		peer->have_route = true;
-
-	// Ready to send ordinary messages
-	peer->state = ASSIGNED;
+	// add route before querying
+	add_peer_route(peer);
 
 	rc = query_peer_properties(peer);
 	if (rc < 0)
 		goto out;
 
-	rc = emit_endpoint_added(peer);
+	rc = publish_peer(peer, true);
 out:
 	if (rc < 0) {
 		remove_peer(peer);
 	}
 	return rc;
 }
+
+/* Adds routes/neigh. This is separate from
+   publish_peer() because we want a two stage setup of querying
+   properties (routed packets) then emitting dbus once finished */
+static void add_peer_route(peer *peer)
+{
+	int rc;
+
+	// We always try to add routes/neighs, ignoring if they
+	// already exist.
+
+	if (peer->ctx->verbose) {
+		fprintf(stderr, "Adding neigh to %s\n", peer_tostr(peer));
+	}
+	rc = peer_neigh_update(peer, RTM_NEWNEIGH);
+	if (rc < 0 && rc != -EEXIST) {
+		warnx("Failed adding neigh for %s: %s", peer_tostr(peer),
+			strerror(-rc));
+	} else {
+		peer->have_neigh = true;
+	}
+
+	if (peer->ctx->verbose) {
+		fprintf(stderr, "Adding route to %s\n", peer_tostr(peer));
+	}
+	rc = peer_route_update(peer, RTM_NEWROUTE);
+	if (rc < 0 && rc != -EEXIST) {
+		warnx("Failed adding route for %s: %s", peer_tostr(peer),
+			strerror(-rc));
+	} else {
+		peer->have_route = true;
+	}
+}
+
+/* Sets up routes/neigh, emits dbus entry */
+static int publish_peer(peer *peer, bool add_route)
+{
+	int rc;
+
+	if (add_route && peer->state == REMOTE) {
+		add_peer_route(peer);
+	}
+	rc = 0;
+	if (!peer->published) {
+		peer->published = true;
+		rc = emit_endpoint_added(peer);
+	}
+
+	return rc;
+}
+
+/* removes route, neigh, dbus entry for the peer */
+static int unpublish_peer(peer *peer) {
+	int rc;
+	if (peer->have_neigh) {
+		if (peer->ctx->verbose) {
+			fprintf(stderr, "Deleting neigh to %s\n", peer_tostr(peer));
+		}
+		rc = peer_neigh_update(peer, RTM_DELNEIGH);
+		if (rc < 0) {
+			warnx("Failed removing neigh for %s: %s",
+				peer_tostr(peer), strerror(-rc));
+		} else {
+			peer->have_neigh = false;
+		}
+	}
+
+	if (peer->have_route) {
+		if (peer->ctx->verbose) {
+			fprintf(stderr, "Deleting route to %s\n", peer_tostr(peer));
+		}
+		rc = peer_route_update(peer, RTM_DELROUTE);
+		if (rc < 0) {
+			warnx("Failed removing route for %s: %s",
+				peer_tostr(peer), strerror(-rc));
+		} else {
+			peer->have_route = false;
+		}
+	}
+	if (peer->published) {
+		emit_endpoint_removed(peer);
+		peer->published = false;
+	}
+
+	return 0;
+}
+
 
 // Testing code
 static int method_sendto_phys(sd_bus_message *call, void *data, sd_bus_error *berr)
@@ -1981,7 +2128,7 @@ static int method_endpoint_remove(sd_bus_message *call, void *data,
 	if (peer->state == LOCAL)
 		return sd_bus_error_setf(berr, SD_BUS_ERROR_FAILED,
 			"Cannot remove mctpd-local endpoint");
-	if (peer->state != ASSIGNED) {
+	if (!peer->published) {
 		rc = -EPROTO;
 		goto out;
 	}
@@ -2007,10 +2154,6 @@ static int method_endpoint_set_mtu(sd_bus_message *call, void *data,
 	if (peer->state == LOCAL)
 		return sd_bus_error_setf(berr, SD_BUS_ERROR_FAILED,
 			"Cannot set local endpoint MTU");
-	if (peer->state != ASSIGNED) {
-		rc = -EPROTO;
-		goto out;
-	}
 
 	rc = sd_bus_message_read(call, "u", &mtu);
 	if (rc < 0)
@@ -2242,7 +2385,7 @@ static int bus_endpoint_find(sd_bus *bus, const char *path,
 	int rc;
 
 	rc = peer_from_path(ctx, path, &peer);
-	if (rc >= 0) {
+	if (rc >= 0 && peer->published) {
 		*ret_found = peer;
 		return 1;
 	}
@@ -2259,13 +2402,29 @@ static int bus_endpoint_find_uuid(sd_bus *bus, const char *path,
 	int rc;
 
 	rc = peer_from_path(ctx, path, &peer);
-	if (rc >= 0) {
+	if (rc >= 0 && peer->published) {
 		if (peer->uuid) {
 			*ret_found = peer;
 			return 1;
 		}
 	}
 	return 0;
+}
+
+static char* net_path(int net)
+{
+	size_t l;
+	char *buf = NULL;
+
+	l = strlen(MCTP_DBUS_PATH) + 30;
+	buf = malloc(l);
+	if (!buf) {
+		return NULL;
+	}
+	/* can't use sd_bus_path_encode_many() since it escapes
+	   leading digits */
+	snprintf(buf, l, "%s/%d", MCTP_DBUS_PATH, net);
+	return buf;
 }
 
 static int emit_endpoint_added(const peer *peer) {
@@ -2278,10 +2437,8 @@ static int emit_endpoint_added(const peer *peer) {
 	if (peer->ctx->verbose)
 		warnx("%s: %s", __func__, path);
 	rc = sd_bus_emit_object_added(peer->ctx->bus, dfree(path));
-	// rc = sd_bus_emit_interfaces_added(ctx->bus, dfree(path),
-	// 	MCTP_DBUS_IFACE_ENDPOINT, NULL);
 	if (rc < 0)
-		warnx("%s: error emitting, %s", __func__, strerror(errno));
+		warnx("%s: error emitting, %s", __func__, strerror(-rc));
 	return rc;
 }
 
@@ -2296,7 +2453,37 @@ static int emit_endpoint_removed(const peer *peer) {
 		warnx("%s: %s", __func__, path);
 	rc = sd_bus_emit_object_removed(peer->ctx->bus, dfree(path));
 	if (rc < 0)
-		warnx("%s: error emitting, %s", __func__, strerror(errno));
+		warnx("%s: error emitting, %s", __func__, strerror(-rc));
+	return rc;
+}
+
+static int emit_net_added(ctx *ctx, int net) {
+	char *path = NULL;
+	int rc;
+
+	path = net_path(net);
+	if (path == NULL) {
+		warnx("%s: out of memory", __func__);
+		return -ENOMEM;
+	}
+	rc = sd_bus_emit_object_added(ctx->bus, dfree(path));
+	if (rc < 0)
+		warnx("%s: error emitting, %s", __func__, strerror(-rc));
+	return rc;
+}
+
+static int emit_net_removed(ctx *ctx, int net) {
+	char *path = NULL;
+	int rc;
+
+	path = net_path(net);
+	if (path == NULL) {
+		warnx("%s: out of memory", __func__);
+		return -ENOMEM;
+	}
+	rc = sd_bus_emit_object_removed(ctx->bus, dfree(path));
+	if (rc < 0)
+		warnx("%s: error emitting, %s", __func__, strerror(-rc));
 	return rc;
 }
 
@@ -2325,7 +2512,7 @@ static int mctpd_dbus_enumerate(sd_bus *bus, const char* path,
 	num_nodes++;
 
 	for (i = 0; i < ctx->size_peers; i++)
-		if (ctx->peers[i].state != UNUSED)
+		if (ctx->peers[i].published)
 			num_nodes++;
 
 	num_nodes += ctx->num_nets;
@@ -2348,9 +2535,8 @@ static int mctpd_dbus_enumerate(sd_bus *bus, const char* path,
 	for (i = 0; i < ctx->size_peers; i++) {
 		peer *peer = &ctx->peers[i];
 
-		if (peer->state == UNUSED || peer->state == NEW)
+		if (!peer->published)
 			continue;
-		// TODO do we need to exclude LOCAL?
 
 		rc = path_from_peer(peer, &nodes[j]);
 		if (rc < 0)
@@ -2360,19 +2546,11 @@ static int mctpd_dbus_enumerate(sd_bus *bus, const char* path,
 
 	// Nets
 	for (i = 0; i < ctx->num_nets; i++) {
-		size_t l;
-		char *buf = NULL;
-
-		l = strlen(MCTP_DBUS_PATH) + 30;
-		buf = malloc(l);
-		if (!buf) {
+		nodes[j] = net_path(ctx->nets[i].net);
+		if (nodes[j] == NULL) {
 			rc = -ENOMEM;
 			goto out;
 		}
-		/* can't use sd_bus_path_encode_many() since it escapes
-		   leading digits */
-		snprintf(buf, l, "%s/%d", MCTP_DBUS_PATH, ctx->nets[i].net);
-		nodes[j] = buf;
 		j++;
 	}
 
@@ -2488,96 +2666,311 @@ out:
 	return rc;
 }
 
-static int setup_nets(ctx *ctx)
+// Deletes one local EID.
+static int del_local_eid(ctx *ctx, int net, int eid)
 {
-	int *netlist = NULL;
-	size_t num_nets, i, j, num_ifs;
-	int *ifs;
-	int rc = -1;
+	int rc;
+	peer *peer = NULL;
 
-	netlist = mctp_nl_net_list(ctx->nl, &num_nets);
-	ctx->nets = calloc(num_nets, sizeof(net_det));
-	if (!ctx->nets) {
-		warnx("Allocation failed");
-		goto out;
+	peer = find_peer_by_addr(ctx, eid, net);
+	if (!peer) {
+		warnx("BUG: local eid %d net %d to delete is missing", eid, net);
+		return -ENOENT;
 	}
 
-	if (num_nets == 0) {
-		warnx("No MCTP interfaces");
-		goto out;
+	if (peer->state != LOCAL) {
+		warnx("BUG: local eid %d net %d to delete is incorrect", eid, net);
+		return -EPROTO;
 	}
 
-	for (i = 0; i < num_nets; i++) {
-		ctx->nets[i].net = netlist[i];
-		for (j = 0; j < 0xff; j++) {
-			ctx->nets[i].peeridx[j] = -1;
+	peer->local_count--;
+	if (peer->local_count < 0) {
+		warnx("BUG: local eid %d net %d bad refcount %d",
+			eid, net, peer->local_count);
+	}
+
+	rc = 0;
+	if (peer->local_count <= 0) {
+		if (ctx->verbose) {
+			fprintf(stderr, "Removing local eid %d net %d\n", eid, net);
+		}
+
+		rc = remove_peer(peer);
+	}
+	return rc;
+}
+
+// Remove nets that have no interfaces
+static int prune_old_nets(ctx *ctx)
+{
+	int *net_list;
+	size_t i, j, num_list;
+
+	net_list = mctp_nl_net_list(ctx->nl, &num_list);
+
+	// iterate and discard unused nets
+	for (i = 0, j = 0; i < ctx->num_nets; i++) {
+		bool found = false;
+		for (size_t n = 0; n < num_list && !found; n++)
+			if (net_list[n] == ctx->nets[i].net)
+				found = true;
+
+		if (found) {
+			// isn't stale
+			memmove(&ctx->nets[j], &ctx->nets[i], sizeof(*ctx->nets));
+			j++;
+		} else {
+			// stale, don't keep
+			for (size_t p = 0; p < 256; p++) {
+				// Sanity check that no peers are used
+				if (ctx->nets[i].peeridx[j] != -1) {
+					warnx("BUG: stale entry for eid %d in deleted net %d",
+						p, ctx->nets[i].net);
+				}
+			}
+			emit_net_removed(ctx, ctx->nets[i].net);
 		}
 	}
-	ctx->num_nets = num_nets;
+	ctx->num_nets = j;
+	return 0;
+}
+
+// Removes remote peers associated with an old interface.
+// Note that this old_ifindex has already been removed from ctx->nl */
+static int del_interface(ctx *ctx, int old_ifindex)
+{
+	if (ctx->verbose) {
+		fprintf(stderr, "Deleting interface #%d\n", old_ifindex);
+	}
+	for (size_t i = 0; i < ctx->size_peers; i++) {
+		peer *p = &ctx->peers[i];
+		if (p->state == REMOTE && p->phys.ifindex == old_ifindex) {
+			remove_peer(p);
+		}
+	}
+	prune_old_nets(ctx);
+	return 0;
+}
+
+// Moves remote peers from old->new net.
+static int change_net_interface(ctx *ctx, int ifindex, int old_net)
+{
+	int rc;
+	net_det *old_n, *new_n;
+	int new_net = mctp_nl_net_byindex(ctx->nl, ifindex);
+
+	if (ctx->verbose) {
+		fprintf(stderr, "Moving interface #%d %s from net %d -> %d\n",
+			ifindex, mctp_nl_if_byindex(ctx->nl, ifindex),
+			old_net, new_net);
+	}
+
+	if (new_net == 0) {
+		warnx("No net for ifindex %d", ifindex);
+		return -EPROTO;
+	}
+
+	if (new_net == old_net) {
+		// Logic below may assume they differ
+		warnx("BUG: %s called with new=old=%d", __func__, old_net);
+		return -EPROTO;
+	}
+
+	old_n = lookup_net(ctx, old_net);
+	if (!old_n) {
+		warnx("BUG: %s: Bad old net %d", __func__, old_net);
+		return -EPROTO;
+	}
+	new_n = lookup_net(ctx, new_net);
+	if (!new_n) {
+		rc = add_net(ctx, new_net);
+		if (rc < 0)
+			return rc;
+		new_n = lookup_net(ctx, new_net);
+	}
+
+	for (size_t i = 0; i < ctx->size_peers; i++) {
+		peer *peer = &ctx->peers[i];
+		if (!(peer->state == REMOTE && peer->phys.ifindex == ifindex)) {
+			// skip peers on other interfaces
+			continue;
+		}
+
+		if (peer->net != old_net) {
+			warnx("BUG: %s: Mismatch old net %d vs %d, new net %d",
+				__func__, peer->net, old_net, new_net);
+			continue;
+
+		}
+		if (check_peer_struct(peer, old_n) != 0) {
+			warnx("BUG: %s: Inconsistent state", __func__);
+			return -EPROTO;
+		}
+
+		if (new_n->peeridx[peer->eid] != -1) {
+			// Conflict, drop it
+			warnx("EID %d already exists moving net %d->%d, dropping it",
+				peer->eid, old_net, new_net);
+			remove_peer(peer);
+			continue;
+		}
+
+		// Move networks, change route/neigh entries, emit new dbus signals
+		unpublish_peer(peer);
+		new_n->peeridx[peer->eid] = old_n->peeridx[peer->eid];
+		old_n->peeridx[peer->eid] = -1;
+		peer->net = new_net;
+		publish_peer(peer, true);
+	}
+
+	prune_old_nets(ctx);
+	return 0;
+}
+
+// Adds one local EID
+static int add_local_eid(ctx *ctx, int net, int eid)
+{
+	int rc;
+	peer *peer;
+
+	if (ctx->verbose) {
+		fprintf(stderr, "Adding local eid %d net %d\n", eid, net);
+	}
+
+	peer = find_peer_by_addr(ctx, eid, net);
+	if (peer) {
+		if (peer->state == LOCAL) {
+			// Already exists, increment refcount
+			peer->local_count++;
+			return 0;
+		} else {
+			// TODO: remove the peer and add a new local one.
+			warnx("Local eid %d net %d already exists?",
+				eid, net);
+			return -EPROTO;
+		}
+	}
+
+	rc = add_peer(ctx, &local_phys, eid, net, &peer);
+	if (rc < 0) {
+		warn("BUG: Error adding local eid %d net %d", eid, net);
+		return rc;
+	}
+	peer->state = LOCAL;
+	peer->local_count = 1;
+	rc = peer_set_uuid(peer, ctx->uuid);
+	if (rc < 0) {
+		warnx("Failed setting local UUID: %s",
+			strerror(-rc));
+	}
+
+	// Only advertise supporting control messages
+	peer->message_types = malloc(1);
+	if (peer->message_types) {
+		peer->num_message_types = 1;
+		peer->message_types[0] = MCTP_CTRL_HDR_MSG_TYPE;
+	} else {
+		warnx("Out of memory");
+	}
+
+	rc = publish_peer(peer, true);
+	if (rc < 0) {
+		warnx("BUG: Error publishing local eid %d net %d", eid, net);
+	}
+	return 0;
+
+}
+
+// Adds peers for local EIDs on an interface
+static int add_interface_local(ctx *ctx, int ifindex)
+{
+	mctp_eid_t *eids = NULL;
+	size_t num;
+	int net;
+	int rc;
+
+	if (ctx->verbose) {
+		fprintf(stderr, "Adding interface #%d %s\n",
+			ifindex, mctp_nl_if_byindex(ctx->nl, ifindex));
+	}
+
+	if (!mctp_nl_up_byindex(ctx->nl, ifindex))
+		warnx("Warning, interface %s is down",
+			mctp_nl_if_byindex(ctx->nl, ifindex));
+
+	net = mctp_nl_net_byindex(ctx->nl, ifindex);
+	if (net == 0) {
+		warnx("No net for ifindex %d", ifindex);
+		return -EINVAL;
+	}
+
+	// Add new net if required
+	if (!lookup_net(ctx, net)) {
+		rc = add_net(ctx, net);
+		if (rc < 0)
+			return rc;
+	}
+
+	eids = mctp_nl_addrs_byindex(ctx->nl, ifindex, &num);
+	for (size_t j = 0; j < num; j++) {
+		add_local_eid(ctx, net, eids[j]);
+	}
+	free(eids);
+	return 0;
+}
+
+static int add_net(ctx *ctx, int net)
+{
+	net_det *n, *tmp;
+	if (lookup_net(ctx, net) != NULL) {
+		warnx("BUG: add_net for existing net %d", net);
+		return -EEXIST;
+	}
+	tmp = realloc(ctx->nets, sizeof(net_det) * (ctx->num_nets+1));
+	if (!tmp) {
+		warnx("Out of memory");
+		return -ENOMEM;
+	}
+	ctx->nets = tmp;
+	ctx->num_nets++;
+
+	// Initialise the new entry
+	n = &ctx->nets[ctx->num_nets-1];
+	memset(n, 0x0, sizeof(*n));
+	n->net = net;
+	for (size_t j = 0; j < 0xff; j++) {
+		n->peeridx[j] = -1;
+	}
+	emit_net_added(ctx, net);
+	return 0;
+}
+
+static int setup_nets(ctx *ctx)
+{
+	size_t num_ifs;
+	int *ifs;
+	int rc;
 
 	/* Set up local addresses */
 	ifs = mctp_nl_if_list(ctx->nl, &num_ifs);
-	for (i = 0; i < num_ifs; i++) {
-		mctp_eid_t *eids = NULL;
-		size_t num;
-		peer *peer = NULL;
-
-		if (!mctp_nl_up_byindex(ctx->nl, ifs[i]))
-			warnx("Warning, interface %s is down",
-				mctp_nl_if_byindex(ctx->nl, ifs[i]));
-
-		eids = mctp_nl_addrs_byindex(ctx->nl, ifs[i], &num);
-		for (j = 0; j < num; j++) {
-			int net = mctp_nl_net_byindex(ctx->nl, ifs[i]);
-			dest_phys dest = { .ifindex = 0 };
-
-			if (net == 0) {
-				warnx("No net for ifindex %d", ifs[i]);
-				continue;
-			}
-
-			peer = find_peer_by_addr(ctx, eids[j], net);
-			if (peer) {
-				if (peer->state != LOCAL)
-					warnx("BUG: Local eid %d net %d already exists?",
-						eids[j], net);
-				continue;
-			}
-
-			rc = add_peer(ctx, &dest, eids[j], net, &peer);
-			if (rc < 0) {
-				warn("BUG: Error adding local eid %d net %d for ifindex %d",
-					eids[j], net, ifs[i]);
-				continue;
-			}
-			peer->state = LOCAL;
-			rc = peer_set_uuid(peer, ctx->uuid);
-			if (rc < 0) {
-				warnx("Failed setting local UUID: %s",
-					strerror(-rc));
-			}
-
-			// Only advertise supporting control messages
-			peer->message_types = malloc(1);
-			if (peer->message_types) {
-				peer->num_message_types = 1;
-				peer->message_types[0] = MCTP_CTRL_HDR_MSG_TYPE;
-			} else {
-				warnx("Out of memory");
-			}
-		}
-		free(eids);
+	rc = 0;
+	for (size_t i = 0; i < num_ifs && rc == 0; i++) {
+		rc = add_interface_local(ctx, ifs[i]);
 	}
 	free(ifs);
+	if (rc < 0)
+		return rc;
+
+	if (num_ifs == 0) {
+		warnx("No MCTP interfaces");
+		return -ENOENT;
+	}
 
 	if (ctx->verbose) {
 		mctp_nl_linkmap_dump(ctx->nl);
 	}
 
-	rc = 0;
-out:
-	free(netlist);
-	return rc;
+	return 0;
 }
 
 static int setup_testing(ctx *ctx) {
@@ -2609,31 +3002,34 @@ static int setup_testing(ctx *ctx) {
 			warnx("%s failed add_peer, %s", __func__, strerror(-rc));
 			return rc;
 		}
-		peer->state = ASSIGNED;
+		peer->state = REMOTE;
 		peer->uuid = malloc(16);
 		sd_id128_randomize((void*)peer->uuid);
+		publish_peer(peer, false);
 
 		rc = add_peer(ctx, &dest, 7, 12, &peer);
 		if (rc < 0) {
 			warnx("%s failed add_peer, %s", __func__, strerror(-rc));
 			return rc;
 		}
-		peer->state = ASSIGNED;
+		peer->state = REMOTE;
 		peer->num_message_types = 3;
 		peer->message_types = malloc(3);
 		peer->message_types[0] = 0x00;
 		peer->message_types[1] = 0x03;
 		peer->message_types[2] = 0x04;
+		publish_peer(peer, false);
 
 		rc = add_peer(ctx, &dest, 9, 12, &peer);
 		if (rc < 0) {
 			warnx("%s failed add_peer, %s", __func__, strerror(-rc));
 			return rc;
 		}
-		peer->state = ASSIGNED;
+		peer->state = REMOTE;
 		peer->uuid = malloc(16);
 		// a UUID that remains constant across runs
 		memcpy(peer->uuid, ctx->uuid, 16);
+		publish_peer(peer, false);
 	}
 
 	/* Add extra interface with test methods */
@@ -2746,17 +3142,32 @@ int main(int argc, char **argv)
 		return 1;
 	}
 
-	rc = setup_nets(ctx);
-	if (rc < 0 && !ctx->testing)
+	ctx->nl_query = mctp_nl_new(false);
+	if (!ctx->nl_query) {
+		warnx("Failed creating 2nd netlink object");
 		return 1;
+	}
 
+	/* D-Bus needs to be set up before setup_nets() so we
+	   can populate D-Bus objects for interfaces */
 	rc = setup_bus(ctx);
 	if (rc < 0) {
 		warnx("Error in setup, returned %s %d", strerror(-rc), rc);
 		return 1;
 	}
 
-	// TODO add net argument
+	/* Listen prior to setup_nets() so we don't miss any updates */
+	rc = listen_monitor(ctx);
+	if (rc < 0) {
+		warnx("Error monitoring netlink updates. State changes will be ignored. (%s)",
+			strerror(-rc));
+	}
+
+	rc = setup_nets(ctx);
+	if (rc < 0 && !ctx->testing)
+		return 1;
+
+	// TODO add net argument?
 	rc = listen_control_msg(ctx, MCTP_NET_ANY);
 	if (rc < 0) {
 		warnx("Error in listen, returned %s %d", strerror(-rc), rc);
