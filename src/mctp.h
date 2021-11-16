@@ -19,6 +19,7 @@
 #if HAVE_LINUX_MCTP_H
 #include <linux/mctp.h>
 #endif
+#include <linux/if_link.h>
 
 #ifndef AF_MCTP
 #define AF_MCTP 45
@@ -32,10 +33,6 @@
 #include <stdint.h>
 
 #ifndef MCTP_NET_ANY
-
-#ifndef MAX_ADDR_LEN
-#define MAX_ADDR_LEN 32
-#endif
 
 typedef uint8_t			mctp_eid_t;
 
@@ -53,6 +50,16 @@ struct sockaddr_mctp {
 	uint8_t			__smctp_pad1;
 };
 
+#define MCTP_NET_ANY 0
+#define MCTP_ADDR_ANY 0xff
+#define MCTP_TAG_OWNER 0x08
+
+#endif /* MCTP_NET_ANY */
+
+#ifndef MAX_ADDR_LEN
+#define MAX_ADDR_LEN 32
+#endif
+
 struct sockaddr_mctp_ext {
 	struct sockaddr_mctp	smctp_base;
 	int			smctp_ifindex;
@@ -60,12 +67,6 @@ struct sockaddr_mctp_ext {
 	uint8_t			__smctp_pad0[3];
 	unsigned char		smctp_haddr[MAX_ADDR_LEN];
 };
-
-#define MCTP_NET_ANY 0
-#define MCTP_ADDR_ANY 0xff
-#define MCTP_TAG_OWNER 0x08
-
-#endif /* MCTP_NET_ANY */
 
 #ifndef IFLA_MCTP_MAX
 
