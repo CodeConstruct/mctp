@@ -96,6 +96,9 @@ struct peer {
 	bool have_neigh;
 	bool have_route;
 
+	// set by SetMTU method, 0 otherwise
+	uint32_t mtu;
+
 	// malloc()ed list of supported message types, from Get Message Type
 	uint8_t *message_types;
 	size_t num_message_types;
@@ -1285,6 +1288,9 @@ static int peer_set_mtu(ctx *ctx, peer *peer, uint32_t mtu) {
 	}
 
 	rc = mctp_nl_route_add(ctx->nl_query, peer->eid, ifname, mtu);
+	if (rc >= 0) {
+		peer->mtu = mtu;
+	}
 	return rc;
 }
 
@@ -1854,33 +1860,26 @@ static int peer_neigh_update(peer *peer, uint16_t type)
 	return mctp_nl_send(peer->ctx->nl_query, &msg.nh);
 }
 
+// type is RTM_NEWROUTE or RTM_DELROUTE
 static int peer_route_update(peer *peer, uint16_t type)
 {
-	struct {
-		struct nlmsghdr		nh;
-		struct rtmsg		rtmsg;
-		uint8_t			rta_buff[
-					RTA_SPACE(sizeof(mctp_eid_t)) + // eid
-					RTA_SPACE(sizeof(int)) + // ifindex
-					100 // space for MTU, nexthop etc
-					];
-	} msg = {0};
-	size_t rta_len = sizeof(msg.rta_buff);
-	struct rtattr *rta = (void*)msg.rta_buff;
+	const char * link;
 
-	msg.nh.nlmsg_type = type;
-	msg.nh.nlmsg_flags = NLM_F_REQUEST | NLM_F_ACK;
-	msg.rtmsg.rtm_family = AF_MCTP;
-	msg.rtmsg.rtm_type = RTN_UNICAST;
-	// TODO add eid range handling?
-	msg.rtmsg.rtm_dst_len = 0;
-	msg.nh.nlmsg_len = NLMSG_LENGTH(sizeof(msg.rtmsg));
-	msg.nh.nlmsg_len += mctp_put_rtnlmsg_attr(&rta, &rta_len,
-		RTA_DST, &peer->eid, sizeof(peer->eid));
-	msg.nh.nlmsg_len += mctp_put_rtnlmsg_attr(&rta, &rta_len,
-		RTA_OIF, &peer->phys.ifindex, sizeof(peer->phys.ifindex));
-	// TODO: mtu, metric?
-	return mctp_nl_send(peer->ctx->nl_query, &msg.nh);
+	link = mctp_nl_if_byindex(peer->ctx->nl_query, peer->phys.ifindex);
+	if (!link) {
+		warnx("BUG %s: Unknown ifindex %d", __func__, peer->phys.ifindex);
+		return -ENODEV;
+	}
+
+	if (type == RTM_NEWROUTE) {
+		return mctp_nl_route_add(peer->ctx->nl_query,
+			peer->eid, link, peer->mtu);
+	} else if (type == RTM_DELROUTE) {
+		return mctp_nl_route_del(peer->ctx->nl_query, peer->eid, link);
+	}
+
+	warnx("BUG %s: bad type %d", __func__, type);
+	return -EPROTO;
 }
 
 /* Called when a new peer is discovered. Queries properties and publishes */
