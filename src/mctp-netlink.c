@@ -40,6 +40,11 @@ struct mctp_nl {
 	size_t	linkmap_count;
 	size_t	linkmap_alloc;
 	bool	verbose;
+
+	// allows callers to silence printf of EEXIST returns.
+	// TODO: this is a workaround, if more are required we should
+	// rework how error messages are returned to callers.
+	bool quiet_eexist;
 };
 
 #define max(a, b) ((a) > (b) ? (a) : (b))
@@ -108,6 +113,7 @@ mctp_nl * mctp_nl_new(bool verbose)
 	nl->sd = -1;
 	nl->sd_monitor = -1;
 	nl->verbose = verbose;
+	nl->quiet_eexist = false;
 
 	nl->sd = open_nl_socket();
 	if (nl->sd < 0)
@@ -123,6 +129,10 @@ err:
 	return NULL;
 }
 
+/* Avoids printing warnings for EEXIST */
+void mctp_nl_warn_eexist(mctp_nl *nl, bool warn) {
+	nl->quiet_eexist = !warn;
+}
 
 static void free_linkmap(struct linkmap_entry *linkmap, size_t count)
 {
@@ -442,7 +452,7 @@ static void dump_nlmsg_hdr(struct nlmsghdr *hdr, const char *indent)
 	printf("%spid:   %d\n", indent, hdr->nlmsg_pid);
 }
 
-void mctp_display_nlmsg_error(struct nlmsgerr *errmsg, size_t errlen)
+void mctp_display_nlmsg_error(const mctp_nl *nl, struct nlmsgerr *errmsg, size_t errlen)
 {
 	size_t rta_len, errstrlen;
 	struct rtattr *rta;
@@ -456,7 +466,8 @@ void mctp_display_nlmsg_error(struct nlmsgerr *errmsg, size_t errlen)
 	rta = (void *)errmsg + offsetof(struct nlmsgerr, msg) + errmsg->msg.nlmsg_len;
 	rta_len = (void*)errmsg + errlen - (void*)rta;
 
-	printf("Error from kernel: %s (%d)\n", strerror(-errmsg->error), errmsg->error);
+	if (!(nl->quiet_eexist && errmsg->error == -EEXIST))
+		printf("Error from kernel: %s (%d)\n", strerror(-errmsg->error), errmsg->error);
 	errstr = mctp_get_rtnlmsg_attr(NLMSGERR_ATTR_MSG, rta, rta_len, &errstrlen);
 	if (errstr) {
 		errstrlen = strnlen(errstr, errstrlen);
@@ -464,10 +475,10 @@ void mctp_display_nlmsg_error(struct nlmsgerr *errmsg, size_t errlen)
 	}
 }
 
-void mctp_dump_nlmsg_error(struct nlmsgerr *errmsg, size_t errlen)
+void mctp_dump_nlmsg_error(const mctp_nl *nl, struct nlmsgerr *errmsg, size_t errlen)
 {
 	printf("error:\n");
-	mctp_display_nlmsg_error(errmsg, errlen);
+	mctp_display_nlmsg_error(nl, errmsg, errlen);
 	printf("  error packet dump:\n");
 	mctp_hexdump(errmsg, errlen, "    ");
 	printf("  error in reply to message:\n");
@@ -495,9 +506,9 @@ static int handle_nlmsg_ack(mctp_nl *nl)
 			size_t errlen = NLMSG_PAYLOAD(msg, 0);
 			if (errmsg->error) {
 				if (nl->verbose)
-					mctp_dump_nlmsg_error(errmsg, errlen);
+					mctp_dump_nlmsg_error(nl, errmsg, errlen);
 				else
-					mctp_display_nlmsg_error(errmsg, errlen);
+					mctp_display_nlmsg_error(nl, errmsg, errlen);
 				rc = errmsg->error;
 			}
 		} else {

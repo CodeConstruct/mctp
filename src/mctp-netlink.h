@@ -41,6 +41,9 @@ mctp_nl * mctp_nl_new(bool verbose);
 /* Cleans and deallocates nl */
 void mctp_nl_close(mctp_nl *nl);
 
+/* Avoids printing warnings for EEXIST */
+void mctp_nl_warn_eexist(mctp_nl *nl, bool warn);
+
 /* Sends a message. If NLM_F_ACK flag is set it will wait for a
    response then print and return any error */
 int mctp_nl_send(mctp_nl *nl, struct nlmsghdr *msg);
@@ -83,8 +86,8 @@ bool mctp_get_rtnlmsg_attr_u8(int rta_type, struct rtattr *rta, size_t len,
 size_t mctp_put_rtnlmsg_attr(struct rtattr **prta, size_t *rta_len,
 	unsigned short type, const void* value, size_t val_len);
 
-void mctp_dump_nlmsg_error(struct nlmsgerr *errmsg, size_t errlen);
-void mctp_display_nlmsg_error(struct nlmsgerr *errmsg, size_t errlen);
+void mctp_dump_nlmsg_error(const mctp_nl *nl, struct nlmsgerr *errmsg, size_t errlen);
+void mctp_display_nlmsg_error(const mctp_nl *nl, struct nlmsgerr *errmsg, size_t errlen);
 
 /* enable=true will return the socket listening for netlink messages.
    enable=false stops receiving

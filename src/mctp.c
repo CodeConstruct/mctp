@@ -428,7 +428,7 @@ static void dump_rtnlmsg(struct ctx *ctx, struct nlmsghdr *msg)
 		dump_rtnlmsg_neighbour(ctx, payload, len);
 		break;
 	case NLMSG_ERROR:
-		mctp_dump_nlmsg_error(payload, len);
+		mctp_dump_nlmsg_error(ctx->nl, payload, len);
 		break;
 	case NLMSG_NOOP:
 	case NLMSG_DONE:
@@ -464,7 +464,7 @@ void display_rtnlmsgs(struct ctx *ctx, struct nlmsghdr *msg, size_t len,
 			case NLMSG_DONE:
 				break;
 			case NLMSG_ERROR:
-				mctp_display_nlmsg_error(NLMSG_DATA(msg), NLMSG_PAYLOAD(msg, 0));
+				mctp_display_nlmsg_error(ctx->nl, NLMSG_DATA(msg), NLMSG_PAYLOAD(msg, 0));
 				break;
 			default:
 				printf("unknown nlmsg type\n");
@@ -1130,7 +1130,7 @@ static int cmd_neigh_del(struct ctx *ctx, int argc, const char **argv)
 		}
 	}
 	if (rc) {
-		warnx("add: invalid arguments");
+		warnx("del: invalid arguments");
 		return -1;
 	}
 

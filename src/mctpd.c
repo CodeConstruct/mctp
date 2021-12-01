@@ -3147,6 +3147,7 @@ int main(int argc, char **argv)
 		warnx("Failed creating 2nd netlink object");
 		return 1;
 	}
+	mctp_nl_warn_eexist(ctx->nl_query, false);
 
 	/* D-Bus needs to be set up before setup_nets() so we
 	   can populate D-Bus objects for interfaces */
