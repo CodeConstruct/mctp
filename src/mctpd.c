@@ -1134,7 +1134,6 @@ static int add_peer(ctx *ctx, const dest_phys *dest, mctp_eid_t eid,
 		}
 		peer = &ctx->peers[idx];
 		if (!match_phys(&peer->phys, dest)) {
-			warnx("BUG: %s eid %hhu net %d peer already exists", __func__, eid, net);
 			return -EEXIST;
 		}
 		*ret_peer = peer;
@@ -1365,8 +1364,6 @@ static void set_berr(ctx *ctx, int errcode, sd_bus_error *berr) {
 	if (sd_bus_error_is_set(berr)) {
 		existing = true;
 	} else switch (errcode) {
-		case 0:
-			break;
 		case -ETIMEDOUT:
 			sd_bus_error_setf(berr, SD_BUS_ERROR_FAILED,
 				"MCTP Endpoint did not respond");
@@ -1392,8 +1389,9 @@ static void set_berr(ctx *ctx, int errcode, sd_bus_error *berr) {
 				"Internal error");
 			break;
 		default:
-			sd_bus_error_setf(berr, SD_BUS_ERROR_FAILED,
-				"Request failed");
+			if (errcode < 0)
+				sd_bus_error_setf(berr, SD_BUS_ERROR_FAILED,
+					"Request failed");
 			break;
 	}
 
@@ -1480,7 +1478,7 @@ static int get_endpoint_peer(ctx *ctx, sd_bus_error *berr,
 		} else if (peer->eid != eid) {
 			rc = change_peer_eid(peer, eid);
 			if (rc == -EEXIST)
-				return sd_bus_error_setf(berr, SD_BUS_ERROR_FAILED,
+				return sd_bus_error_setf(berr, SD_BUS_ERROR_FILE_EXISTS,
 					"Endpoint previously EID %d claimed EID %d which is already used",
 					peer->eid, eid);
 			else if (rc < 0)
@@ -1494,7 +1492,7 @@ static int get_endpoint_peer(ctx *ctx, sd_bus_error *berr,
 		/* New endpoint */
 		rc = add_peer(ctx, dest, eid, net, &peer);
 		if (rc == -EEXIST)
-			return sd_bus_error_setf(berr, SD_BUS_ERROR_FAILED,
+			return sd_bus_error_setf(berr, SD_BUS_ERROR_FILE_EXISTS,
 					"Endpoint claimed EID %d which is already used",
 					eid);
 		else if (rc < 0)
@@ -1638,7 +1636,6 @@ static int validate_dest_phys(ctx *ctx, const dest_phys *dest)
 }
 
 /* SetupEndpoint method tries the following in order:
-  - return a peer that already is known
   - request Get Endpoint ID to add to the known table, return that
   - request Set Endpoint ID, return that */
 static int method_setup_endpoint(sd_bus_message *call, void *data, sd_bus_error *berr)
@@ -1669,29 +1666,23 @@ static int method_setup_endpoint(sd_bus_message *call, void *data, sd_bus_error 
 		return sd_bus_error_setf(berr, SD_BUS_ERROR_INVALID_ARGS,
 			"Bad physaddr");
 
-	/* Check for existing record */
-	peer = find_peer_by_phys(ctx, dest);
-	if (peer) {
-		rc = path_from_peer(peer, &peer_path);
-		if (rc < 0)
-			goto err;
-		return sd_bus_reply_method_return(call, "yisb",
-			peer->eid, peer->net, dfree(peer_path), 0);
-	}
-
 	/* Get Endpoint ID */
 	rc = get_endpoint_peer(ctx, berr, dest, &peer);
-	if (rc < 0)
-		goto err;
-
-	if (peer) {
+	if (rc >= 0 && peer) {
+		if (ctx->verbose)
+			fprintf(stderr, "%s returning from get_endpoint_peer %s",
+				__func__, peer_tostr(peer));
 		rc = path_from_peer(peer, &peer_path);
 		if (rc < 0)
 			goto err;
 		return sd_bus_reply_method_return(call, "yisb",
 			peer->eid, peer->net, dfree(peer_path), 0);
+	} else if (rc == -EEXIST) {
+		// EEXISTS is OK, we will assign a new eid instead.
+	} else if (rc < 0) {
+		// Unhandled error, fail.
+		goto err;
 	}
-
 
 	/* Set Endpoint ID */
 	rc = endpoint_assign_eid(ctx, berr, dest, &peer);
@@ -1701,6 +1692,9 @@ static int method_setup_endpoint(sd_bus_message *call, void *data, sd_bus_error 
 	rc = path_from_peer(peer, &peer_path);
 	if (rc < 0)
 		goto err;
+	if (ctx->verbose)
+		fprintf(stderr, "%s returning from endpoint_assign_eid %s",
+			__func__, peer_tostr(peer));
 	return sd_bus_reply_method_return(call, "yisb",
 		peer->eid, peer->net, dfree(peer_path), 1);
 
