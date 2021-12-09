@@ -2646,18 +2646,22 @@ static int setup_bus(ctx *ctx)
 		goto out;
 	}
 
-	// All setup must be complete by here, we might immediately
-	// get requests from waiting clients.
-	rc = sd_bus_request_name(ctx->bus, MCTP_DBUS_IFACE, 0);
-	if (rc < 0) {
-		warnx("Failed requesting name %s", MCTP_DBUS_IFACE);
-		goto out;
-	}
-
 	rc = 0;
 out:
 	return rc;
 }
+
+
+int request_dbus(ctx *ctx) {
+	int rc;
+
+	rc = sd_bus_request_name(ctx->bus, MCTP_DBUS_IFACE, 0);
+	if (rc < 0) {
+		warnx("Failed requesting name %s", MCTP_DBUS_IFACE);
+	}
+	return rc;
+}
+
 
 // Deletes one local EID.
 static int del_local_eid(ctx *ctx, int net, int eid)
@@ -3172,6 +3176,13 @@ int main(int argc, char **argv)
 	rc = setup_testing(ctx);
 	if (rc < 0)
 		return 1;
+
+	// All setup must be complete by here, we might immediately
+	// get requests from waiting clients.
+	rc = request_dbus(ctx);
+	if (rc < 0)
+		return 1;
+
 
 	rc = sd_event_loop(ctx->event);
 	if (rc < 0) {
