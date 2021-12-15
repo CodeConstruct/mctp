@@ -327,7 +327,7 @@ void mctp_nl_changes_dump(mctp_nl *nl, mctp_nl_change *changes, size_t num_chang
 		const char* ifname = mctp_nl_if_byindex(nl, ch->ifindex);
 		if (!ifname)
 			ifname = "deleted";
-		printf("%3d %-12s ifindex %3d (%-20s) eid %3d old_net %4d old_up %d\n",
+		printf("%3zd %-12s ifindex %3d (%-20s) eid %3d old_net %4d old_up %d\n",
 			i, ops[ch->op], ch->ifindex, ifname, ch->eid,
 			ch->old_net, ch->old_up);
 	}
