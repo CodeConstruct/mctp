@@ -1175,23 +1175,6 @@ static int cmd_neigh(struct ctx *ctx, int argc, const char **argv) {
 	return -1;
 }
 
-static int cmd_testhex(struct ctx *ctx, int argc, const char **argv) {
-	if (argc < 2 || !strcmp(argv[1], "help")) {
-		fprintf(stderr, "testhex aa:bb:12:23:...   limited to 5 output len\n");
-		return 255;
-	}
-
-	uint8_t buf[5];
-	size_t lenbuf = sizeof(buf);
-	int rc = parse_hex_addr(argv[1], buf, &lenbuf);
-	if (rc) {
-		warnx("Bad hex");
-	} else {
-		mctp_hexdump(buf, lenbuf, "output    ");
-	}
-	return 0;
-}
-
 static int cmd_monitor(struct ctx *ctx, int argc, const char **argv) {
 	int rc, sd;
 
@@ -1229,7 +1212,6 @@ struct command {
 	{ "address", cmd_addr, 0 },
 	{ "route", cmd_route, 0 },
 	{ "neighbour", cmd_neigh, 0 },
-	{ "testhex", cmd_testhex, 1 },
 	{ "monitor", cmd_monitor, 0 },
 	{ "help", cmd_help, 0 },
 };
