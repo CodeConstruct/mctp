@@ -94,7 +94,7 @@ enum {
 #endif
 
 #ifndef RTNLGRP_MCTP_IFADDR
-#define RTNLGRP_MCTP_IFADDR (RTNLGRP_BRVLAN + 1)
+#define RTNLGRP_MCTP_IFADDR 34
 #endif
 
 #endif /* _MCTP_H */
