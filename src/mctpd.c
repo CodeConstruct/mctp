@@ -2935,7 +2935,7 @@ static int add_net(ctx *ctx, int net)
 	n = &ctx->nets[ctx->num_nets-1];
 	memset(n, 0x0, sizeof(*n));
 	n->net = net;
-	for (size_t j = 0; j < 0xff; j++) {
+	for (size_t j = 0; j < 256; j++) {
 		n->peeridx[j] = -1;
 	}
 	emit_net_added(ctx, net);
@@ -2991,7 +2991,7 @@ static int setup_testing(ctx *ctx) {
 		ctx->nets[0].net = 10;
 		ctx->nets[1].net = 12;
 		for (j = 0; j < ctx->num_nets; j++)
-			for (i = 0; i < 0xff; i++)
+			for (i = 0; i < 256; i++)
 				ctx->nets[j].peeridx[i] = -1;
 
 		rc = add_peer(ctx, &dest, 7, 10, &peer);
