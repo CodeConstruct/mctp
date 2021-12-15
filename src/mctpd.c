@@ -2720,7 +2720,7 @@ static int prune_old_nets(ctx *ctx)
 			// stale, don't keep
 			for (size_t p = 0; p < 256; p++) {
 				// Sanity check that no peers are used
-				if (ctx->nets[i].peeridx[j] != -1) {
+				if (ctx->nets[i].peeridx[p] != -1) {
 					warnx("BUG: stale entry for eid %d in deleted net %d",
 						p, ctx->nets[i].net);
 				}
