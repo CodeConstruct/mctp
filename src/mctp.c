@@ -1178,6 +1178,11 @@ static int cmd_neigh(struct ctx *ctx, int argc, const char **argv) {
 static int cmd_monitor(struct ctx *ctx, int argc, const char **argv) {
 	int rc, sd;
 
+	if (argc == 2 && !strcmp(argv[1], "help")) {
+		fprintf(stderr, "%s monitor\n", ctx->top_cmd);
+		return 255;
+	}
+
 	rc = mctp_nl_monitor(ctx->nl, true);
 	if (rc < 0) {
 		warnx("Failed monitor: %s", strerror(-rc));
