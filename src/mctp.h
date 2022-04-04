@@ -20,6 +20,7 @@
 #include <linux/mctp.h>
 #endif
 #include <linux/if_link.h>
+#include <linux/rtnetlink.h>
 
 #ifndef AF_MCTP
 #define AF_MCTP 45
