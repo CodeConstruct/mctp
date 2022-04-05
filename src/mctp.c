@@ -677,6 +677,7 @@ static int cmd_link(struct ctx *ctx, int argc, const char **argv)
 		fprintf(stderr, "%s link\n", ctx->top_cmd);
 		fprintf(stderr, "%s link show [ifname]\n", ctx->top_cmd);
 		fprintf(stderr, "%s link set <ifname> [up|down] [mtu <mtu>] [network <net>] [bus-owner <physaddr>]\n", ctx->top_cmd);
+		fprintf(stderr, "%s link serial <device>\n", ctx->top_cmd);
 		return 255;
 	}
 
