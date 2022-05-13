@@ -1542,7 +1542,7 @@ static int query_get_peer_msgtypes(peer *peer) {
 		goto out;
 	}
 	resp = (void*)buf;
-	expect_size = sizeof(resp) + resp->msg_type_count;
+	expect_size = sizeof(*resp) + resp->msg_type_count;
 	if (buf_size != expect_size) {
 		warnx("%s: bad reply length. got %zu, expected %zu, %d entries. dest %s",
 			__func__, buf_size, expect_size, resp->msg_type_count,
