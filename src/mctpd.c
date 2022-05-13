@@ -189,7 +189,8 @@ static net_det *lookup_net(ctx *ctx, int net)
 static bool match_phys(const dest_phys *d1, const dest_phys *d2) {
 	return d1->ifindex == d2->ifindex &&
 		d1->hwaddr_len == d2->hwaddr_len &&
-		!memcmp(d1->hwaddr, d2->hwaddr, d1->hwaddr_len);
+		(d2->hwaddr_len == 0
+			|| !memcmp(d1->hwaddr, d2->hwaddr, d1->hwaddr_len));
 }
 
 static peer * find_peer_by_phys(ctx *ctx, const dest_phys *dest)
@@ -1184,7 +1185,7 @@ static int add_peer(ctx *ctx, const dest_phys *dest, mctp_eid_t eid,
 static int check_peer_struct(const peer *peer, const struct net_det *n)
 {
 	ssize_t idx;
-    ctx *ctx = peer->ctx;
+	ctx *ctx = peer->ctx;
 
 	if (n->net != peer->net) {
 		warnx("BUG: Mismatching net %d vs peer net %d", n->net, peer->net);
@@ -2988,6 +2989,11 @@ static int setup_testing(ctx *ctx) {
 
 		ctx->num_nets = 2;
 		ctx->nets = calloc(ctx->num_nets, sizeof(net_det));
+		if (!ctx->nets) {
+			warnx("calloc failed");
+			ctx->num_nets = 0;
+			return -ENOMEM;
+		}
 		ctx->nets[0].net = 10;
 		ctx->nets[1].net = 12;
 		for (j = 0; j < ctx->num_nets; j++)
