@@ -25,13 +25,14 @@ static const size_t DEFAULT_LEN = 1;
 /* lladdrlen != -1 to ignore ifindex/lladdr */
 static int mctp_req(unsigned int net, mctp_eid_t eid,
 	unsigned int ifindex, uint8_t *lladdr, int lladdrlen,
-	uint8_t *data, size_t len)
+	uint8_t type, uint8_t *data, size_t len)
 {
 	struct sockaddr_mctp_ext addr;
 	unsigned char *buf, *rxbuf;
 	socklen_t addrlen;
 	int rc, sd, val;
 	size_t i;
+	ssize_t ret;
 
 	sd = socket(AF_MCTP, SOCK_DGRAM, 0);
 	if (sd < 0)
@@ -42,10 +43,10 @@ static int mctp_req(unsigned int net, mctp_eid_t eid,
 	addr.smctp_base.smctp_family = AF_MCTP;
 	addr.smctp_base.smctp_network = net;
 	addr.smctp_base.smctp_addr.s_addr = eid;
-	addr.smctp_base.smctp_type = 1;
+	addr.smctp_base.smctp_type = type;
 	addr.smctp_base.smctp_tag = MCTP_TAG_OWNER;
-	printf("req:  sending to (net %d, eid %d), type %d\n",
-		net, eid, addr.smctp_base.smctp_type);
+	printf("req:  sending to (net %d, eid %d), type %d, len %zu\n",
+		net, eid, addr.smctp_base.smctp_type, len);
 
 	rxbuf = malloc(len);
 	if (!rxbuf)
@@ -81,15 +82,21 @@ static int mctp_req(unsigned int net, mctp_eid_t eid,
 	if (rc != (int)len)
 		err(EXIT_FAILURE, "sendto(%zd)", len);
 
+	ret = recvfrom(sd, NULL, 0, MSG_PEEK | MSG_TRUNC, NULL, 0);
+	if (ret < 0)
+		err(EXIT_FAILURE, "recvfrom");
+	len = (size_t)ret;
+
+	rxbuf = realloc(rxbuf, len);
+	if (!rxbuf)
+		err(EXIT_FAILURE, "realloc");
+
 	/* receive response */
 	addrlen = sizeof(addr);
 	rc = recvfrom(sd, rxbuf, len, MSG_TRUNC,
 			(struct sockaddr *)&addr, &addrlen);
 	if (rc < 0)
 		err(EXIT_FAILURE, "recvfrom");
-	else if ((size_t)rc != len)
-		errx(EXIT_FAILURE, "unexpected length: got %d, exp %zd",
-				rc, len);
 
 	if (!(addrlen == sizeof(struct sockaddr_mctp_ext) ||
 		addrlen == sizeof(struct sockaddr_mctp)))
@@ -98,33 +105,26 @@ static int mctp_req(unsigned int net, mctp_eid_t eid,
 				sizeof(struct sockaddr_mctp));
 
 
-	printf("req:  message from (net %d, eid %d) type %d len %zd: 0x%02x..\n",
+	printf("req:  message from (net %d, eid %d) type %d len %zd\n",
 			addr.smctp_base.smctp_network, addr.smctp_base.smctp_addr.s_addr,
-			addr.smctp_base.smctp_type,
-			len,
-			rxbuf[0]);
+			addr.smctp_base.smctp_type, len);
 	if (addrlen == sizeof(struct sockaddr_mctp_ext)) {
 		printf("      ext ifindex %d ha[0]=0x%02x len %hhu\n",
 			addr.smctp_ifindex,
 			addr.smctp_haddr[0], addr.smctp_halen);
 	}
 
-	for (i = 0; i < len; i++) {
-		uint8_t exp = data ? data[i] : i & 0xff;
-		if (rxbuf[i] != exp)
-			errx(EXIT_FAILURE,
-				"payload mismatch at byte 0x%zx; "
-					"sent 0x%02x, received 0x%02x",
-				i, exp, rxbuf[i]);
-	}
-
+	printf("data:\n");
+	for (i = 0; i < len; i++)
+		printf("0x%02x ", rxbuf[i]);
+	printf("\n");
 	return 0;
 }
 
 static void usage(void)
 {
 	fprintf(stderr, "mctp-req [eid <eid>] [net <net>]"
-		"[ifindex <ifindex> lladdr <hwaddr>] [len <len>]"
+		"[ifindex <ifindex> lladdr <hwaddr>] [type <type>] [len <len>]"
 		"[data <data>]\n");
 	fprintf(stderr, "default eid %d net %d len %zd\n",
 			DEFAULT_EID, DEFAULT_NET, DEFAULT_LEN);
@@ -139,6 +139,7 @@ int main(int argc, char ** argv)
 	unsigned int net = DEFAULT_NET;
 	mctp_eid_t eid = DEFAULT_EID;
 	size_t len = DEFAULT_LEN, sz;
+	uint8_t type = 1;
 	char *endp, *optname, *optval;
 	unsigned int tmp, ifindex;
 	bool valid_parse;
@@ -173,6 +174,10 @@ int main(int argc, char ** argv)
 			if (tmp > 64 * 1024)
 				errx(EXIT_FAILURE, "Bad len");
 			len = tmp;
+		} else if (!strcmp(optname, "type")) {
+			if (tmp > 0xff)
+				errx(EXIT_FAILURE, "Bad type");
+			type = tmp;
 		} else if (!strcmp(optname, "data")) {
 			sz = (strlen(optval) + 2) / 3;
 			data = malloc(sz);
@@ -203,5 +208,5 @@ int main(int argc, char ** argv)
 	if (data)
 		len = datalen;
 
-	return mctp_req(net, eid, ifindex, lladdr, lladdrlen, data, len);
+	return mctp_req(net, eid, ifindex, lladdr, lladdrlen, type, data, len);
 }
