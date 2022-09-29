@@ -123,9 +123,13 @@ static int mctp_req(unsigned int net, mctp_eid_t eid,
 
 static void usage(void)
 {
-	fprintf(stderr, "mctp-req [eid <eid>] [net <net>] [ifindex <ifindex> lladdr <hwaddr>] [len <len>]\n");
+	fprintf(stderr, "mctp-req [eid <eid>] [net <net>]"
+		"[ifindex <ifindex> lladdr <hwaddr>] [len <len>]"
+		"[data <data>]\n");
 	fprintf(stderr, "default eid %d net %d len %zd\n",
 			DEFAULT_EID, DEFAULT_NET, DEFAULT_LEN);
+	fprintf(stderr, "The data is in hex format separated by colon, e.g."
+			"00:01:0f");
 }
 
 int main(int argc, char ** argv)
