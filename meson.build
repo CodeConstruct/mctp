@@ -2,7 +2,7 @@
 #
 project(
     'mctp', 'c',
-    meson_version: '>= 0.47.0',
+    meson_version: '>= 0.58.0',
     version: 'v1.1',
     license: 'GPLv2',
     default_options: [
@@ -52,3 +52,5 @@ if libsystemd.found()
         install_dir: get_option('sbindir'),
     )
 endif
+
+subdir('conf')
