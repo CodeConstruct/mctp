@@ -13,7 +13,7 @@ project(
 cc = meson.get_compiler('c')
 add_project_arguments('-Wno-unused-parameter', language : 'c')
 
-libsystemd = dependency('libsystemd', required: false)
+libsystemd = dependency('libsystemd', version: '>=247', required: false)
 
 conf = configuration_data()
 conf.set10('HAVE_LINUX_MCTP_H',
