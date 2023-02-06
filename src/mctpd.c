@@ -2590,20 +2590,20 @@ static int setup_bus(ctx *ctx)
 	// Must use the default loop so that dfree() can use it without context.
 	rc = sd_event_default(&ctx->event);
 	if (rc < 0) {
-		warnx("sd_event failed");
+		warnx("Failed creating event loop");
 		goto out;
 	}
 
 	rc = sd_bus_default(&ctx->bus);
 	if (rc < 0) {
-		warnx("Couldn't get bus");
+		warnx("Couldn't connect to D-Bus");
 		goto out;
 	}
 
 	rc = sd_bus_attach_event(ctx->bus, ctx->event,
 		SD_EVENT_PRIORITY_NORMAL);
 	if (rc < 0) {
-		warnx("Failed attach");
+		warnx("Failed attach to event loop");
 		goto out;
 	}
 
@@ -2616,7 +2616,7 @@ static int setup_bus(ctx *ctx)
 					bus_mctpd_find,
 					ctx);
 	if (rc < 0) {
-		warnx("Failed dbus object");
+		warnx("Failed creating D-Bus object");
 		goto out;
 	}
 
@@ -2627,7 +2627,7 @@ static int setup_bus(ctx *ctx)
 					bus_endpoint_find,
 					ctx);
 	if (rc < 0) {
-		warnx("Failed dbus fallback endpoint %s", strerror(-rc));
+		warnx("Failed adding D-Bus interface: %s", strerror(-rc));
 		goto out;
 	}
 
@@ -2638,7 +2638,7 @@ static int setup_bus(ctx *ctx)
 					bus_endpoint_find,
 					ctx);
 	if (rc < 0) {
-		warnx("Failed dbus fallback endpoint %s", strerror(-rc));
+		warnx("Failed adding extra D-Bus interface: %s", strerror(-rc));
 		goto out;
 	}
 
@@ -2650,20 +2650,20 @@ static int setup_bus(ctx *ctx)
 					bus_endpoint_find_uuid,
 					ctx);
 	if (rc < 0) {
-		warnx("Failed dbus fallback endpoint uuid %s", strerror(-rc));
+		warnx("Failed adding uuid D-Bus interface: %s", strerror(-rc));
 		goto out;
 	}
 
 	rc = sd_bus_add_object_manager(ctx->bus, NULL, MCTP_DBUS_PATH);
 	if (rc < 0) {
-		warnx("%s failed %s", __func__, strerror(-rc));
+		warnx("Adding object manager failed: %s", strerror(-rc));
 		goto out;
 	}
 
 	rc = sd_bus_add_node_enumerator(ctx->bus, NULL,
 		MCTP_DBUS_PATH, mctpd_dbus_enumerate, ctx);
 	if (rc < 0) {
-		warnx("Failed add enumerator");
+		warnx("Failed to add node enumerator: %s", strerror(-rc));
 		goto out;
 	}
 
