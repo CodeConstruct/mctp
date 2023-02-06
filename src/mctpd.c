@@ -1458,8 +1458,9 @@ out:
 	return rc;
 }
 
-/* Returns the peer associated with the endpoint.
- * Returns NULL if the endpoint successfully replies "not yet assigned".
+/* Returns 0, and ret_peer associated with the endpoint.
+ * Returns 0, ret_peer=NULL if the endpoint successfully replies "not yet assigned".
+ * Returns negative error code on failure.
  */
 static int get_endpoint_peer(ctx *ctx, sd_bus_error *berr,
 	const dest_phys *dest, peer **ret_peer)
