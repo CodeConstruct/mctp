@@ -267,13 +267,14 @@ static const char* peer_tostr(const peer *peer)
 static int defer_free_handler(sd_event_source *s, void *userdata)
 {
 	free(userdata);
+	sd_event_source_unref(s);
 	return 0;
 }
 
 /* Returns ptr, frees it on the next default event loop cycle (defer)*/
 static void* dfree(void* ptr)
 {
-	sd_event *e;
+	sd_event *e = NULL;
 	int rc;
 
 	if (!ptr)
@@ -281,13 +282,17 @@ static void* dfree(void* ptr)
 	rc = sd_event_default(&e);
 	if (rc < 0) {
 		warnx("defer_free no event loop");
-		return ptr;
+		goto out;
 	}
 	rc = sd_event_add_defer(e, NULL, defer_free_handler, ptr);
 	if (rc < 0) {
 		warnx("defer_free failed adding");
-		return ptr;
+		goto out;
 	}
+
+out:
+	if (e)
+		sd_event_unref(e);
 	return ptr;
 }
 
@@ -2582,7 +2587,8 @@ static int setup_bus(ctx *ctx)
 {
 	int rc;
 
-	rc = sd_event_new(&ctx->event);
+	// Must use the default loop so that dfree() can use it without context.
+	rc = sd_event_default(&ctx->event);
 	if (rc < 0) {
 		warnx("sd_event failed");
 		goto out;
@@ -3205,6 +3211,7 @@ int main(int argc, char **argv)
 
 
 	rc = sd_event_loop(ctx->event);
+	sd_event_unref(ctx->event);
 	if (rc < 0) {
 		warnx("Error in loop, returned %s %d", strerror(-rc), rc);
 		return 1;
