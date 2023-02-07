@@ -53,7 +53,7 @@ static const uint8_t RQDI_RESP = 0x0;
 
 struct dest_phys {
 	int ifindex;
-	const uint8_t *hwaddr;
+	uint8_t hwaddr[MAX_ADDR_LEN];
 	size_t hwaddr_len;
 };
 typedef struct dest_phys dest_phys;
@@ -1642,6 +1642,24 @@ static int validate_dest_phys(ctx *ctx, const dest_phys *dest)
 	return 0;
 }
 
+static int message_read_hwaddr(sd_bus_message *call, dest_phys* dest)
+{
+	int rc;
+	const void* msg_hwaddr = NULL;
+	size_t msg_hwaddr_len;
+
+	rc = sd_bus_message_read_array(call, 'y', &msg_hwaddr, &msg_hwaddr_len);
+	if (rc < 0)
+		return rc;
+	if (msg_hwaddr_len > MAX_ADDR_LEN)
+		return -EINVAL;
+
+	memset(dest->hwaddr, 0x0, MAX_ADDR_LEN);
+	memcpy(dest->hwaddr, msg_hwaddr, msg_hwaddr_len);
+	dest->hwaddr_len = msg_hwaddr_len;
+	return 0;
+}
+
 /* SetupEndpoint method tries the following in order:
   - request Get Endpoint ID to add to the known table, return that
   - request Set Endpoint ID, return that */
@@ -1649,7 +1667,7 @@ static int method_setup_endpoint(sd_bus_message *call, void *data, sd_bus_error 
 {
 	int rc;
 	const char *ifname = NULL;
-	dest_phys desti, *dest = &desti;
+	dest_phys desti = {0}, *dest = &desti;
 	char *peer_path = NULL;
 	ctx *ctx = data;
 	peer *peer = NULL;
@@ -1658,8 +1676,7 @@ static int method_setup_endpoint(sd_bus_message *call, void *data, sd_bus_error 
 	if (rc < 0)
 		goto err;
 
-	rc = sd_bus_message_read_array(call, 'y',
-		(const void**)&dest->hwaddr, &dest->hwaddr_len);
+	rc = message_read_hwaddr(call, dest);
 	if (rc < 0)
 		goto err;
 
@@ -1723,8 +1740,7 @@ static int method_assign_endpoint(sd_bus_message *call, void *data, sd_bus_error
 	if (rc < 0)
 		goto err;
 
-	rc = sd_bus_message_read_array(call, 'y',
-		(const void**)&dest->hwaddr, &dest->hwaddr_len);
+	rc = message_read_hwaddr(call, dest);
 	if (rc < 0)
 		goto err;
 
@@ -1779,8 +1795,7 @@ static int method_learn_endpoint(sd_bus_message *call, void *data, sd_bus_error 
 	if (rc < 0)
 		goto err;
 
-	rc = sd_bus_message_read_array(call, 'y',
-		(const void**)&dest->hwaddr, &dest->hwaddr_len);
+	rc = message_read_hwaddr(call, dest);
 	if (rc < 0)
 		goto err;
 
@@ -2008,8 +2023,7 @@ static int method_sendto_phys(sd_bus_message *call, void *data, sd_bus_error *be
 	if (rc < 0)
 		goto err;
 
-	rc = sd_bus_message_read_array(call, 'y',
-		(const void**)&dest->hwaddr, &dest->hwaddr_len);
+	rc = message_read_hwaddr(call, dest);
 	if (rc < 0)
 		goto err;
 
