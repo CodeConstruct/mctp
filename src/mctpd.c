@@ -51,6 +51,9 @@ static size_t MAX_PEER_SIZE = 1000000;
 static const uint8_t RQDI_REQ = 1<<7;
 static const uint8_t RQDI_RESP = 0x0;
 
+// 64 byte Baseline transmission unit plus 4 byte MCTP header
+static const uint32_t MCTP_MIN_MTU = 68;
+
 struct dest_phys {
 	int ifindex;
 	uint8_t hwaddr[MAX_ADDR_LEN];
@@ -96,7 +99,8 @@ struct peer {
 	bool have_neigh;
 	bool have_route;
 
-	// set by SetMTU method, 0 otherwise
+	// Route MTU. Will be set to MCTP_MIN_MTU for newly created
+	// peers. Can be modified with .SetMTU method
 	uint32_t mtu;
 
 	// malloc()ed list of supported message types, from Get Message Type
@@ -1908,6 +1912,10 @@ static int peer_route_update(peer *peer, uint16_t type)
 static int setup_added_peer(peer *peer)
 {
 	int rc;
+
+	// Set minimum MTU by default for compatibility. Clients can increase
+	// this with .SetMTU as needed
+	peer->mtu = MCTP_MIN_MTU;
 
 	// add route before querying
 	add_peer_route(peer);
