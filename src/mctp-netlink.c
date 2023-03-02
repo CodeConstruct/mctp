@@ -26,6 +26,9 @@ struct linkmap_entry {
 	int	net;
 	bool 	up;
 
+	uint32_t min_mtu;
+	uint32_t max_mtu;
+
 	mctp_eid_t *local_eids;
 	size_t num_local;
 
@@ -54,7 +57,7 @@ static int fill_linkmap(mctp_nl *nl);
 static void sort_linkmap(mctp_nl *nl);
 static int linkmap_add_entry(mctp_nl *nl, struct ifinfomsg *info,
 		const char *ifname, size_t ifname_len, int net,
-		bool up);
+		bool up, uint32_t min_mtu, uint32_t max_mtu);
 static struct linkmap_entry *entry_byindex(const mctp_nl *nl,
 	int index);
 
@@ -678,10 +681,10 @@ static int parse_getlink_dump(mctp_nl *nl, struct nlmsghdr *nlh, uint32_t len)
 	struct ifinfomsg *info;
 
 	for (; NLMSG_OK(nlh, len); nlh = NLMSG_NEXT(nlh, len)) {
-		struct rtattr *rta, *rt_nest, *rt_mctp;
-		char *ifname;
+		struct rtattr *rta = NULL, *rt_nest = NULL, *rt_mctp = NULL;
+		char *ifname = NULL;
 		size_t ifname_len, rlen, nlen, mlen;
-		uint32_t net;
+		uint32_t net, min_mtu = 0, max_mtu = 0;
 		bool up;
 
 		if (nlh->nlmsg_type == NLMSG_DONE)
@@ -700,7 +703,6 @@ static int parse_getlink_dump(mctp_nl *nl, struct nlmsghdr *nlh, uint32_t len)
 		rta = (void *)(info + 1);
 		rlen = NLMSG_PAYLOAD(nlh, sizeof(*info));
 
-		rt_mctp = false;
 		rt_nest = mctp_get_rtnlmsg_attr(IFLA_AF_SPEC, rta, rlen, &nlen);
 		if (rt_nest) {
 			rt_mctp = mctp_get_rtnlmsg_attr(AF_MCTP, rt_nest, nlen, &mlen);
@@ -709,21 +711,33 @@ static int parse_getlink_dump(mctp_nl *nl, struct nlmsghdr *nlh, uint32_t len)
 			/* Skip non-MCTP interfaces */
 			continue;
 		}
-		if (!mctp_get_rtnlmsg_attr_u32(IFLA_MCTP_NET, rt_mctp, mlen, &net)) {
-			warnx("Missing IFLA_MCTP_NET");
-			continue;
-		}
-
-		/* TODO: media type */
 
 		ifname = mctp_get_rtnlmsg_attr(IFLA_IFNAME, rta, rlen, &ifname_len);
 		if (!ifname) {
 			warnx("no ifname?");
 			continue;
 		}
+
 		ifname_len = strnlen(ifname, ifname_len);
+		if (!mctp_get_rtnlmsg_attr_u32(IFLA_MCTP_NET, rt_mctp, mlen, &net)) {
+			warnx("Missing IFLA_MCTP_NET for %s", ifname);
+			continue;
+		}
+
+		if (!mctp_get_rtnlmsg_attr_u32(IFLA_MIN_MTU, rta, rlen, &min_mtu)) {
+			warnx("Missing IFLA_MIN_MTU for %s", ifname);
+			continue;
+		}
+
+		if (!mctp_get_rtnlmsg_attr_u32(IFLA_MAX_MTU, rta, rlen, &max_mtu)) {
+			warnx("Missing IFLA_MAX_MTU for %s", ifname);
+			continue;
+		}
+
+		/* TODO: media type */
+
 		up = info->ifi_flags & IFF_UP;
-		linkmap_add_entry(nl, info, ifname, ifname_len, net, up);
+		linkmap_add_entry(nl, info, ifname, ifname_len, net, up, min_mtu, max_mtu);
 	}
 	// Not done.
 	return 1;
@@ -973,6 +987,22 @@ bool mctp_nl_up_byindex(const mctp_nl *nl, int index)
 	return false;
 }
 
+uint32_t mctp_nl_min_mtu_byindex(const mctp_nl *nl, int index)
+{
+	struct linkmap_entry *entry = entry_byindex(nl, index);
+	if (entry)
+		return entry->min_mtu;
+	return 0;
+}
+
+uint32_t mctp_nl_max_mtu_byindex(const mctp_nl *nl, int index)
+{
+	struct linkmap_entry *entry = entry_byindex(nl, index);
+	if (entry)
+		return entry->max_mtu;
+	return 0;
+}
+
 mctp_eid_t *mctp_nl_addrs_byindex(const mctp_nl *nl, int index,
 	size_t *ret_num)
 {
@@ -1055,7 +1085,7 @@ int *mctp_nl_if_list(const mctp_nl *nl, size_t *ret_num_ifs)
 
 static int linkmap_add_entry(mctp_nl *nl, struct ifinfomsg *info,
 		const char *ifname, size_t ifname_len, int net,
-		bool up)
+		bool up, uint32_t min_mtu, uint32_t max_mtu)
 {
 	struct linkmap_entry *entry;
 	size_t newsz;
@@ -1091,6 +1121,8 @@ static int linkmap_add_entry(mctp_nl *nl, struct ifinfomsg *info,
 	entry->ifindex = info->ifi_index;
 	entry->net = net;
 	entry->up = up;
+	entry->max_mtu = max_mtu;
+	entry->min_mtu = min_mtu;
 	return 0;
 }
 

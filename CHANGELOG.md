@@ -40,6 +40,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
    now associated with the interface object, they no longer take the
    interface name as their first argument.
 
+6. In mctpd the initial route MTU for an endpoint is now set to the minimum MTU
+   of the interface. This allows better compatibility with devices that 
+   have a low initial allowed packet size and require application negotiation
+   to increase that packet size. Previously the initial MTU was left as the
+   interface default (normally the maximum MTU).
+   The .SetMTU method can be used to set the endpoint route MTU.
+
 ### Fixed
 
 1. mctpd: EID assignments now work in the case where a new endpoint has a
