@@ -123,7 +123,7 @@ static int mctp_req(unsigned int net, mctp_eid_t eid,
 
 static void usage(void)
 {
-	fprintf(stderr, "mctp-req [eid <eid>] [net <net>] [if <ifindex> lladdr <hwaddr>] [len <len>]\n");
+	fprintf(stderr, "mctp-req [eid <eid>] [net <net>] [ifindex <ifindex> lladdr <hwaddr>] [len <len>]\n");
 	fprintf(stderr, "default eid %d net %d len %zd\n",
 			DEFAULT_EID, DEFAULT_NET, DEFAULT_LEN);
 }
