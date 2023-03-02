@@ -23,7 +23,6 @@ struct linkmap_entry {
 	int	ifindex;
 	char	ifname[IFNAMSIZ+1];
 	int	net;
-	uint8_t	medium;
 	bool 	up;
 
 	mctp_eid_t *local_eids;
@@ -56,7 +55,7 @@ static int fill_local_addrs(mctp_nl *nl);
 static int fill_linkmap(mctp_nl *nl);
 static void sort_linkmap(mctp_nl *nl);
 static int linkmap_add_entry(mctp_nl *nl, struct ifinfomsg *info,
-		const char *ifname, size_t ifname_len, int net, uint8_t medium,
+		const char *ifname, size_t ifname_len, int net,
 		bool up);
 static struct linkmap_entry *entry_byindex(const mctp_nl *nl,
 	int index);
@@ -675,7 +674,6 @@ static int parse_getlink_dump(mctp_nl *nl, struct nlmsghdr *nlh, uint32_t len)
 		char *ifname;
 		size_t ifname_len, rlen, nlen, mlen;
 		uint32_t net;
-		uint8_t medium = 0x00;
 		bool up;
 
 		if (nlh->nlmsg_type == NLMSG_DONE)
@@ -717,7 +715,7 @@ static int parse_getlink_dump(mctp_nl *nl, struct nlmsghdr *nlh, uint32_t len)
 		}
 		ifname_len = strnlen(ifname, ifname_len);
 		up = info->ifi_flags & IFF_UP;
-		linkmap_add_entry(nl, info, ifname, ifname_len, net, medium, up);
+		linkmap_add_entry(nl, info, ifname, ifname_len, net, up);
 	}
 	// Not done.
 	return 1;
@@ -888,9 +886,9 @@ void mctp_nl_linkmap_dump(const mctp_nl *nl)
 	for (i = 0; i < nl->linkmap_count; i++) {
 		struct linkmap_entry *entry = &nl->linkmap[i];
 		const char* updown = entry->up ? "up" : "DOWN";
-		printf("  %2d: %s, net %d med 0x%02x %s local addrs [",
+		printf("  %2d: %s, net %d %s local addrs [",
 			entry->ifindex, entry->ifname,
-			entry->net, entry->medium, updown);
+			entry->net, updown);
 		for (j = 0; j < entry->num_local; j++) {
 			if (j != 0)
 				printf(", ");
@@ -1018,7 +1016,7 @@ int *mctp_nl_if_list(const mctp_nl *nl, size_t *ret_num_ifs)
 }
 
 static int linkmap_add_entry(mctp_nl *nl, struct ifinfomsg *info,
-		const char *ifname, size_t ifname_len, int net, uint8_t medium,
+		const char *ifname, size_t ifname_len, int net,
 		bool up)
 {
 	struct linkmap_entry *entry;
@@ -1054,7 +1052,6 @@ static int linkmap_add_entry(mctp_nl *nl, struct ifinfomsg *info,
 	snprintf(entry->ifname, IFNAMSIZ, "%*s", (int)ifname_len, ifname);
 	entry->ifindex = info->ifi_index;
 	entry->net = net;
-	entry->medium = medium;
 	entry->up = up;
 	return 0;
 }
