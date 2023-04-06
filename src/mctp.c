@@ -760,7 +760,7 @@ static int cmd_addr_addremove(struct ctx *ctx,
 	int ifindex;
 
 	if (argc != 4) {
-		warnx("%s: invalid arguments", cmdname);
+		warnx("%s: invalid command line arguments", cmdname);
 		return -1;
 	}
 
@@ -905,7 +905,7 @@ static int cmd_route_add(struct ctx *ctx, int argc, const char **argv)
 		rc = -EINVAL;
 	}
 	if (rc) {
-		warnx("add: invalid arguments");
+		warnx("add: invalid command line arguments");
 		return -1;
 	}
 
@@ -935,7 +935,7 @@ static int cmd_route_del(struct ctx *ctx, int argc, const char **argv)
 		rc = -EINVAL;
 	}
 	if (rc) {
-		warnx("del: invalid arguments");
+		warnx("del: invalid command line arguments");
 		return -1;
 	}
 	eid = tmp & 0xff;
@@ -986,12 +986,12 @@ static int cmd_neigh_show(struct ctx *ctx, int argc, const char **argv)
 	int rc;
 
 	if (!(argc <= 1 || argc == 3)) {
-		warnx("show: invalid arguments");
+		warnx("show: invalid command line arguments");
 		return -1;
 	}
 	if (argc == 3) {
 		if (strcmp(argv[1], "dev")) {
-			warnx("show: invalid arguments");
+			warnx("show: invalid command line arguments");
 			return -1;
 		}
 		linkstr = argv[2];
@@ -1089,7 +1089,7 @@ static int cmd_neigh_add(struct ctx *ctx, int argc, const char **argv)
 		}
 	}
 	if (rc) {
-		warnx("add: invalid arguments");
+		warnx("add: invalid command line arguments");
 		return -1;
 	}
 
@@ -1131,7 +1131,7 @@ static int cmd_neigh_del(struct ctx *ctx, int argc, const char **argv)
 		}
 	}
 	if (rc) {
-		warnx("del: invalid arguments");
+		warnx("del: invalid command line arguments");
 		return -1;
 	}
 
@@ -1154,6 +1154,7 @@ static int cmd_neigh(struct ctx *ctx, int argc, const char **argv) {
 		fprintf(stderr, "%s neigh\n", ctx->top_cmd);
 		fprintf(stderr, "%s neigh show [dev <network>]\n", ctx->top_cmd);
 		fprintf(stderr, "%s neigh add <eid> dev <device> lladdr <physaddr>\n", ctx->top_cmd);
+		fprintf(stderr, "        <physaddr> syntax is for example \"1d\" or \"aa:bb:cc:11:22:33\"\n");
 		fprintf(stderr, "%s neigh del <eid> dev <device>\n", ctx->top_cmd);
 		return 255;
 	}
