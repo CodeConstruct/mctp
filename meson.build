@@ -3,7 +3,7 @@
 project(
     'mctp', 'c',
     meson_version: '>= 0.47.0',
-    version: 'v1.0',
+    version: 'v1.1',
     license: 'GPLv2',
     default_options: [
         'warning_level=2',
