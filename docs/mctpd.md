@@ -51,6 +51,29 @@ Like SetupEndpoint but will not assign EIDs, will only query endpoints for a cur
 The `new` return value is set to `false` for an already known endpoint, or `true` when an
 endpoint's EID is newly discovered.
 
+## `.NotifyDiscovery`
+
+This method is used to trigger the MCTP over PCIe-VDM discovery process on a
+PCIe-VDM interface.
+
+This method sends a Discovery Notify message to the Root Complex on the PCIe bus
+with null EID, null physical address and Route-To-Root-Complex PCIe-VDM routing
+type.
+
+This method should only be used when `mctpd` is running on an endpoint.
+
+`NotifyDiscovery <interface name>`
+
+`<interface name>` is an PCIe-VDM interface such as `mctppcie0`.
+
+
+Example:
+
+```shell
+busctl call xyz.openbmc_project.MCTP /xyz/openbmc_project/mctp \
+        au.com.CodeConstruct.MCTP NotifyDiscovery s mctppcie0
+```
+
 ## Endpoint Methods
 
 Each endpoint object has methods to configure it, with `au.com.CodeConstruct.MCTP.Endpoint`

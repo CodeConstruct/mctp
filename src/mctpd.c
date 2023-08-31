@@ -1832,6 +1832,66 @@ err:
 	return rc;
 }
 
+static int method_notify_discovery(sd_bus_message *call, void *data,
+				   sd_bus_error *berr)
+{
+	int rc;
+	const char *ifname = NULL;
+	dest_phys desti = { 0 }, *dest = &desti;
+	ctx *ctx = data;
+	struct mctp_ctrl_cmd_discovery_notify req = { 0 };
+	struct mctp_ctrl_resp_discovery_notify *resp;
+	uint8_t *buf;
+	size_t buf_size;
+	struct sockaddr_mctp_ext resp_addr;
+
+	rc = sd_bus_message_read(call, "s", &ifname);
+	if (rc < 0)
+		goto err;
+
+	dest->hwaddr_len = 2;
+	dest->ifindex = mctp_nl_ifindex_byname(ctx->nl, ifname);
+	if (dest->ifindex <= 0)
+		return sd_bus_error_setf(berr, SD_BUS_ERROR_INVALID_ARGS,
+					 "Unknown MCTP ifname '%s'", ifname);
+
+	rc = validate_dest_phys(ctx, dest);
+	if (rc < 0)
+		return sd_bus_error_setf(berr, SD_BUS_ERROR_INVALID_ARGS,
+					 "Bad physaddr");
+
+	req.ctrl_hdr.command_code = MCTP_CTRL_CMD_DISCOVERY_NOTIFY;
+	req.ctrl_hdr.rq_dgram_inst = RQDI_REQ;
+
+	rc = endpoint_query_phys(ctx, dest, MCTP_CTRL_HDR_MSG_TYPE, &req,
+				 sizeof(req), &buf, &buf_size, &resp_addr);
+	if (rc < 0)
+		goto free_buf;
+
+	if (buf_size != sizeof(*resp)) {
+		warnx("%s: wrong reply length %zu bytes. dest %s", __func__,
+		      buf_size, dest_phys_tostr(dest));
+		rc = -ENOMSG;
+		goto free_buf;
+	}
+	resp = (void *)buf;
+
+	if (resp->completion_code != 0) {
+		// TODO: make this a debug message?
+		warnx("Failure completion code 0x%02x from %s",
+		      resp->completion_code, dest_phys_tostr(dest));
+		rc = -ECONNREFUSED;
+		goto free_buf;
+	}
+	free(buf);
+	return sd_bus_reply_method_return(call, "");
+free_buf:
+	free(buf);
+err:
+	set_berr(ctx, rc, berr);
+	return rc;
+}
+
 // Query various properties of a peer.
 // To be called when a new peer is discovered/assigned, once an EID is known
 // and routable.
@@ -2274,6 +2334,14 @@ static const sd_bus_vtable bus_mctpd_vtable[] = {
 		SD_BUS_PARAM(found),
 		method_learn_endpoint,
 		0),
+
+	SD_BUS_METHOD_WITH_NAMES("NotifyDiscovery",
+		"s",
+		SD_BUS_PARAM(ifname),
+		"",,
+		method_notify_discovery,
+		0),
+
 	SD_BUS_VTABLE_END,
 
 };
