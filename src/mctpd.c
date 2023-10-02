@@ -3074,10 +3074,11 @@ static int setup_testing(ctx *ctx) {
 
 static void print_usage(ctx *ctx)
 {
-	fprintf(stderr, "mctpd [-v] [-N] [-t usecs]\n");
+	fprintf(stderr, "mctpd [-v] [-N] [-t usecs] [-r {bus-owner,endpoint}]\n");
 	fprintf(stderr, "      -v verbose\n");
 	fprintf(stderr, "      -N testing mode. Not safe for production\n");
 	fprintf(stderr, "      -t timeout in usecs\n");
+	fprintf(stderr, "      -r role of mctpd in the network\n");
 }
 
 static int parse_args(ctx *ctx, int argc, char **argv)
@@ -3087,15 +3088,17 @@ static int parse_args(ctx *ctx, int argc, char **argv)
 		{ .name = "verbose", .has_arg = no_argument, .val = 'v' },
 		{ .name = "testing", .has_arg = no_argument, .val = 'N' },
 		{ .name = "timeout", .has_arg = required_argument, .val = 't' },
+		{ .name = "role", .has_arg = required_argument, .val = 'r' },
 		{ 0 },
 	};
 	int c;
 
 	// default values
 	ctx->mctp_timeout = 250000; // 250ms
+	ctx->bus_owner = true;
 
 	for (;;) {
-		c = getopt_long(argc, argv, "+hvNt:", options, NULL);
+		c = getopt_long(argc, argv, "+hvNt:r:", options, NULL);
 		if (c == -1)
 			break;
 
@@ -3111,6 +3114,16 @@ static int parse_args(ctx *ctx, int argc, char **argv)
 			if (ctx->mctp_timeout == 0) {
 				warnx("Timeout must be a non-zero u64");
 				return errno;
+			}
+			break;
+		case 'r':
+			if (!strcmp(optarg, "bus-owner"))
+				ctx->bus_owner = true;
+			else if (!strcmp(optarg, "endpoint"))
+				ctx->bus_owner = false;
+			else {
+				warnx("Role can only be one of: bus-owner, endpoint");
+				return -EINVAL;
 			}
 			break;
 		case 'h':
@@ -3149,8 +3162,6 @@ static int fill_uuid(ctx *ctx)
 static int setup_config(ctx *ctx)
 {
 	int rc;
-	// TODO: this will go in a config file or arguments.
-	ctx->bus_owner = true;
 	rc = fill_uuid(ctx);
 	if (rc < 0)
 		return rc;
