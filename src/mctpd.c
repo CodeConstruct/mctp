@@ -2328,7 +2328,7 @@ static int bus_endpoint_get_prop(sd_bus *bus,
 	int rc;
 
 	if (strcmp(property, "NetworkId") == 0) {
-		rc = sd_bus_message_append(reply, "i", peer->net);
+		rc = sd_bus_message_append(reply, "u", peer->net);
 	} else if (strcmp(property, "EID") == 0) {
 		rc = sd_bus_message_append(reply, "y", peer->eid);
 	} else if (strcmp(property, "SupportedMessageTypes") == 0) {
@@ -2348,7 +2348,7 @@ static int bus_endpoint_get_prop(sd_bus *bus,
 static const sd_bus_vtable bus_endpoint_vtable[] = {
 	SD_BUS_VTABLE_START(0),
 	SD_BUS_PROPERTY("NetworkId",
-			"i",
+			"u",
 			bus_endpoint_get_prop,
 			0,
 			SD_BUS_VTABLE_PROPERTY_CONST),
