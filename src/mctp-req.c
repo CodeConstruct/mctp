@@ -25,7 +25,7 @@ static const size_t DEFAULT_LEN = 1;
 /* lladdrlen != -1 to ignore ifindex/lladdr */
 static int mctp_req(unsigned int net, mctp_eid_t eid,
 	unsigned int ifindex, uint8_t *lladdr, int lladdrlen,
-	uint8_t *data, size_t len)
+	uint8_t *data, size_t len, int type)
 {
 	struct sockaddr_mctp_ext addr;
 	unsigned char *buf, *rxbuf;
@@ -42,7 +42,7 @@ static int mctp_req(unsigned int net, mctp_eid_t eid,
 	addr.smctp_base.smctp_family = AF_MCTP;
 	addr.smctp_base.smctp_network = net;
 	addr.smctp_base.smctp_addr.s_addr = eid;
-	addr.smctp_base.smctp_type = 1;
+	addr.smctp_base.smctp_type = type;
 	addr.smctp_base.smctp_tag = MCTP_TAG_OWNER;
 	printf("req:  sending to (net %d, eid %d), type %d\n",
 		net, eid, addr.smctp_base.smctp_type);
@@ -123,7 +123,7 @@ static int mctp_req(unsigned int net, mctp_eid_t eid,
 
 static void usage(void)
 {
-	fprintf(stderr, "mctp-req [eid <eid>] [net <net>] [ifindex <ifindex> lladdr <hwaddr>] [len <len>]\n");
+	fprintf(stderr, "mctp-req [eid <eid>] [net <net>] [ifindex <ifindex> lladdr <hwaddr>] [len <len>] [type <type>]\n");
 	fprintf(stderr, "default eid %d net %d len %zd\n",
 			DEFAULT_EID, DEFAULT_NET, DEFAULT_LEN);
 }
@@ -138,6 +138,7 @@ int main(int argc, char ** argv)
 	char *endp, *optname, *optval;
 	unsigned int tmp, ifindex;
 	bool valid_parse;
+	int type = 1;
 	int i;
 
 	if (!(argc % 2)) {
@@ -165,7 +166,9 @@ int main(int argc, char ** argv)
 			net = tmp;
 		} else if (!strcmp(optname, "ifindex")) {
 			ifindex = tmp;
-		} else if (!strcmp(optname, "len")) {
+		} else if (!strcmp(optname, "type")) {
+			type = tmp;
+		}  else if (!strcmp(optname, "len")) {
 			if (tmp > 64 * 1024)
 				errx(EXIT_FAILURE, "Bad len");
 			len = tmp;
@@ -199,5 +202,5 @@ int main(int argc, char ** argv)
 	if (data)
 		len = datalen;
 
-	return mctp_req(net, eid, ifindex, lladdr, lladdrlen, data, len);
+	return mctp_req(net, eid, ifindex, lladdr, lladdrlen, data, len, type);
 }
