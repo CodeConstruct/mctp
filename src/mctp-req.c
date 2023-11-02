@@ -87,7 +87,10 @@ static int mctp_req(unsigned int net, mctp_eid_t eid,
 			(struct sockaddr *)&addr, &addrlen);
 	if (rc < 0)
 		err(EXIT_FAILURE, "recvfrom");
-	else if ((size_t)rc != len)
+
+	//For a real query, the reponse will likely be longer than
+	//The request.
+	else if ((size_t)rc < len)
 		errx(EXIT_FAILURE, "unexpected length: got %d, exp %zd",
 				rc, len);
 
@@ -109,14 +112,17 @@ static int mctp_req(unsigned int net, mctp_eid_t eid,
 			addr.smctp_haddr[0], addr.smctp_halen);
 	}
 
-	for (i = 0; i < len; i++) {
-		uint8_t exp = data ? data[i] : i & 0xff;
-		if (rxbuf[i] != exp)
-			errx(EXIT_FAILURE,
-				"payload mismatch at byte 0x%zx; "
-					"sent 0x%02x, received 0x%02x",
-				i, exp, rxbuf[i]);
+	for (int j = 0; j < rc; j++) {
+		//uint8_t exp = data ? data[i] : i & 0xff;
+
+		printf("0x%02x ", rxbuf[j]);
+		//if (rxbuf[i] != exp)
+		//	errx(EXIT_FAILURE,
+		//		"payload mismatch at byte 0x%zx; "
+		//			"sent 0x%02x, received 0x%02x",
+		//		i, exp, rxbuf[i]);
 	}
+	printf("\n");
 
 	return 0;
 }
