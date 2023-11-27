@@ -17,4 +17,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 1. dbus interface: the NetworkID field is now a `u` rather than an `i`, to
    match OpenBMC's MCTP endpoint specification
 
+### Fixed
+
+1. mctpd: EID assignments now work in the case where a new endpoint has a
+   pre-configured EID that would conflict with other (already enumerated)
+   endpoints. The new endpoint will get a non-conflicting address assigned.
+
 ## [1.1] - 2023-04-13

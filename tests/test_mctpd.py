@@ -81,6 +81,30 @@ async def test_setup_endpoint(dbus, mctpd):
     # we should have a route for the new endpoint too
     assert len(mctpd.system.routes) == 2
 
+""" Test that we correctly handle address conflicts on EID assignment.
+
+We have the following scenario:
+
+ 1. A configured peer at physaddr 1, EID A, allocated by mctpd
+ 2. A non-configured peer at physaddr 2, somehow carrying a default EID also A
+ 3. Attempt to enumerate physaddr 2
+
+At (3), we should reconfigure the EID to B.
+"""
+async def test_setup_endpoint_conflict(dbus, mctpd):
+    mctp = await mctpd_mctp_obj(dbus)
+
+    iface = mctpd.system.interfaces[0]
+    ep1 = mctpd.network.endpoints[0]
+    (eid1, _, _, _) = await mctp.call_setup_endpoint(iface.name, ep1.lladdr)
+
+    # endpoint configured with eid1 already
+    ep2 = Endpoint(iface, bytes([0x1e]), eid=eid1)
+    mctpd.network.add_endpoint(ep2)
+
+    (eid2, _, _, _) = await mctp.call_setup_endpoint(iface.name, ep2.lladdr)
+    assert eid1 != eid2
+
 """ Test neighbour removal """
 async def test_remove_endpoint(dbus, mctpd):
     mctp = await mctpd_mctp_obj(dbus)

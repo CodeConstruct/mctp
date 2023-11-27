@@ -1501,7 +1501,7 @@ out:
  * Returns negative error code on failure.
  */
 static int get_endpoint_peer(ctx *ctx, sd_bus_error *berr,
-	const dest_phys *dest, peer **ret_peer)
+	const dest_phys *dest, peer **ret_peer, mctp_eid_t *ret_cur_eid)
 {
 	mctp_eid_t eid;
 	uint8_t ep_type, medium_spec;
@@ -1513,6 +1513,9 @@ static int get_endpoint_peer(ctx *ctx, sd_bus_error *berr,
 	rc = query_get_endpoint_id(ctx, dest, &eid, &ep_type, &medium_spec);
 	if (rc < 0)
 		return rc;
+
+	if (ret_cur_eid)
+		*ret_cur_eid = eid;
 
 	net = mctp_nl_net_byindex(ctx->nl, dest->ifindex);
 	if (net < 1) {
@@ -1528,12 +1531,14 @@ static int get_endpoint_peer(ctx *ctx, sd_bus_error *berr,
 			return 0;
 		} else if (peer->eid != eid) {
 			rc = change_peer_eid(peer, eid);
-			if (rc == -EEXIST)
-				return sd_bus_error_setf(berr, SD_BUS_ERROR_FILE_EXISTS,
-					"Endpoint previously EID %d claimed EID %d which is already used",
-					peer->eid, eid);
-			else if (rc < 0)
+			/* Conflict while changing EIDs: the new EID already
+			 * exists in our local table. We can only delete the
+			 * entry because it's no longer valid, and the caller
+			 * will handle the error */
+			if (rc < 0) {
+				remove_peer(peer);
 				return rc;
+			}
 		}
 	} else {
 		if (eid == 0) {
@@ -1542,11 +1547,7 @@ static int get_endpoint_peer(ctx *ctx, sd_bus_error *berr,
 		}
 		/* New endpoint */
 		rc = add_peer(ctx, dest, eid, net, &peer);
-		if (rc == -EEXIST)
-			return sd_bus_error_setf(berr, SD_BUS_ERROR_FILE_EXISTS,
-					"Endpoint claimed EID %d which is already used",
-					eid);
-		else if (rc < 0)
+		if (rc < 0)
 			return rc;
 	}
 
@@ -1775,7 +1776,7 @@ static int method_setup_endpoint(sd_bus_message *call, void *data, sd_bus_error 
 			"Bad physaddr");
 
 	/* Get Endpoint ID */
-	rc = get_endpoint_peer(ctx, berr, dest, &peer);
+	rc = get_endpoint_peer(ctx, berr, dest, &peer, NULL);
 	if (rc >= 0 && peer) {
 		if (ctx->verbose)
 			fprintf(stderr, "%s returning from get_endpoint_peer %s",
@@ -1874,6 +1875,7 @@ static int method_learn_endpoint(sd_bus_message *call, void *data, sd_bus_error 
 	dest_phys desti, *dest = &desti;
 	ctx *ctx = data;
 	peer *peer = NULL;
+	mctp_eid_t eid = 0;
 
 	rc = sd_bus_message_read(call, "s", &ifname);
 	if (rc < 0)
@@ -1893,7 +1895,14 @@ static int method_learn_endpoint(sd_bus_message *call, void *data, sd_bus_error 
 		return sd_bus_error_setf(berr, SD_BUS_ERROR_INVALID_ARGS,
 			"Bad physaddr");
 
-	rc = get_endpoint_peer(ctx, berr, dest, &peer);
+	rc = get_endpoint_peer(ctx, berr, dest, &peer, &eid);
+	if (rc == -EEXIST) {
+		/* We have a conflict with an existing endpoint, so can't
+		 * learn; recovery would requre a Set Endpoint ID. */
+		return sd_bus_error_setf(berr, SD_BUS_ERROR_FILE_EXISTS,
+					 "Endpoint claimed EID %d which is already used",
+					 eid);
+	}
 	if (rc < 0)
 		goto err;
 	if (!peer)
