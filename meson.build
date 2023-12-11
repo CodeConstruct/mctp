@@ -35,9 +35,10 @@ config_h = configure_file(
 
 util_sources = ['src/mctp-util.c']
 netlink_sources = ['src/mctp-netlink.c']
+ops_sources = ['src/mctp-ops.c']
 
 executable('mctp',
-    sources: ['src/mctp.c'] + netlink_sources + util_sources,
+    sources: ['src/mctp.c'] + netlink_sources + util_sources + ops_sources,
     install: true,
 )
 
@@ -53,7 +54,7 @@ if libsystemd.found()
     executable('mctpd',
         sources: [
             'src/mctpd.c',
-        ] + netlink_sources + util_sources,
+        ] + netlink_sources + util_sources + ops_sources,
         dependencies: libsystemd,
         install: true,
         install_dir: get_option('sbindir'),

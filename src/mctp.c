@@ -33,6 +33,7 @@
 #include "mctp.h"
 #include "mctp-util.h"
 #include "mctp-netlink.h"
+#include "mctp-ops.h"
 
 #define max(a, b) ((a) > (b) ? (a) : (b))
 #define min(a, b) ((a) < (b) ? (a) : (b))
@@ -768,6 +769,8 @@ static int cmd_addr_addremove(struct ctx *ctx,
 		warnx("invalid dev spec");
 		return -1;
 	}
+
+	mctp_ops_init();
 
 	eidstr = argv[1];
 	linkstr = argv[3];

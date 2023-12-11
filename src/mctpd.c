@@ -32,6 +32,7 @@
 #include "mctp-util.h"
 #include "mctp-netlink.h"
 #include "mctp-control-spec.h"
+#include "mctp-ops.h"
 
 #define max(a, b) ((a) > (b) ? (a) : (b))
 #define min(a, b) ((a) < (b) ? (a) : (b))
@@ -417,7 +418,8 @@ static int read_message(ctx *ctx, int sd, uint8_t **ret_buf, size_t *ret_buf_siz
 	uint8_t* buf = NULL;
 	size_t buf_size;
 
-	len = recvfrom(sd, NULL, 0, MSG_PEEK | MSG_TRUNC, NULL, 0);
+	len = mctp_ops.mctp.recvfrom(sd, NULL, 0, MSG_PEEK | MSG_TRUNC,
+				     NULL, 0);
 	if (len < 0) {
 		rc = -errno;
 		goto out;
@@ -432,7 +434,8 @@ static int read_message(ctx *ctx, int sd, uint8_t **ret_buf, size_t *ret_buf_siz
 
 	addrlen = sizeof(struct sockaddr_mctp_ext);
 	memset(ret_addr, 0x0, addrlen);
-	len = recvfrom(sd, buf, buf_size, MSG_TRUNC, (struct sockaddr *)ret_addr,
+	len = mctp_ops.mctp.recvfrom(sd, buf, buf_size, MSG_TRUNC,
+				     (struct sockaddr *)ret_addr,
 		&addrlen);
 	if (len < 0) {
 		rc = -errno;
@@ -485,8 +488,9 @@ static int reply_message(ctx *ctx, int sd, const void *resp, size_t resp_len,
 		return -EPROTO;
 	}
 
-	len = sendto(sd, resp, resp_len, 0,
-		(struct sockaddr*)&reply_addr, sizeof(reply_addr));
+	len = mctp_ops.mctp.sendto(sd, resp, resp_len, 0,
+				   (struct sockaddr *)&reply_addr,
+				   sizeof(reply_addr));
 	if (len < 0) {
 		return -errno;
 	}
@@ -785,7 +789,7 @@ static int listen_control_msg(ctx *ctx, int net)
 	struct sockaddr_mctp addr = { 0 };
 	int rc, sd = -1, val;
 
-	sd = socket(AF_MCTP, SOCK_DGRAM, 0);
+	sd = mctp_ops.mctp.socket();
 	if (sd < 0) {
 		rc = -errno;
 		warn("%s: socket() failed", __func__);
@@ -798,7 +802,7 @@ static int listen_control_msg(ctx *ctx, int net)
 	addr.smctp_type = MCTP_CTRL_HDR_MSG_TYPE;
 	addr.smctp_tag = MCTP_TAG_OWNER;
 
-	rc = bind(sd, (struct sockaddr *)&addr, sizeof(addr));
+	rc = mctp_ops.mctp.bind(sd, (struct sockaddr *)&addr, sizeof(addr));
 	if (rc < 0) {
 		rc = -errno;
 		warn("%s: bind() failed", __func__);
@@ -806,7 +810,8 @@ static int listen_control_msg(ctx *ctx, int net)
 	}
 
 	val = 1;
-	rc = setsockopt(sd, SOL_MCTP, MCTP_OPT_ADDR_EXT, &val, sizeof(val));
+	rc = mctp_ops.mctp.setsockopt(sd, SOL_MCTP, MCTP_OPT_ADDR_EXT,
+				      &val, sizeof(val));
 	if (rc < 0) {
 		rc = -errno;
 		warn("Kernel does not support MCTP extended addressing");
@@ -936,7 +941,7 @@ static int endpoint_query_addr(ctx *ctx,
 	*resp = NULL;
 	*resp_len = 0;
 
-	sd = socket(AF_MCTP, SOCK_DGRAM, 0);
+	sd = mctp_ops.mctp.socket();
 	if (sd < 0) {
 		warn("socket");
 		rc = -errno;
@@ -945,7 +950,8 @@ static int endpoint_query_addr(ctx *ctx,
 
 	// We want extended addressing on all received messages
 	val = 1;
-	rc = setsockopt(sd, SOL_MCTP, MCTP_OPT_ADDR_EXT, &val, sizeof(val));
+	rc = mctp_ops.mctp.setsockopt(sd, SOL_MCTP, MCTP_OPT_ADDR_EXT,
+				       &val, sizeof(val));
 	if (rc < 0) {
 		rc = -errno;
 		warn("Kernel does not support MCTP extended addressing");
@@ -963,7 +969,8 @@ static int endpoint_query_addr(ctx *ctx,
 		rc = -EPROTO;
 		goto out;
 	}
-	rc = sendto(sd, req, req_len, 0, (struct sockaddr*)req_addr, req_addr_len);
+	rc = mctp_ops.mctp.sendto(sd, req, req_len, 0,
+				  (struct sockaddr *)req_addr, req_addr_len);
 	if (rc < 0) {
 		rc = -errno;
 		if (ctx->verbose) {
@@ -3477,6 +3484,7 @@ int main(int argc, char **argv)
 	setlinebuf(stdout);
 
 	setup_config(ctx);
+	mctp_ops_init();
 
 	rc = parse_args(ctx, argc, argv);
 	if (rc != 0) {
