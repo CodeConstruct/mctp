@@ -93,3 +93,15 @@ where `mctpd` exposes three dbus interfaces for each:
 
  - `au.com.CodeConstruct.MCTP.EndPoint`: Additional control methods for the
    endpoint - for example, `Remove`
+
+Testing
+-------
+
+We have an initial test suite under tests/. To run:
+
+```sh
+meson setup obj
+ninja -C obj
+cd obj
+pytest
+```

@@ -59,4 +59,23 @@ if libsystemd.found()
         install: true,
         install_dir: get_option('sbindir'),
     )
+
+    mctpd_test = executable('test-mctpd',
+        sources: [
+            'src/mctpd.c',
+            'tests/mctp-ops-test.c',
+        ] + netlink_sources + util_sources,
+        include_directories:  include_directories('src'),
+        dependencies: libsystemd,
+    )
 endif
+
+test_conf_data = configuration_data()
+test_conf_data.set('testpaths',
+  join_paths(meson.current_source_dir(), 'tests')
+)
+configure_file(
+    input: 'tests/pytest.ini.in',
+    output: 'pytest.ini',
+    configuration: test_conf_data,
+)
