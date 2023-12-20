@@ -1309,6 +1309,7 @@ int main(int argc, char **argv)
 	if (!cmd)
 		errx(EXIT_FAILURE, "no such command '%s'", cmdname);
 
+	mctp_ops_init();
 	ctx->nl = mctp_nl_new(ctx->verbose);
 	if (!ctx->nl)
 		errx(EXIT_FAILURE, "Error creating netlink object");

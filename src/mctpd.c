@@ -720,6 +720,9 @@ static int cb_listen_control_msg(sd_event_source *s, int sd, uint32_t revents,
 	if (rc < 0)
 		goto out;
 
+	if (rc == 0)
+		errx(EXIT_FAILURE, "Control socket returned EOF");
+
 	if (addr.smctp_base.smctp_type != MCTP_CTRL_HDR_MSG_TYPE) {
 		warnx("BUG: Wrong message type for listen socket");
 		rc = -EINVAL;
