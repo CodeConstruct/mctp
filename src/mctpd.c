@@ -6,6 +6,9 @@
  * Copyright (c) 2021 Google
  */
 
+#include <assert.h>
+#include <bits/time.h>
+#include <systemd/sd-bus-vtable.h>
 #define _GNU_SOURCE
 
 #include <sys/socket.h>
@@ -112,6 +115,17 @@ struct peer {
 
 	// Stuff the ctx pointer into peer for tidier parameter passing
 	struct ctx *ctx;
+
+	// Connectivity state
+	bool degraded;
+	struct {
+		uint64_t delay;
+		sd_event_source *source;
+		int npolls;
+		mctp_eid_t eid;
+		uint8_t endpoint_type;
+		uint8_t medium_spec;
+	} recovery;
 };
 typedef struct peer peer;
 
@@ -1240,6 +1254,17 @@ static int remove_peer(peer *peer)
 	unpublish_peer(peer);
 
 	// Clear it
+	if (peer->degraded) {
+		int rc;
+
+		rc = sd_event_source_set_enabled(peer->recovery.source, SD_EVENT_OFF);
+		if (rc < 0) {
+			/* XXX: Fix caller assumptions? */
+			warnx("Failed to stop recovery timer while removing peer: %d", rc);
+		}
+		sd_event_source_unref(peer->recovery.source);
+	}
+
 	n->peeridx[peer->eid] = -1;
 	free(peer->message_types);
 	free(peer->uuid);
@@ -1585,6 +1610,46 @@ static int peer_set_uuid(peer *peer, const uint8_t uuid[16])
 	}
 	memcpy(peer->uuid, uuid, 16);
 	return 0;
+}
+
+static int
+query_get_peer_uuid_by_phys(ctx *ctx, const dest_phys *dest, uint8_t uuid[16])
+{
+	struct sockaddr_mctp_ext addr;
+	struct mctp_ctrl_cmd_get_uuid req;
+	struct mctp_ctrl_resp_get_uuid *resp = NULL;
+	uint8_t* buf = NULL;
+	size_t buf_size;
+	int rc;
+
+	req.ctrl_hdr.rq_dgram_inst = RQDI_REQ;
+	req.ctrl_hdr.command_code = MCTP_CTRL_CMD_GET_ENDPOINT_UUID;
+
+	rc = endpoint_query_phys(ctx, dest, MCTP_CTRL_HDR_MSG_TYPE,
+		&req, sizeof(req), &buf, &buf_size, &addr);
+	if (rc < 0)
+		goto out;
+
+	if (buf_size != sizeof(*resp)) {
+		warnx("%s: wrong reply %zu bytes. dest %s", __func__, buf_size,
+			dest_phys_tostr(dest));
+		rc = -ENOMSG;
+		goto out;
+	}
+	resp = (void*)buf;
+
+	if (resp->completion_code != 0x00) {
+		warnx("Failure completion code 0x%02x from %s",
+			resp->completion_code, dest_phys_tostr(dest));
+		rc = -ECONNREFUSED;
+		goto out;
+	}
+
+	memcpy(uuid, resp->uuid, 16);
+
+out:
+	free(buf);
+	return rc;
 }
 
 static int query_get_peer_uuid(peer *peer) {
@@ -2157,6 +2222,205 @@ out:
 	return rc;
 }
 
+/* FIXME: I2C-specific */
+/* DSP0237 v1.2.0 Table 9 */
+#define MCTP_I2C_TSYM_TRECLAIM_MIN_US 5000000
+#define MCTP_I2C_TSYM_MN1_MIN 2
+#define MCTP_I2C_TSYM_MT1_MAX_US 100000
+#define MCTP_I2C_TSYM_MT3_MAX_US 100000
+#define MCTP_I2C_TSYM_MT4_MIN_US 5000000
+#define MCTP_I2C_TSYM_MT2_MIN_US \
+	(MCTP_I2C_TSYM_MT1_MAX_US + 2 * MCTP_I2C_TSYM_MT3_MAX_US)
+#define MCTP_I2C_TSYM_MT2_MAX_MS MCTP_I2C_TSYM_MT4_MIN_US
+
+static int
+peer_endpoint_recover(sd_event_source *s, uint64_t usec, void *userdata)
+{
+	int ev_state __attribute__((unused));
+	peer *peer = userdata;
+	ctx *ctx = peer->ctx;
+	char *peer_path;
+	int rc;
+
+	/*
+	 * Error handling policy:
+	 *
+	 * 1. Any resource management error prior to Treclaim is handled by
+	 *    rescheduling the poll query, unless it is scheduling the poll
+	 *    query itself that fails.
+	 *
+	 * 2. If scheduling the poll query fails then the endpoint is removed.
+	 */
+
+	peer->recovery.npolls--;
+
+	/*
+	 * Test if we still have connectivity to the endpoint. If we do, we will get a
+	 * response reporting the current EID. This is the test recommended by 8.17.6
+	 * of DSP0236 v1.3.1.
+	 */
+	rc = query_get_endpoint_id(ctx, &peer->phys, &peer->recovery.eid,
+		&peer->recovery.endpoint_type, &peer->recovery.medium_spec);
+	if (rc < 0) {
+		goto reschedule;
+	}
+
+	/*
+	 * If we've got a response there are two scenarios:
+	 *
+	 * 1. The device responds with the EID that we expect it to have
+	 * 2. The device responds with an unexpected EID, e.g. 0
+	 *
+	 * For scenario 1 we're done as the device is responsive and has the expected
+	 * address. For scenario 2, we may not yet consider the EID assignment as
+	 * expired, so check the UUID for a match. If the UUID matches we reassign the
+	 * expected EID to the device. If the UUID does not match we allocate a new
+	 * EID for the exchanged device, given it is responsive.
+	 */
+	if (peer->recovery.eid != peer->eid) {
+		static const uint8_t nil_uuid[16] = {0};
+		uint8_t uuid[16] = {0};
+		bool uuid_matches_peer;
+		bool uuid_matches_nil;
+		mctp_eid_t new_eid;
+
+		rc = query_get_peer_uuid_by_phys(ctx, &peer->phys, uuid);
+
+		static_assert(sizeof(uuid) == sizeof(nil_uuid), "Unsynchronized UUID sizes");
+
+		/*
+		 * The peer must be published for .Recover to be called, so peer->uuid must
+		 * be valid
+		 */
+		assert(peer->uuid != NULL);
+
+		/*
+		 * The memory is always valid so the memcmp() isn't unsafe, but they are only
+		 * meaningful if query_get_peer_uuid_by_phys() succeeds
+		 */
+		uuid_matches_peer = memcmp(uuid, peer->uuid, sizeof(uuid)) == 0;
+		uuid_matches_nil = memcmp(uuid, nil_uuid, sizeof(uuid)) == 0;
+
+		if (rc == 0 && !uuid_matches_nil && uuid_matches_peer) {
+			/* Confirmation of the same device, apply it's already allocated EID */
+			rc = endpoint_send_set_endpoint_id(peer, &new_eid);
+			if (rc < 0) {
+				goto reschedule;
+			}
+
+			if (new_eid != peer->eid) {
+				rc = change_peer_eid(peer, new_eid);
+				if (rc < 0) {
+					goto reclaim;
+				}
+			}
+		} else {
+			/* It's not known to be the same device, allocate a new EID */
+			dest_phys phys = peer->phys;
+
+			assert(sd_event_source_get_enabled(peer->recovery.source, &ev_state) == 0);
+			remove_peer(peer);
+			rc = endpoint_assign_eid(ctx, NULL, &phys, NULL);
+			if (rc < 0) {
+				goto reschedule;
+			}
+		}
+	}
+
+	peer->degraded = false;
+
+	rc = path_from_peer(peer, &peer_path);
+	if (rc < 0) {
+		goto reschedule;
+	}
+
+	rc = sd_bus_emit_properties_changed(ctx->bus, peer_path,
+		CC_MCTP_DBUS_IFACE_ENDPOINT, "Connectivity", NULL);
+	free(peer_path);
+	if (rc < 0) {
+		goto reschedule;
+	}
+
+	assert(sd_event_source_get_enabled(peer->recovery.source, &ev_state) == 0);
+	sd_event_source_unref(peer->recovery.source);
+	peer->recovery.delay = 0;
+	peer->recovery.source = NULL;
+	peer->recovery.npolls = 0;
+
+	return rc;
+
+reschedule:
+	if (peer->recovery.npolls > 0) {
+		rc = sd_event_source_set_time_relative(peer->recovery.source,
+			peer->recovery.delay);
+		if (rc >= 0) {
+			rc = sd_event_source_set_enabled(peer->recovery.source, SD_EVENT_ONESHOT);
+		}
+	}
+	if (rc < 0) {
+reclaim:
+		/* Recovery unsuccessful, clean up the peer */
+		assert(sd_event_source_get_enabled(peer->recovery.source, &ev_state) == 0);
+		remove_peer(peer);
+	}
+	return rc < 0 ? rc : 0;
+}
+
+static int method_endpoint_recover(sd_bus_message *call, void *data,
+	sd_bus_error *berr)
+{
+	bool previously;
+	peer *peer;
+	ctx *ctx;
+	int rc;
+
+	peer = data;
+	ctx = peer->ctx;
+	previously = peer->degraded;
+
+	if (!previously) {
+		assert(!peer->recovery.delay);
+		assert(!peer->recovery.source);
+		assert(!peer->recovery.npolls);
+		peer->recovery.npolls = MCTP_I2C_TSYM_MN1_MIN + 1;
+		peer->recovery.delay =
+			(MCTP_I2C_TSYM_TRECLAIM_MIN_US / 2) - ctx->mctp_timeout;
+		rc = sd_event_add_time_relative(ctx->event, &peer->recovery.source,
+			CLOCK_MONOTONIC, 0, ctx->mctp_timeout, peer_endpoint_recover, peer);
+		if (rc < 0) {
+			goto out;
+		}
+
+		peer->degraded = true;
+
+		rc = sd_bus_emit_properties_changed(sd_bus_message_get_bus(call),
+				sd_bus_message_get_path(call),
+				sd_bus_message_get_interface(call),
+				"Connectivity",
+				NULL);
+		if (rc < 0) {
+			goto out;
+		}
+	}
+
+	rc = sd_bus_reply_method_return(call, NULL);
+
+out:
+	if (rc < 0 && !previously) {
+		if (peer->degraded) {
+			/* Cleanup the timer if it was setup successfully. */
+			sd_event_source_set_enabled(peer->recovery.source, SD_EVENT_OFF);
+			sd_event_source_unref(peer->recovery.source);
+		}
+		peer->degraded = previously;
+		peer->recovery.delay = 0;
+		peer->recovery.source = NULL;
+		peer->recovery.npolls = 0;
+	}
+	set_berr(ctx, rc, berr);
+	return rc;
+}
+
 static int method_endpoint_set_mtu(sd_bus_message *call, void *data,
 	sd_bus_error *berr)
 {
@@ -2337,6 +2601,8 @@ static int bus_endpoint_get_prop(sd_bus *bus,
 	} else if (strcmp(property, "UUID") == 0 && peer->uuid) {
 		const char *s = dfree(bytes_to_uuid(peer->uuid));
 		rc = sd_bus_message_append(reply, "s", s);
+	} else if (strcmp(property, "Connectivity") == 0) {
+		rc = sd_bus_message_append(reply, "s", peer->degraded ? "Degraded" : "Available");
 	} else {
 		printf("Unknown property '%s' for %s iface %s\n", property, path, interface);
 		rc = -ENOENT;
@@ -2387,6 +2653,16 @@ static const sd_bus_vtable bus_endpoint_cc_vtable[] = {
 		SD_BUS_NO_RESULT,
 		method_endpoint_remove,
 		0),
+	SD_BUS_METHOD("Recover",
+		SD_BUS_NO_ARGS,
+		SD_BUS_NO_RESULT,
+		method_endpoint_recover,
+		0),
+	SD_BUS_PROPERTY("Connectivity",
+		"s",
+		bus_endpoint_get_prop,
+		0,
+		SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
 	SD_BUS_VTABLE_END
 };
 

@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## Unreleased
 
+### Added
+
+1. mctpd: Add support for endpoint recovery
+
 ### Changed
 
 1. dbus interface: the NetworkID field is now a `u` rather than an `i`, to
