@@ -6,6 +6,8 @@
  * Copyright (c) 2021 Google
  */
 
+#include "config.h"
+
 #include <assert.h>
 #include <bits/time.h>
 #include <systemd/sd-bus-vtable.h>
@@ -2301,7 +2303,8 @@ peer_endpoint_recover(sd_event_source *s, uint64_t usec, void *userdata)
 		uuid_matches_peer = memcmp(uuid, peer->uuid, sizeof(uuid)) == 0;
 		uuid_matches_nil = memcmp(uuid, nil_uuid, sizeof(uuid)) == 0;
 
-		if (rc == 0 && !uuid_matches_nil && uuid_matches_peer) {
+		if (rc == 0 && uuid_matches_peer &&
+		    (!uuid_matches_nil || MCTPD_RECOVER_NIL_UUID)) {
 			/* Confirmation of the same device, apply it's already allocated EID */
 			rc = endpoint_send_set_endpoint_id(peer, &new_eid);
 			if (rc < 0) {

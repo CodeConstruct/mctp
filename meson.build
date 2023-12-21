@@ -20,6 +20,10 @@ conf.set10('HAVE_LINUX_MCTP_H',
     cc.has_header('linux/mctp.h'),
     description: 'Is linux/mctp.h available?'
 )
+conf.set10('MCTPD_RECOVER_NIL_UUID',
+    get_option('unsafe-recover-nil-uuid'),
+    description: 'Consider a nil UUID to be valid for endpoint recovery purposes',
+)
 
 config_h = configure_file(
     output: 'config.h',
