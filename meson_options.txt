@@ -1,1 +1,5 @@
 option('unsafe-recover-nil-uuid', type: 'boolean', value: false)
+option('unsafe-writable-connectivity',
+       type: 'boolean',
+       value: false,
+       description: 'Allow writes to the Connectivity member of the au.com.CodeConstruct.MCTP.Endpoint interface on endpoint objects')

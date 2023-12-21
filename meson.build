@@ -24,6 +24,9 @@ conf.set10('MCTPD_RECOVER_NIL_UUID',
     get_option('unsafe-recover-nil-uuid'),
     description: 'Consider a nil UUID to be valid for endpoint recovery purposes',
 )
+conf.set10('MCTPD_WRITABLE_CONNECTIVITY',
+    get_option('unsafe-writable-connectivity'),
+    description: 'Allow writes to the Connectivity member of the au.com.CodeConstruct.MCTP.Endpoint interface on endpoint objects')
 
 config_h = configure_file(
     output: 'config.h',

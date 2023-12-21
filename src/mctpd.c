@@ -2614,6 +2614,49 @@ static int bus_endpoint_get_prop(sd_bus *bus,
 	return rc;
 }
 
+__attribute__((unused))
+static int bus_endpoint_set_prop(sd_bus *bus, const char *path,
+                                 const char *interface,
+                                 const char *property,
+                                 sd_bus_message *value,
+                                 void *userdata,
+                                 sd_bus_error *ret_error)
+{
+	const char *connectivity;
+	peer *peer = userdata;
+	ctx *ctx = peer->ctx;
+	int rc;
+
+	if (strcmp(property, "Connectivity") == 0) {
+		bool previously = peer->degraded;
+		rc = sd_bus_message_read(value, "s", &connectivity);
+		if (rc < 0) {
+			goto out;
+		}
+		if (strcmp(connectivity, "Available") == 0) {
+			peer->degraded = false;
+		} else if (strcmp(connectivity, "Degraded") == 0) {
+			peer->degraded = true;
+		} else {
+			printf("Invalid property value '%s' for property '%s' from interface '%s' on object '%s'\n",
+				connectivity, property, interface, path);
+			rc = -EINVAL;
+			goto out;
+		}
+		if (previously != peer->degraded)
+		{
+			rc = sd_bus_emit_properties_changed(bus, path, interface, "Connectivity", NULL);
+		}
+	} else {
+		printf("Unknown property '%s' in interface '%s' on object '%s'\n", property,
+			interface, path);
+		rc = -ENOENT;
+	}
+out:
+	set_berr(ctx, rc, ret_error);
+	return rc;
+}
+
 static const sd_bus_vtable bus_endpoint_vtable[] = {
 	SD_BUS_VTABLE_START(0),
 	SD_BUS_PROPERTY("NetworkId",
@@ -2661,11 +2704,20 @@ static const sd_bus_vtable bus_endpoint_cc_vtable[] = {
 		SD_BUS_NO_RESULT,
 		method_endpoint_recover,
 		0),
+#if MCTPD_WRITABLE_CONNECTIVITY
+	SD_BUS_WRITABLE_PROPERTY("Connectivity",
+		"s",
+		bus_endpoint_get_prop,
+		bus_endpoint_set_prop,
+		0,
+		SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
+#else
 	SD_BUS_PROPERTY("Connectivity",
 		"s",
 		bus_endpoint_get_prop,
 		0,
 		SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
+#endif
 	SD_BUS_VTABLE_END
 };
 
