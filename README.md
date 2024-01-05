@@ -105,3 +105,17 @@ ninja -C obj
 cd obj
 pytest
 ```
+
+This depends on a few python packages, including the pytest binary. You can
+use a python `venv` to provide these:
+
+```sh
+python3 -m venv venv
+venv/bin/pip install -r tests/requirements.txt
+```
+
+Then run the tests using the new `venv`'s `pytest`:
+
+```sh
+../venv/bin/pytest
+```
