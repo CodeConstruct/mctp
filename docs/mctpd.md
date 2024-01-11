@@ -45,6 +45,20 @@ busctl call xyz.openbmc_project.MCTP /xyz/openbmc_project/mctp \
 Similar to SetupEndpoint, but will always assign an EID rather than querying for existing ones.
 Will return `new = false` when an endpoint is already known to `mctpd`.
 
+### `.AssignEndpointStatic`
+
+Similar to AssignEndpoint, but takes an additional EID argument:
+
+```
+AssignEndpointStatic <interface name> <hwaddr> <static-EID>
+```
+
+to assign `<static-EID>` to the endpoint with hardware address `hwaddr`.
+
+This call will fail if the endpoint already has an EID, and that EID is
+different from `static-EID`, or if `static-EID` is already assigned to another
+endpoint.
+
 ### `.LearnEndpoint`
 
 Like SetupEndpoint but will not assign EIDs, will only query endpoints for a current EID.
