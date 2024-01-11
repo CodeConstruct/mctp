@@ -2281,27 +2281,17 @@ peer_endpoint_recover(sd_event_source *s, uint64_t usec, void *userdata)
 	 */
 	if (peer->recovery.eid != peer->eid) {
 		static const uint8_t nil_uuid[16] = {0};
+		bool uuid_matches_peer = false;
+		bool uuid_matches_nil = false;
 		uint8_t uuid[16] = {0};
-		bool uuid_matches_peer;
-		bool uuid_matches_nil;
 		mctp_eid_t new_eid;
 
 		rc = query_get_peer_uuid_by_phys(ctx, &peer->phys, uuid);
-
-		static_assert(sizeof(uuid) == sizeof(nil_uuid), "Unsynchronized UUID sizes");
-
-		/*
-		 * The peer must be published for .Recover to be called, so peer->uuid must
-		 * be valid
-		 */
-		assert(peer->uuid != NULL);
-
-		/*
-		 * The memory is always valid so the memcmp() isn't unsafe, but they are only
-		 * meaningful if query_get_peer_uuid_by_phys() succeeds
-		 */
-		uuid_matches_peer = memcmp(uuid, peer->uuid, sizeof(uuid)) == 0;
-		uuid_matches_nil = memcmp(uuid, nil_uuid, sizeof(uuid)) == 0;
+		if (!rc && peer->uuid) {
+			static_assert(sizeof(uuid) == sizeof(nil_uuid), "Unsynchronized UUID sizes");
+			uuid_matches_peer = memcmp(uuid, peer->uuid, sizeof(uuid)) == 0;
+			uuid_matches_nil = memcmp(uuid, nil_uuid, sizeof(uuid)) == 0;
+		}
 
 		if (rc || !uuid_matches_peer ||
 				(uuid_matches_nil && !MCTPD_RECOVER_NIL_UUID)) {
