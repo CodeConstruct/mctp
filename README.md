@@ -101,13 +101,19 @@ We have an initial test suite under tests/. To run:
 
 ```sh
 meson setup obj
-ninja -C obj
+ninja -C obj test
+```
+
+Alternatively, you can run `pytest` directly; this may be more useful
+during development:
+
+```sh
 cd obj
 pytest
 ```
 
-This depends on a few python packages, including the pytest binary. You can
-use a python `venv` to provide these:
+The test infrastructure depends on a few python packages, including the pytest
+binary. You can use a python `venv` to provide these:
 
 ```sh
 python3 -m venv venv
@@ -117,5 +123,6 @@ venv/bin/pip install -r tests/requirements.txt
 Then run the tests using the new `venv`'s `pytest`:
 
 ```sh
-../venv/bin/pytest
+PATH=$PWD/venv/bin/:$PATH meson setup obj
+ninja -C obj test
 ```

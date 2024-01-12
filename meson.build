@@ -79,3 +79,12 @@ configure_file(
     output: 'pytest.ini',
     configuration: test_conf_data,
 )
+
+pytest = find_program('pytest', required: false)
+
+if pytest.found()
+    test('test-mctpd', pytest,
+        args: '--tap',
+        protocol: 'tap',
+    )
+endif
