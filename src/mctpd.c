@@ -2281,51 +2281,43 @@ peer_endpoint_recover(sd_event_source *s, uint64_t usec, void *userdata)
 	 */
 	if (peer->recovery.eid != peer->eid) {
 		static const uint8_t nil_uuid[16] = {0};
+		bool uuid_matches_peer = false;
+		bool uuid_matches_nil = false;
 		uint8_t uuid[16] = {0};
-		bool uuid_matches_peer;
-		bool uuid_matches_nil;
 		mctp_eid_t new_eid;
 
 		rc = query_get_peer_uuid_by_phys(ctx, &peer->phys, uuid);
+		if (!rc && peer->uuid) {
+			static_assert(sizeof(uuid) == sizeof(nil_uuid), "Unsynchronized UUID sizes");
+			uuid_matches_peer = memcmp(uuid, peer->uuid, sizeof(uuid)) == 0;
+			uuid_matches_nil = memcmp(uuid, nil_uuid, sizeof(uuid)) == 0;
+		}
 
-		static_assert(sizeof(uuid) == sizeof(nil_uuid), "Unsynchronized UUID sizes");
-
-		/*
-		 * The peer must be published for .Recover to be called, so peer->uuid must
-		 * be valid
-		 */
-		assert(peer->uuid != NULL);
-
-		/*
-		 * The memory is always valid so the memcmp() isn't unsafe, but they are only
-		 * meaningful if query_get_peer_uuid_by_phys() succeeds
-		 */
-		uuid_matches_peer = memcmp(uuid, peer->uuid, sizeof(uuid)) == 0;
-		uuid_matches_nil = memcmp(uuid, nil_uuid, sizeof(uuid)) == 0;
-
-		if (rc == 0 && uuid_matches_peer &&
-		    (!uuid_matches_nil || MCTPD_RECOVER_NIL_UUID)) {
-			/* Confirmation of the same device, apply it's already allocated EID */
-			rc = endpoint_send_set_endpoint_id(peer, &new_eid);
-			if (rc < 0) {
-				goto reschedule;
-			}
-
-			if (new_eid != peer->eid) {
-				rc = change_peer_eid(peer, new_eid);
-				if (rc < 0) {
-					goto reclaim;
-				}
-			}
-		} else {
+		if (rc || !uuid_matches_peer ||
+				(uuid_matches_nil && !MCTPD_RECOVER_NIL_UUID)) {
 			/* It's not known to be the same device, allocate a new EID */
 			dest_phys phys = peer->phys;
 
 			assert(sd_event_source_get_enabled(peer->recovery.source, &ev_state) == 0);
 			remove_peer(peer);
-			rc = endpoint_assign_eid(ctx, NULL, &phys, NULL);
+			/*
+			 * The representation of the old peer is now gone. Set up the new peer,
+			 * after which we immediately return as there's no old peer state left to
+			 * maintain.
+			 */
+			return endpoint_assign_eid(ctx, NULL, &phys, &peer);
+		}
+
+		/* Confirmation of the same device, apply its already allocated EID */
+		rc = endpoint_send_set_endpoint_id(peer, &new_eid);
+		if (rc < 0) {
+			goto reschedule;
+		}
+
+		if (new_eid != peer->eid) {
+			rc = change_peer_eid(peer, new_eid);
 			if (rc < 0) {
-				goto reschedule;
+				goto reclaim;
 			}
 		}
 	}
