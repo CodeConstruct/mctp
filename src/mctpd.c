@@ -23,6 +23,7 @@
 #include <err.h>
 #include <errno.h>
 #include <getopt.h>
+#include <signal.h>
 
 #include <systemd/sd-event.h>
 #include <systemd/sd-bus.h>
@@ -2919,12 +2920,30 @@ out:
 
 static int setup_bus(ctx *ctx)
 {
+	sigset_t sigset;
 	int rc;
 
 	// Must use the default loop so that dfree() can use it without context.
 	rc = sd_event_default(&ctx->event);
 	if (rc < 0) {
 		warnx("Failed creating event loop");
+		goto out;
+	}
+
+	rc = sigemptyset(&sigset);
+	if (rc < 0)
+		goto out;
+
+	rc = sigaddset(&sigset, SIGTERM);
+	if (rc < 0)
+		goto out;
+
+	rc = sigprocmask(SIG_BLOCK, &sigset, NULL);
+	if (rc < 0)
+		goto out;
+
+	rc = sd_event_add_signal(ctx->event, NULL, SIGTERM, NULL, NULL);
+	if (rc < 0) {
 		goto out;
 	}
 
@@ -3543,7 +3562,6 @@ int main(int argc, char **argv)
 	rc = request_dbus(ctx);
 	if (rc < 0)
 		return 1;
-
 
 	rc = sd_event_loop(ctx->event);
 	sd_event_unref(ctx->event);
