@@ -90,6 +90,14 @@ class System:
     def add_route(self, route):
         self.routes.append(route)
 
+    def del_route(self, route):
+        route = self.lookup_route_exact(route.iface, route.start_eid,
+                route.end_eid)
+        if not route:
+            raise NetlinkError(errno.ENOENT)
+
+        self.routes.remove(route)
+
     def add_interface(self, iface):
         self.interfaces.append(iface)
 
@@ -100,6 +108,12 @@ class System:
         if self.lookup_neighbour(neigh.iface, neigh.eid):
             raise NetlinkError(errno.EEXIST)
         self.neighbours.append(neigh)
+
+    def del_neighbour(self, neigh):
+        neigh = self.lookup_neighbour(neigh.iface, neigh.eid)
+        if not neigh:
+            raise NetlinkError(errno.EENOENT)
+        self.neighbours.remove(neigh)
 
     def find_interface_by_ifindex(self, ifindex):
         for i in self.interfaces:
@@ -120,6 +134,13 @@ class System:
                 return rt
         return None
 
+    def lookup_route_exact(self, iface, start_eid, end_eid):
+        for rt in self.routes:
+            if (rt.iface == iface and rt.start_eid == start_eid
+                    and rt.end_eid == end_eid):
+                return rt
+        return None
+
     def lookup_neighbour(self, iface, eid):
         for neighbour in self.neighbours:
             if neighbour.iface == iface and neighbour.eid == eid:
@@ -134,7 +155,7 @@ class System:
             lladdr = addr.lladdr
         else:
             route = self.lookup_route(addr.net, addr.eid)
-            if route == None:
+            if route is None:
                 return None
             iface = route.iface
 
@@ -493,11 +514,15 @@ class NLSocket(BaseSocket):
             await self._handle_getroute(msg)
         elif typ == rtnl.RTM_NEWROUTE:
             await self._handle_newroute(msg)
+        elif typ == rtnl.RTM_DELROUTE:
+            await self._handle_delroute(msg)
 
         elif typ == rtnl.RTM_GETNEIGH:
             await self._handle_getneigh(msg)
         elif typ == rtnl.RTM_NEWNEIGH:
             await self._handle_newneigh(msg)
+        elif typ == rtnl.RTM_DELNEIGH:
+            await self._handle_delneigh(msg)
 
         else:
             print(f"unknown NL type {typ:x}")
@@ -622,6 +647,27 @@ class NLSocket(BaseSocket):
         if msg['header']['flags'] & netlink.NLM_F_ACK:
             await self._nlmsg_ack(msg)
 
+    async def _handle_delneigh(self, msg):
+        msg = ndmsg_mctp(msg.data)
+        msg.decode()
+
+        ifindex = msg['ifindex']
+        dst = msg.get_attr('NDA_DST')
+        lladdr = msg.get_attr('NDA_LLADDR')
+
+        iface = self.system.find_interface_by_ifindex(ifindex)
+        neighbour = System.Neighbour(iface, lladdr, dst)
+        try:
+            self.system.del_neighbour(neighbour)
+        except NetlinkError as nle:
+            msg = nle.to_nlmsg()
+            msg.encode()
+            await self._send_resp(msg.data)
+            return
+
+        if msg['header']['flags'] & netlink.NLM_F_ACK:
+            await self._nlmsg_ack(msg)
+
     async def _handle_getroute(self, msg):
         dump = bool(msg['header']['flags'] & netlink.NLM_F_DUMP)
         assert dump
@@ -668,6 +714,27 @@ class NLSocket(BaseSocket):
         if msg['header']['flags'] & netlink.NLM_F_ACK:
             await self._nlmsg_ack(msg)
 
+    async def _handle_delroute(self, msg):
+        msg = rtmsg_mctp(msg.data)
+        msg.decode()
+
+        ifindex = msg.get_attr('RTA_OIF')
+        start_eid = msg.get_attr('RTA_DST')
+        extent_eid = msg['dst_len']
+        mtu = 0
+
+        iface = self.system.find_interface_by_ifindex(ifindex)
+        route = System.Route(iface, start_eid, extent_eid)
+        try:
+            self.system.del_route(route)
+        except NetlinkError as nle:
+            msg = nle.to_nlmsg()
+            msg.encode()
+            await self._send_resp(msg.data)
+            return
+
+        if msg['header']['flags'] & netlink.NLM_F_ACK:
+            await self._nlmsg_ack(msg)
 
 async def send_fd(sock, fd):
     fdarray = array.array("i", [fd])
