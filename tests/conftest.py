@@ -197,6 +197,9 @@ class Endpoint:
     def __str__(self):
         return f"uuid {self.uuid} lladdr {self.lladdr}, eid {self.eid}"
 
+    def reset(self):
+        self.eid = 0
+
 class Network:
     def __init__(self):
         self.endpoints = []

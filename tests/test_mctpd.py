@@ -1,7 +1,23 @@
-
 import pytest
+import trio
+import uuid
 
 from mctp_test_utils import mctpd_mctp_obj, mctpd_mctp_endpoint_obj
+from conftest import Endpoint
+
+# DBus constant symbol suffixes:
+#
+# - C: Connection
+# - P: Path
+# - I: Interface
+MCTPD_C = 'xyz.openbmc_project.MCTP'
+MCTPD_MCTP_P = '/xyz/openbmc_project/mctp'
+MCTPD_MCTP_I = 'au.com.CodeConstruct.MCTP'
+MCTPD_ENDPOINT_I = 'au.com.CodeConstruct.MCTP.Endpoint'
+DBUS_OBJECT_MANAGER_I = 'org.freedesktop.DBus.ObjectManager'
+DBUS_PROPERTIES_I = 'org.freedesktop.DBus.Properties'
+
+MCTPD_TRECLAIM = 5
 
 """ Test the SetupEndpoint dbus call
 
@@ -79,3 +95,156 @@ async def test_remove_endpoint(dbus, mctpd):
 
     await ep.call_remove()
     assert(len(mctpd.system.neighbours) == 0)
+
+async def test_recover_endpoint_present(dbus, mctpd):
+    iface = mctpd.system.interfaces[0]
+    dev = mctpd.network.endpoints[0]
+    mctp = await mctpd_mctp_obj(dbus)
+    (eid, net, path, new) = await mctp.call_setup_endpoint(iface.name, dev.lladdr)
+
+    ep = await dbus.get_proxy_object(MCTPD_C, path)
+    ep_props = await ep.get_interface(DBUS_PROPERTIES_I)
+
+    recovered = trio.Semaphore(initial_value = 0)
+    def ep_connectivity_changed(iface, changed, invalidated):
+        if iface == MCTPD_ENDPOINT_I and 'Connectivity' in changed:
+            if 'Available' == changed['Connectivity'].value:
+                recovered.release()
+
+    await ep_props.on_properties_changed(ep_connectivity_changed)
+
+    ep_ep = await ep.get_interface(MCTPD_ENDPOINT_I)
+    await ep_ep.call_recover()
+
+    with trio.move_on_after(2 * MCTPD_TRECLAIM) as expected:
+        await recovered.acquire()
+
+    # Cancellation implies failure to acquire recovered, which implies failure
+    # to transition 'Connectivity' to 'Available', which is a test failure.
+    assert not expected.cancelled_caught
+
+async def test_recover_endpoint_removed(dbus, mctpd):
+    iface = mctpd.system.interfaces[0]
+    dev = mctpd.network.endpoints[0]
+    mctp = await dbus.get_proxy_object(MCTPD_C, MCTPD_MCTP_P)
+    mctp_mctp = await mctp.get_interface(MCTPD_MCTP_I)
+    (eid, net, path, new) = await mctp_mctp.call_setup_endpoint(iface.name, dev.lladdr)
+
+    ep = await dbus.get_proxy_object(MCTPD_C, path)
+    ep_props = await ep.get_interface(DBUS_PROPERTIES_I)
+
+    degraded = trio.Semaphore(initial_value = 0)
+    def ep_connectivity_changed(iface, changed, invalidated):
+        if iface == MCTPD_ENDPOINT_I and 'Connectivity' in changed:
+            if 'Degraded' == changed['Connectivity'].value:
+                degraded.release()
+
+    await ep_props.on_properties_changed(ep_connectivity_changed)
+
+    mctp_objmgr = await mctp.get_interface(DBUS_OBJECT_MANAGER_I)
+
+    removed = trio.Semaphore(initial_value = 0)
+    def ep_removed(ep_path, interfaces):
+        if ep_path == path and MCTPD_ENDPOINT_I in interfaces:
+            removed.release()
+
+    await mctp_objmgr.on_interfaces_removed(ep_removed)
+
+    del mctpd.network.endpoints[0]
+    ep_ep = await ep.get_interface(MCTPD_ENDPOINT_I)
+    await ep_ep.call_recover()
+
+    with trio.move_on_after(2 * MCTPD_TRECLAIM) as expected:
+        await removed.acquire()
+        await degraded.acquire()
+
+    assert not expected.cancelled_caught
+
+async def test_recover_endpoint_reset(dbus, mctpd):
+    iface = mctpd.system.interfaces[0]
+    dev = mctpd.network.endpoints[0]
+    mctp = await dbus.get_proxy_object(MCTPD_C, MCTPD_MCTP_P)
+    mctp_mctp = await mctp.get_interface(MCTPD_MCTP_I)
+    (eid, net, path, new) = await mctp_mctp.call_setup_endpoint(iface.name, dev.lladdr)
+
+    ep = await dbus.get_proxy_object(MCTPD_C, path)
+    ep_props = await ep.get_interface(DBUS_PROPERTIES_I)
+
+    recovered = trio.Semaphore(initial_value = 0)
+    def ep_connectivity_changed(iface, changed, invalidated):
+        if iface == MCTPD_ENDPOINT_I and 'Connectivity' in changed:
+            if 'Available' == changed['Connectivity'].value:
+                recovered.release()
+
+    await ep_props.on_properties_changed(ep_connectivity_changed)
+
+    # Disable the endpoint device
+    del mctpd.network.endpoints[0]
+
+    ep_ep = await ep.get_interface(MCTPD_ENDPOINT_I)
+    await ep_ep.call_recover()
+
+    # Force the first poll to fail
+    await trio.sleep(1)
+
+    # Reset the endpoint device and re-enable it
+    dev.reset()
+    mctpd.network.add_endpoint(dev)
+
+    with trio.move_on_after(2 * MCTPD_TRECLAIM) as expected:
+        await recovered.acquire()
+
+    assert not expected.cancelled_caught
+
+async def test_recover_endpoint_exchange(dbus, mctpd):
+    iface = mctpd.system.interfaces[0]
+    dev = mctpd.network.endpoints[0]
+    mctp = await dbus.get_proxy_object(MCTPD_C, MCTPD_MCTP_P)
+    mctp_mctp = await mctp.get_interface(MCTPD_MCTP_I)
+    (eid, net, path, new) = await mctp_mctp.call_setup_endpoint(iface.name, dev.lladdr)
+
+    ep = await dbus.get_proxy_object(MCTPD_C, path)
+    ep_props = await ep.get_interface(DBUS_PROPERTIES_I)
+
+    degraded = trio.Semaphore(initial_value = 0)
+    def ep_connectivity_changed(iface, changed, invalidated):
+        if iface == MCTPD_ENDPOINT_I and 'Connectivity' in changed:
+            if 'Degraded' == changed['Connectivity'].value:
+                degraded.release()
+
+    await ep_props.on_properties_changed(ep_connectivity_changed)
+
+    mctp_objmgr = await mctp.get_interface(DBUS_OBJECT_MANAGER_I)
+
+    removed = trio.Semaphore(initial_value = 0)
+    def ep_removed(ep_path, interfaces):
+        if ep_path == path and MCTPD_ENDPOINT_I in interfaces:
+            removed.release()
+
+    await mctp_objmgr.on_interfaces_removed(ep_removed)
+
+    added = trio.Semaphore(initial_value = 0)
+    def ep_added(ep_path, content):
+        if MCTPD_ENDPOINT_I in content:
+            added.release()
+
+    await mctp_objmgr.on_interfaces_added(ep_added)
+
+    # Remove the current device
+    del mctpd.network.endpoints[0]
+
+    ep_ep = await ep.get_interface(MCTPD_ENDPOINT_I)
+    await ep_ep.call_recover()
+
+    # Force the first poll to fail
+    await trio.sleep(1)
+
+    # Add a new the endpoint device at the same physical address (different UUID)
+    mctpd.network.add_endpoint(Endpoint(dev.iface, dev.lladdr, types = dev.types))
+
+    with trio.move_on_after(2 * MCTPD_TRECLAIM) as expected:
+        await added.acquire()
+        await removed.acquire()
+        await degraded.acquire()
+
+    assert not expected.cancelled_caught
