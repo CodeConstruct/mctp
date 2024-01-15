@@ -1,7 +1,7 @@
 
 import pytest
 
-from mctp_test_utils import mctpd_mctp_obj
+from mctp_test_utils import mctpd_mctp_obj, mctpd_mctp_endpoint_obj
 
 """ Test the SetupEndpoint dbus call
 
@@ -64,3 +64,18 @@ async def test_setup_endpoint(dbus, mctpd):
 
     # we should have a route for the new endpoint too
     assert len(mctpd.system.routes) == 2
+
+""" Test neighbour removal """
+async def test_remove_endpoint(dbus, mctpd):
+    mctp = await mctpd_mctp_obj(dbus)
+
+    iface = mctpd.system.interfaces[0]
+    ep1 = mctpd.network.endpoints[0]
+    (_, _, path, _) = await mctp.call_setup_endpoint(iface.name, ep1.lladdr)
+
+    assert(len(mctpd.system.neighbours) == 1)
+
+    ep = await mctpd_mctp_endpoint_obj(dbus, path)
+
+    await ep.call_remove()
+    assert(len(mctpd.system.neighbours) == 0)
