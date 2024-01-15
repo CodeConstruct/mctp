@@ -35,9 +35,10 @@ config_h = configure_file(
 
 util_sources = ['src/mctp-util.c']
 netlink_sources = ['src/mctp-netlink.c']
+ops_sources = ['src/mctp-ops.c']
 
 executable('mctp',
-    sources: ['src/mctp.c'] + netlink_sources + util_sources,
+    sources: ['src/mctp.c'] + netlink_sources + util_sources + ops_sources,
     install: true,
 )
 
@@ -53,9 +54,37 @@ if libsystemd.found()
     executable('mctpd',
         sources: [
             'src/mctpd.c',
-        ] + netlink_sources + util_sources,
+        ] + netlink_sources + util_sources + ops_sources,
         dependencies: libsystemd,
         install: true,
         install_dir: get_option('sbindir'),
+    )
+
+    mctpd_test = executable('test-mctpd',
+        sources: [
+            'src/mctpd.c',
+            'tests/mctp-ops-test.c',
+        ] + netlink_sources + util_sources,
+        include_directories:  include_directories('src'),
+        dependencies: libsystemd,
+    )
+endif
+
+test_conf_data = configuration_data()
+test_conf_data.set('testpaths',
+  join_paths(meson.current_source_dir(), 'tests')
+)
+configure_file(
+    input: 'tests/pytest.ini.in',
+    output: 'pytest.ini',
+    configuration: test_conf_data,
+)
+
+pytest = find_program('pytest', required: false)
+
+if pytest.found()
+    test('test-mctpd', pytest,
+        args: '--tap',
+        protocol: 'tap',
     )
 endif

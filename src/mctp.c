@@ -33,6 +33,7 @@
 #include "mctp.h"
 #include "mctp-util.h"
 #include "mctp-netlink.h"
+#include "mctp-ops.h"
 
 #define max(a, b) ((a) > (b) ? (a) : (b))
 #define min(a, b) ((a) < (b) ? (a) : (b))
@@ -769,6 +770,8 @@ static int cmd_addr_addremove(struct ctx *ctx,
 		return -1;
 	}
 
+	mctp_ops_init();
+
 	eidstr = argv[1];
 	linkstr = argv[3];
 
@@ -1306,6 +1309,7 @@ int main(int argc, char **argv)
 	if (!cmd)
 		errx(EXIT_FAILURE, "no such command '%s'", cmdname);
 
+	mctp_ops_init();
 	ctx->nl = mctp_nl_new(ctx->verbose);
 	if (!ctx->nl)
 		errx(EXIT_FAILURE, "Error creating netlink object");

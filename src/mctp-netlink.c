@@ -18,6 +18,7 @@
 #include "mctp-netlink.h"
 #include "mctp.h"
 #include "mctp-util.h"
+#include "mctp-ops.h"
 
 struct linkmap_entry {
 	int	ifindex;
@@ -65,26 +66,27 @@ static int open_nl_socket(void)
 	struct sockaddr_nl addr;
 	int opt, rc, sd = -1;
 
-	rc = socket(AF_NETLINK, SOCK_RAW, NETLINK_ROUTE);
+	rc = mctp_ops.nl.socket();
 	if (rc < 0)
 		goto err;
 	sd = rc;
 	memset(&addr, 0, sizeof(addr));
 	addr.nl_family = AF_NETLINK;
-	rc = bind(sd, (struct sockaddr *)&addr, sizeof(addr));
+	rc = mctp_ops.nl.bind(sd, (struct sockaddr *)&addr, sizeof(addr));
 	if (rc)
 		goto err;
 
 	opt = 1;
-	rc = setsockopt(sd, SOL_NETLINK, NETLINK_GET_STRICT_CHK,
-			&opt, sizeof(opt));
+	rc = mctp_ops.nl.setsockopt(sd, SOL_NETLINK, NETLINK_GET_STRICT_CHK,
+				    &opt, sizeof(opt));
 	if (rc) {
 		rc = -errno;
 		goto err;
 	}
 
 	opt = 1;
-	rc = setsockopt(sd, SOL_NETLINK, NETLINK_EXT_ACK, &opt, sizeof(opt));
+	rc = mctp_ops.nl.setsockopt(sd, SOL_NETLINK, NETLINK_EXT_ACK, &opt,
+				    sizeof(opt));
 	if (rc)
 	{
 		rc = -errno;
@@ -144,8 +146,8 @@ static void free_linkmap(struct linkmap_entry *linkmap, size_t count)
 void mctp_nl_close(mctp_nl *nl)
 {
 	free_linkmap(nl->linkmap, nl->linkmap_count);
-	close(nl->sd);
-	close(nl->sd_monitor);
+	mctp_ops.nl.close(nl->sd);
+	mctp_ops.nl.close(nl->sd_monitor);
 	free(nl);
 }
 
@@ -164,14 +166,18 @@ int mctp_nl_monitor(mctp_nl *nl, bool enable)
 			return nl->sd_monitor;
 
 		opt = RTNLGRP_LINK;
-		rc = setsockopt(nl->sd_monitor, SOL_NETLINK, NETLINK_ADD_MEMBERSHIP, &opt, sizeof(opt));
+		rc = mctp_ops.nl.setsockopt(nl->sd_monitor, SOL_NETLINK,
+					    NETLINK_ADD_MEMBERSHIP,
+					    &opt, sizeof(opt));
 		if (rc < 0) {
 			rc = -errno;
 			goto err;
 		}
 
 		opt = RTNLGRP_MCTP_IFADDR;
-		rc = setsockopt(nl->sd_monitor, SOL_NETLINK, NETLINK_ADD_MEMBERSHIP, &opt, sizeof(opt));
+		rc = mctp_ops.nl.setsockopt(nl->sd_monitor, SOL_NETLINK,
+					    NETLINK_ADD_MEMBERSHIP,
+					    &opt, sizeof(opt));
 		if (rc < 0) {
 			rc = -errno;
 			if (errno == EINVAL) {
@@ -492,7 +498,7 @@ static int handle_nlmsg_ack(mctp_nl *nl)
 	int rc;
 	size_t len;
 
-	rc = recvfrom(nl->sd, resp, sizeof(resp), 0, NULL, NULL);
+	rc = mctp_ops.nl.recvfrom(nl->sd, resp, sizeof(resp), 0, NULL, NULL);
 	if (rc < 0)
 		return rc;
 	len = rc;
@@ -535,8 +541,8 @@ int mctp_nl_send(mctp_nl *nl, struct nlmsghdr *msg)
 	addr.nl_family = AF_NETLINK;
 	addr.nl_pid = 0;
 
-	rc = sendto(nl->sd, msg, msg->nlmsg_len, 0,
-			(struct sockaddr *)&addr, sizeof(addr));
+	rc = mctp_ops.nl.sendto(nl->sd, msg, msg->nlmsg_len, 0,
+				(struct sockaddr *)&addr, sizeof(addr));
 	if (rc < 0)
 		return rc;
 
@@ -585,7 +591,8 @@ int mctp_nl_recv_all(mctp_nl *nl, int sd,
 
 	// read all the responses into a single buffer
 	while (!done) {
-		rc = recvfrom(sd, NULL, 0, MSG_PEEK|MSG_TRUNC, NULL, 0);
+		rc = mctp_ops.nl.recvfrom(sd, NULL, 0, MSG_PEEK|MSG_TRUNC,
+					  NULL, 0);
 		if (rc < 0) {
 			warnx("recvfrom(MSG_PEEK)");
 			rc = -errno;
@@ -614,8 +621,8 @@ int mctp_nl_recv_all(mctp_nl *nl, int sd,
 		resp = respbuf + pos;
 
 		addrlen = sizeof(addr);
-		rc = recvfrom(sd, resp, readlen, MSG_TRUNC,
-				(struct sockaddr *)&addr, &addrlen);
+		rc = mctp_ops.nl.recvfrom(sd, resp, readlen, MSG_TRUNC,
+					  (struct sockaddr *)&addr, &addrlen);
 		if (rc < 0) {
 			warnx("recvfrom(MSG_PEEK)");
 			rc = -errno;
@@ -747,8 +754,8 @@ static int fill_linkmap(mctp_nl *nl)
 	addrlen = sizeof(addr);
 
 	for (;;) {
-		rc = recvfrom(nl->sd, NULL, 0, MSG_TRUNC | MSG_PEEK,
-				NULL, NULL);
+		rc = mctp_ops.nl.recvfrom(nl->sd, NULL, 0, MSG_TRUNC | MSG_PEEK,
+					  NULL, NULL);
 		if (rc < 0) {
 			warn("recvfrom(MSG_PEEK)");
 			break;
@@ -768,8 +775,8 @@ static int fill_linkmap(mctp_nl *nl)
 			buf = tmp;
 		}
 
-		rc = recvfrom(nl->sd, buf, buflen, 0,
-				(struct sockaddr *)&addr, &addrlen);
+		rc = mctp_ops.nl.recvfrom(nl->sd, buf, buflen, 0,
+					  (struct sockaddr *)&addr, &addrlen);
 		if (rc < 0) {
 			warn("recvfrom()");
 			break;
