@@ -3,3 +3,4 @@ option('unsafe-writable-connectivity',
        type: 'boolean',
        value: false,
        description: 'Allow writes to the Connectivity member of the au.com.CodeConstruct.MCTP.Endpoint interface on endpoint objects')
+option('tests', type: 'feature')
