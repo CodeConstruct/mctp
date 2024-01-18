@@ -84,6 +84,7 @@ pytest = find_program('pytest', required: false)
 
 if pytest.found()
     test('test-mctpd', pytest,
+        depends: mctpd_test,
         args: '--tap',
         protocol: 'tap',
     )
