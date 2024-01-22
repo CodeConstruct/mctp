@@ -17,7 +17,7 @@ Building & installing
 
 This project uses meson for building. To configure and compile:
 
-    $ meson obj
+    $ meson setup obj
     $ ninja -C obj
 
 to install to the default prefix (/usr/local), with optional `DESTDIR`:
