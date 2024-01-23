@@ -12,6 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 2. mctpd: Allow recovery of devices reporting a nil UUID for development
 3. mctpd: Allow configuring .Connectivity as writable for development
 4. mctpd: Add AssignEndpointStatic for static EID allocations
+5. mctpd: Add a configuration file facility
 
 ### Changed
 

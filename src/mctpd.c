@@ -29,6 +29,8 @@
 #include <systemd/sd-bus.h>
 #include <systemd/sd-id128.h>
 
+#include "toml.h"
+
 #include "mctp.h"
 #include "mctp-util.h"
 #include "mctp-netlink.h"
@@ -136,6 +138,10 @@ typedef struct peer peer;
 struct ctx {
 	sd_event *event;
 	sd_bus *bus;
+
+	// Configuration
+	const char *config_filename;
+
 	// Main instance for link/address state and listening for updates
 	mctp_nl *nl;
 
@@ -3534,9 +3540,10 @@ static int setup_testing(ctx *ctx) {
 
 static void print_usage(ctx *ctx)
 {
-	fprintf(stderr, "mctpd [-v] [-N]\n");
+	fprintf(stderr, "mctpd [-v] [-N] [-c FILE]\n");
 	fprintf(stderr, "      -v verbose\n");
 	fprintf(stderr, "      -N testing mode. Not safe for production\n");
+	fprintf(stderr, "      -c FILE read config from FILE\n");
 }
 
 static int parse_args(ctx *ctx, int argc, char **argv)
@@ -3545,12 +3552,13 @@ static int parse_args(ctx *ctx, int argc, char **argv)
 		{ .name = "help", .has_arg = no_argument, .val = 'h' },
 		{ .name = "verbose", .has_arg = no_argument, .val = 'v' },
 		{ .name = "testing", .has_arg = no_argument, .val = 'N' },
+		{ .name = "config", .has_arg = required_argument, .val = 'c' },
 		{ 0 },
 	};
 	int c;
 
 	for (;;) {
-		c = getopt_long(argc, argv, "+hvN", options, NULL);
+		c = getopt_long(argc, argv, "+hvNc:", options, NULL);
 		if (c == -1)
 			break;
 
@@ -3561,12 +3569,29 @@ static int parse_args(ctx *ctx, int argc, char **argv)
 		case 'v':
 			ctx->verbose = true;
 			break;
+		case 'c':
+			ctx->config_filename = strdup(optarg);
+			break;
 		case 'h':
 		default:
 			print_usage(ctx);
 			return 255;
 		}
 	}
+	return 0;
+}
+
+static int parse_config_mode(ctx *ctx, const char *mode)
+{
+	if (!strcmp(mode, "bus-owner")) {
+		ctx->bus_owner = true;
+	} else if (!strcmp(mode, "endpoint")) {
+		ctx->bus_owner = false;
+	} else {
+		warnx("invalid value '%s' for mode configuration", mode);
+		return -1;
+	}
+
 	return 0;
 }
 
@@ -3594,16 +3619,91 @@ static int fill_uuid(ctx *ctx)
 	return rc;
 }
 
-static int setup_config(ctx *ctx)
+static int parse_config_mctp(ctx *ctx, toml_table_t *mctp_tab)
 {
+	toml_datum_t val;
 	int rc;
-	// TODO: this will go in a config file or arguments.
+
+	val = toml_int_in(mctp_tab, "message_timeout_ms");
+	if (val.ok) {
+		int64_t i = val.u.i;
+		if (i <= 0 || i > 100 * 1000) {
+			warnx("invalid message_timeout_ms value");
+			return -1;
+		}
+		ctx->mctp_timeout = i * 1000;
+	}
+
+	val = toml_string_in(mctp_tab, "uuid");
+	if (val.ok) {
+		rc = sd_id128_from_string(val.u.s, (void *)&ctx->uuid);
+		free(val.u.s);
+		if (rc) {
+			warnx("invalid UUID value");
+			return rc;
+		}
+	} else {
+		rc = fill_uuid(ctx);
+		if (rc)
+			return rc;
+	}
+
+	return 0;
+}
+
+static int parse_config(ctx *ctx)
+{
+	toml_table_t *conf_root, *mctp_tab;
+	char errbuf[256] = { 0 };
+	toml_datum_t val;
+	FILE *fp;
+	int rc;
+
+	if (!ctx->config_filename)
+		return 0;
+
+	rc = -1;
+	fp = fopen(ctx->config_filename, "r");
+	if (!fp) {
+		warn("can't open configuration file %s", ctx->config_filename);
+		return -1;
+	}
+
+	conf_root = toml_parse_file(fp, errbuf, sizeof(errbuf));
+	if (!conf_root) {
+		warnx("can't parse configuration file %s: %s",
+		      ctx->config_filename, errbuf);
+		goto out_close;
+	}
+
+	val = toml_string_in(conf_root, "mode");
+	if (val.ok) {
+		rc = parse_config_mode(ctx, val.u.s);
+		free(val.u.s);
+		if (rc)
+			goto out_free;
+	}
+
+	mctp_tab = toml_table_in(conf_root, "mctp");
+	if (mctp_tab) {
+		rc = parse_config_mctp(ctx, mctp_tab);
+		if (rc)
+			goto out_free;
+	}
+
+	rc = 0;
+
+out_free:
+	toml_free(conf_root);
+out_close:
+	fclose(fp);
+	return rc;
+}
+
+static void setup_config_defaults(ctx *ctx)
+{
 	ctx->mctp_timeout = 250000; // 250ms
 	ctx->bus_owner = true;
-	rc = fill_uuid(ctx);
-	if (rc < 0)
-		return rc;
-	return 0;
 }
 
 int main(int argc, char **argv)
@@ -3613,12 +3713,18 @@ int main(int argc, char **argv)
 
 	setlinebuf(stdout);
 
-	setup_config(ctx);
+	setup_config_defaults(ctx);
 	mctp_ops_init();
 
 	rc = parse_args(ctx, argc, argv);
 	if (rc != 0) {
 		return rc;
+	}
+
+	rc = parse_config(ctx);
+	if (rc) {
+		err(EXIT_FAILURE, "Can't load configuration file %s",
+		    ctx->config_filename);
 	}
 
 	ctx->nl = mctp_nl_new(false);
