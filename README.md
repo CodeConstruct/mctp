@@ -68,8 +68,9 @@ configured (ie., interfaces are enabled, and local addresses have been
 assigned). There are two sample systemd unit files under the conf/ directory, to
 coordinate the local setup and the supervision of the mctpd process.
 
-`mctpd` can read some basic configuration from a file, if the `-c FILE` argument
-is given. An example configuration is in [`conf/mctpd.conf`](conf/mctpd.conf).
+`mctpd` can read some basic configuration from a file, by default
+`/etc/mctpd.conf`, but other files can be specified with the `-c FILE` argument.
+An example configuration is in [`conf/mctpd.conf`](conf/mctpd.conf).
 
 The `mctpd` daemon will expose a dbus interface, claiming the bus name
 `xyz.openbmc_project.MCTP` and object path `/xyz/openbmc_project/mctp`. This
