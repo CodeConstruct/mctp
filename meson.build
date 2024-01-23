@@ -38,6 +38,11 @@ util_sources = ['src/mctp-util.c']
 netlink_sources = ['src/mctp-netlink.c']
 ops_sources = ['src/mctp-ops.c']
 
+toml_dep = declare_dependency(
+    sources: ['lib/tomlc99/toml.c'],
+    include_directories: include_directories('lib/tomlc99'),
+)
+
 executable('mctp',
     sources: ['src/mctp.c'] + netlink_sources + util_sources + ops_sources,
     install: true,
@@ -56,7 +61,7 @@ if libsystemd.found()
         sources: [
             'src/mctpd.c',
         ] + netlink_sources + util_sources + ops_sources,
-        dependencies: libsystemd,
+        dependencies: [libsystemd, toml_dep],
         install: true,
         install_dir: get_option('sbindir'),
     )
@@ -67,7 +72,7 @@ if libsystemd.found()
             'tests/mctp-ops-test.c',
         ] + netlink_sources + util_sources,
         include_directories:  include_directories('src'),
-        dependencies: libsystemd,
+        dependencies: [libsystemd, toml_dep],
     )
 endif
 
