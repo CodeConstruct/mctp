@@ -1,0 +1,6 @@
+This directory includes an export of the tomlc99 library, hosted at
+https://github.com/cktan/tomlc99, at commit 5221b3d3. We only use the toml.c
+and toml.h files from that repository.
+
+tomlc99 is released under the MIT license - see LICENSE in this directory for
+full license text.
