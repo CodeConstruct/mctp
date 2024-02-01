@@ -1339,7 +1339,7 @@ static int peer_set_mtu(ctx *ctx, peer *peer, uint32_t mtu) {
 }
 
 static int endpoint_assign_eid(ctx *ctx, sd_bus_error *berr, const dest_phys *dest,
-	peer **ret_peer)
+	peer **ret_peer, mctp_eid_t static_eid)
 {
 	mctp_eid_t e, new_eid;
 	net_det *n = NULL;
@@ -1359,20 +1359,28 @@ static int endpoint_assign_eid(ctx *ctx, sd_bus_error *berr, const dest_phys *de
 		return -EPROTO;
 	}
 
-	/* Find an unused EID */
-	for (e = eid_alloc_min; e <= eid_alloc_max; e++) {
-		if (n->peeridx[e] == -1) {
-			rc = add_peer(ctx, dest, e, net, &peer);
-			if (rc < 0)
-				return rc;
-			break;
+	if (static_eid) {
+		rc = add_peer(ctx, dest, static_eid, net, &peer);
+		if (rc < 0)
+			return rc;
+
+		new_eid = static_eid;
+	} else {
+		/* Find an unused EID */
+		for (e = eid_alloc_min; e <= eid_alloc_max; e++) {
+			if (n->peeridx[e] == -1) {
+				rc = add_peer(ctx, dest, e, net, &peer);
+				if (rc < 0)
+					return rc;
+				break;
+			}
 		}
-	}
-	if (e > eid_alloc_max) {
-		warnx("Ran out of EIDs for net %d, allocating %s", net, dest_phys_tostr(dest));
-		sd_bus_error_setf(berr, SD_BUS_ERROR_FAILED,
-			"Ran out of EIDs");
-		return -EADDRNOTAVAIL;
+		if (e > eid_alloc_max) {
+			warnx("Ran out of EIDs for net %d, allocating %s", net, dest_phys_tostr(dest));
+			sd_bus_error_setf(berr, SD_BUS_ERROR_FAILED,
+				"Ran out of EIDs");
+			return -EADDRNOTAVAIL;
+		}
 	}
 
 	rc = endpoint_send_set_endpoint_id(peer, &new_eid);
@@ -1794,7 +1802,7 @@ static int method_setup_endpoint(sd_bus_message *call, void *data, sd_bus_error 
 	}
 
 	/* Set Endpoint ID */
-	rc = endpoint_assign_eid(ctx, berr, dest, &peer);
+	rc = endpoint_assign_eid(ctx, berr, dest, &peer, 0);
 	if (rc < 0)
 		goto err;
 
@@ -1851,13 +1859,91 @@ static int method_assign_endpoint(sd_bus_message *call, void *data, sd_bus_error
 			peer->eid, peer->net, peer_path, 0);
 	}
 
-	rc = endpoint_assign_eid(ctx, berr, dest, &peer);
+	rc = endpoint_assign_eid(ctx, berr, dest, &peer, 0);
 	if (rc < 0)
 		goto err;
 
 	rc = path_from_peer(peer, &peer_path);
 	if (rc < 0)
 		goto err;
+	dfree(peer_path);
+
+	return sd_bus_reply_method_return(call, "yisb",
+		peer->eid, peer->net, peer_path, 1);
+err:
+	set_berr(ctx, rc, berr);
+	return rc;
+}
+
+static int method_assign_endpoint_static(sd_bus_message *call, void *data,
+					 sd_bus_error *berr)
+{
+	dest_phys desti, *dest = &desti;
+	const char *ifname = NULL;
+	char *peer_path = NULL;
+	peer *peer = NULL;
+	ctx *ctx = data;
+	uint8_t eid;
+	int rc;
+
+	rc = sd_bus_message_read(call, "s", &ifname);
+	if (rc < 0)
+		goto err;
+
+	rc = message_read_hwaddr(call, dest);
+	if (rc < 0)
+		goto err;
+
+	rc = sd_bus_message_read(call, "y", &eid);
+	if (rc < 0)
+		goto err;
+
+	dest->ifindex = mctp_nl_ifindex_byname(ctx->nl, ifname);
+	if (dest->ifindex <= 0)
+		return sd_bus_error_setf(berr, SD_BUS_ERROR_INVALID_ARGS,
+			"Unknown MCTP ifname '%s'", ifname);
+
+	rc = validate_dest_phys(ctx, dest);
+	if (rc < 0)
+		return sd_bus_error_setf(berr, SD_BUS_ERROR_INVALID_ARGS,
+			"Bad physaddr");
+
+	peer = find_peer_by_phys(ctx, dest);
+	if (peer) {
+		if (peer->eid != eid) {
+			return sd_bus_error_setf(berr, SD_BUS_ERROR_INVALID_ARGS,
+				"Already assigned a different EID");
+		}
+
+		// Return existing record.
+		rc = path_from_peer(peer, &peer_path);
+		if (rc < 0)
+			goto err;
+		dfree(peer_path);
+
+		return sd_bus_reply_method_return(call, "yisb",
+			peer->eid, peer->net, peer_path, 0);
+	} else {
+		int netid;
+
+		// is the requested EID already in use? if so, reject
+		netid = mctp_nl_net_byindex(ctx->nl, dest->ifindex);
+		peer = find_peer_by_addr(ctx, eid, netid);
+		if (peer) {
+			return sd_bus_error_setf(berr, SD_BUS_ERROR_INVALID_ARGS,
+				"Address in use");
+		}
+	}
+
+	rc = endpoint_assign_eid(ctx, berr, dest, &peer, eid);
+	if (rc < 0) {
+		goto err;
+	}
+
+	rc = path_from_peer(peer, &peer_path);
+	if (rc < 0) {
+		goto err;
+	}
 	dfree(peer_path);
 
 	return sd_bus_reply_method_return(call, "yisb",
@@ -2325,7 +2411,7 @@ peer_endpoint_recover(sd_event_source *s, uint64_t usec, void *userdata)
 			 * after which we immediately return as there's no old peer state left to
 			 * maintain.
 			 */
-			return endpoint_assign_eid(ctx, NULL, &phys, &peer);
+			return endpoint_assign_eid(ctx, NULL, &phys, &peer, 0);
 		}
 
 		/* Confirmation of the same device, apply its already allocated EID */
@@ -2540,6 +2626,19 @@ static const sd_bus_vtable bus_mctpd_vtable[] = {
 		SD_BUS_PARAM(path)
 		SD_BUS_PARAM(new),
 		method_assign_endpoint,
+		0),
+
+	SD_BUS_METHOD_WITH_NAMES("AssignEndpointStatic",
+		"sayy",
+		SD_BUS_PARAM(ifname)
+		SD_BUS_PARAM(physaddr)
+		SD_BUS_PARAM(eid),
+		"yisb",
+		SD_BUS_PARAM(eid)
+		SD_BUS_PARAM(net)
+		SD_BUS_PARAM(path)
+		SD_BUS_PARAM(new),
+		method_assign_endpoint_static,
 		0),
 
 	SD_BUS_METHOD_WITH_NAMES("LearnEndpoint",

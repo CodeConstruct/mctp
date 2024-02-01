@@ -1,6 +1,7 @@
 import pytest
 import trio
 import uuid
+import asyncdbus
 
 from mctp_test_utils import mctpd_mctp_obj, mctpd_mctp_endpoint_obj
 from conftest import Endpoint
@@ -272,3 +273,98 @@ async def test_recover_endpoint_exchange(dbus, mctpd):
         await degraded.acquire()
 
     assert not expected.cancelled_caught
+
+""" Test that we get the correct EID allocated (and the usual route/neigh setup)
+on an AssignEndpointStatic call """
+async def test_assign_endpoint_static(dbus, mctpd):
+    iface = mctpd.system.interfaces[0]
+    dev = mctpd.network.endpoints[0]
+    mctp = await mctpd_mctp_obj(dbus)
+    static_eid = 12
+
+    (eid, _, _, new) = await mctp.call_assign_endpoint_static(
+        iface.name,
+        dev.lladdr,
+        static_eid
+    )
+
+    assert eid == static_eid
+    assert new
+
+    assert len(mctpd.system.neighbours) == 1
+    neigh = mctpd.system.neighbours[0]
+    assert neigh.lladdr == dev.lladdr
+    assert neigh.eid == static_eid
+    assert len(mctpd.system.routes) == 2
+
+""" Test that we can repeat an AssignEndpointStatic call with the same static
+EID"""
+async def test_assign_endpoint_static_allocated(dbus, mctpd):
+    iface = mctpd.system.interfaces[0]
+    mctp = await mctpd_mctp_obj(dbus)
+    dev = mctpd.network.endpoints[0]
+    static_eid = 12
+
+    (eid, _, _, new) = await mctp.call_assign_endpoint_static(
+        iface.name,
+        dev.lladdr,
+        static_eid,
+    )
+
+    assert eid == static_eid
+    assert new
+
+    # repeat, same EID
+    (eid, _, _, new) = await mctp.call_assign_endpoint_static(
+        iface.name,
+        dev.lladdr,
+        static_eid,
+    )
+
+    assert eid == static_eid
+    assert not new
+
+""" Test that we cannot assign a conflicting static EID """
+async def test_assign_endpoint_static_conflict(dbus, mctpd):
+    iface = mctpd.system.interfaces[0]
+    mctp = await mctpd_mctp_obj(dbus)
+    dev1 = mctpd.network.endpoints[0]
+
+    dev2 = Endpoint(iface, bytes([0x1e]))
+    mctpd.network.add_endpoint(dev2)
+
+    # dynamic EID assigment for dev1
+    (eid, _, _, new) = await mctp.call_assign_endpoint(
+        iface.name,
+        dev1.lladdr,
+    )
+
+    assert new
+
+    # try to assign dev2 with the dev1's existing EID
+    with pytest.raises(asyncdbus.errors.DBusError) as ex:
+        await mctp.call_assign_endpoint_static(iface.name, dev2.lladdr, eid)
+
+    assert str(ex.value) == "Address in use"
+
+""" Test that we cannot re-assign a static EID to an endpoint that already has
+a different EID allocated"""
+async def test_assign_endpoint_static_varies(dbus, mctpd):
+    iface = mctpd.system.interfaces[0]
+    dev = mctpd.network.endpoints[0]
+    mctp = await mctpd_mctp_obj(dbus)
+    static_eid = 12
+
+    (eid, _, _, new) = await mctp.call_assign_endpoint_static(
+        iface.name,
+        dev.lladdr,
+        static_eid
+    )
+
+    assert eid == static_eid
+    assert new
+
+    with pytest.raises(asyncdbus.errors.DBusError) as ex:
+        await mctp.call_assign_endpoint_static(iface.name, dev.lladdr, 13)
+
+    assert str(ex.value) == "Already assigned a different EID"
