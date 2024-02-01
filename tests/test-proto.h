@@ -1,8 +1,9 @@
 
 #include <stdint.h>
 
-#include <linux/mctp.h>
 #include <linux/netlink.h>
+
+#include "mctp.h"
 
 enum {
 	CONTROL_OP_INIT,

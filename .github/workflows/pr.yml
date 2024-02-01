@@ -1,0 +1,27 @@
+name: pull-request-ci
+on: [push, pull_request]
+jobs:
+  run-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system build dependencies
+        run: >
+          sudo apt-get update &&
+          sudo apt-get install libsystemd-dev ninja-build
+
+      - name: Install meson
+        run: pip install --user meson
+
+      - name: Install python dependencies for mctp tests
+        run: pip install --user -r tests/requirements.txt
+
+      - name: Configure mctp build
+        run: meson setup build
+
+      - name: Build mctp
+        run: meson compile -C build
+
+      - name: Test mctp
+        run: meson test -C build
