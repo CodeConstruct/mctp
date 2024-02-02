@@ -28,6 +28,13 @@ For integration with systemd, there are a few example configuration files and
 systemd target definitions under the `conf/` directory. These are not installed
 by default.
 
+By default, `meson` is configured to enable tests, which requires a few extra
+dependencies (mainly `pytest`, python libraries, and `dbus-run-session`). In
+cases where the tests are not required, you can avoid these dependencies by
+configuring the build tree with `-Dtests=false`:
+
+    $ meson setup obj -Dtests=false
+
 `mctp` Usage
 -------------
 
