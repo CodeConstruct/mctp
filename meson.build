@@ -71,16 +71,6 @@ if libsystemd.found()
     )
 endif
 
-test_conf_data = configuration_data()
-test_conf_data.set('testpaths',
-  join_paths(meson.current_source_dir(), 'tests')
-)
-configure_file(
-    input: 'tests/pytest.ini.in',
-    output: 'pytest.ini',
-    configuration: test_conf_data,
-)
-
 tests = get_option('tests')
 if tests
     # The test suite contains integration-style tests that we wish to isolate.
@@ -118,6 +108,17 @@ if tests
     script = 'export DBUS_STARTER_BUS_TYPE=user ; @0@ --tap'.format(pytest.full_path())
     sh = find_program('sh')
     dbus_run_session = find_program('dbus-run-session')
+
+    test_conf_data = configuration_data()
+    test_conf_data.set('testpaths',
+      join_paths(meson.current_source_dir(), 'tests')
+    )
+    configure_file(
+        input: 'tests/pytest.ini.in',
+        output: 'pytest.ini',
+        configuration: test_conf_data,
+    )
+
     test('test-mctpd', dbus_run_session,
         depends: mctpd_test,
         args: [ sh.full_path(), '-c', script ],
