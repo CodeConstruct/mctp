@@ -82,7 +82,7 @@ configure_file(
 )
 
 tests = get_option('tests')
-if tests.allowed()
+if tests
     # The test suite contains integration-style tests that we wish to isolate.
     # The tests drive mctpd's D-Bus interfaces and navigate relevant code paths
     # by mocking kernel and MCTP device behaviour. The mock behaviours are
@@ -114,10 +114,10 @@ if tests.allowed()
     # Invoke pytest via a shell script under `dbus-run-session` so we can
     # override the sanitation of `DBUS_STARTER_BUS_TYPE`, ensuring `test-mctpd`
     # connects to the isolated session bus prepared by `dbus-run-session`.
-    pytest = find_program('pytest', required: tests)
+    pytest = find_program('pytest')
     script = 'export DBUS_STARTER_BUS_TYPE=user ; @0@ --tap'.format(pytest.full_path())
-    sh = find_program('sh', required: tests)
-    dbus_run_session = find_program('dbus-run-session', required: tests)
+    sh = find_program('sh')
+    dbus_run_session = find_program('dbus-run-session')
     test('test-mctpd', dbus_run_session,
         depends: mctpd_test,
         args: [ sh.full_path(), '-c', script ],
