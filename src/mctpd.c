@@ -144,6 +144,8 @@ struct ctx {
 
 	// Whether we are running as the bus owner
 	bool bus_owner;
+	// Flag for endpoint discovery process;
+	bool discovered;
 
 	// An allocated array of peers, changes address (reallocated) during runtime
 	peer *peers;
@@ -167,6 +169,8 @@ static int emit_endpoint_added(const peer *peer);
 static int emit_endpoint_removed(const peer *peer);
 static int emit_net_added(ctx *ctx, int net);
 static int emit_net_removed(ctx *ctx, int net);
+static int add_peer(ctx *ctx, const dest_phys *dest, mctp_eid_t eid, int net,
+		    peer **ret_peer);
 static int query_peer_properties(peer *peer);
 static int setup_added_peer(peer *peer);
 static void add_peer_route(peer *peer);
@@ -503,6 +507,56 @@ static int reply_message(ctx *ctx, int sd, const void *resp, size_t resp_len,
 	return 0;
 }
 
+/* Replies to a physical address */
+static int reply_message_phys(ctx *ctx, int sd, const void *resp,
+			      size_t resp_len,
+			      const struct sockaddr_mctp_ext *addr)
+{
+	ssize_t len;
+	struct sockaddr_mctp_ext reply_addr = *addr;
+
+	reply_addr.smctp_base.smctp_tag &= ~MCTP_TAG_OWNER;
+
+	len = sendto(sd, resp, resp_len, 0, (struct sockaddr *)&reply_addr,
+		     sizeof(reply_addr));
+
+	if (len < 0) {
+		return -errno;
+	}
+
+	if ((size_t)len != resp_len) {
+		warnx("BUG: short sendto %zd, expected %zu", len, resp_len);
+		return -EPROTO;
+	}
+
+	return 0;
+}
+
+static int discover_peer_from_ext_addr(ctx *ctx, struct sockaddr_mctp_ext *addr)
+{
+	struct peer *peer;
+	struct dest_phys phys;
+	mctp_eid_t eid;
+	int net;
+	int rc;
+
+	phys.ifindex = addr->smctp_ifindex;
+	memcpy(phys.hwaddr, addr->smctp_haddr, addr->smctp_halen);
+	phys.hwaddr_len = addr->smctp_halen;
+	eid = addr->smctp_base.smctp_addr.s_addr;
+	net = addr->smctp_base.smctp_network;
+
+	rc = add_peer(ctx, &phys, eid, net, &peer);
+	if (rc < 0)
+		return rc;
+
+	rc = setup_added_peer(peer);
+	if (rc < 0)
+		return rc;
+
+	return 0;
+}
+
 // Handles new Incoming Set Endpoint ID request
 static int handle_control_set_endpoint_id(ctx *ctx,
 	int sd, struct sockaddr_mctp_ext *addr,
@@ -511,6 +565,8 @@ static int handle_control_set_endpoint_id(ctx *ctx,
 	struct mctp_ctrl_cmd_set_eid *req = NULL;
 	struct mctp_ctrl_resp_set_eid respi = {0}, *resp = &respi;
 	size_t resp_len;
+	mctp_eid_t eid_set;
+	int rc;
 
 	if (buf_size < sizeof(*req)) {
 		warnx("short Set Endpoint ID message");
@@ -521,12 +577,47 @@ static int handle_control_set_endpoint_id(ctx *ctx,
 	resp->ctrl_hdr.command_code = req->ctrl_hdr.command_code;
 	resp->ctrl_hdr.rq_dgram_inst = RQDI_RESP;
 	resp->completion_code = 0;
-	resp->status = 0x01 << 4; // Already assigned, TODO
-	resp->eid_set = local_addr(ctx, addr->smctp_ifindex);
-	resp->eid_pool_size = 0;
 	resp_len = sizeof(struct mctp_ctrl_resp_set_eid);
 
-	// TODO: learn busowner route and neigh
+	eid_set = local_addr(ctx, addr->smctp_ifindex);
+	if (!eid_set) {
+		const char *linkstr =
+			mctp_nl_if_byindex(ctx->nl, addr->smctp_ifindex);
+
+		rc = mctp_nl_addr_add(ctx->nl, req->eid, linkstr);
+		if (rc < 0) {
+			warnx("ERR: cannot add local eid %d to ifindex %d",
+			      req->eid, addr->smctp_ifindex);
+			return rc;
+		}
+
+		rc = discover_peer_from_ext_addr(ctx, addr);
+		if (rc < 0) {
+			warnx("ERR: cannot discover bus owner");
+			mctp_nl_addr_del(ctx->nl, req->eid, linkstr);
+			return rc;
+		}
+
+		resp->status = 0x00; // Assignment accepted
+		resp->eid_set = req->eid;
+		resp->eid_pool_size = 0;
+		if (ctx->verbose)
+			fprintf(stderr, "Accepted set eid %d\n", req->eid);
+
+	} else {
+		resp->status = 0x01 << 4; // Already assigned
+		resp->eid_set = eid_set;
+		resp->eid_pool_size = 0;
+
+		if (ctx->verbose && req->eid != eid_set)
+			fprintf(stderr,
+				"Rejected set eid %d, already assigned with eid %d\n",
+				req->eid, eid_set);
+	}
+
+	if (ctx->verbose && !ctx->discovered)
+		fprintf(stderr, "Setting discovered flag to true\n");
+	ctx->discovered = true;
 
 	return reply_message(ctx, sd, resp, resp_len, addr);
 }
@@ -684,6 +775,75 @@ static int handle_control_resolve_endpoint_id(ctx *ctx,
 	return reply_message(ctx, sd, resp, resp_len, addr);
 }
 
+static int handle_control_prepare_endpoint_discovery(ctx *ctx,
+	int sd, const struct sockaddr_mctp_ext *addr,
+	const uint8_t *buf, const size_t buf_size)
+{
+	struct mctp_ctrl_msg_hdr *req = (void*)buf;
+	struct mctp_ctrl_resp_prepare_discovery respi = {0}, *resp = &respi;
+	int rc;
+	mctp_eid_t *addrs;
+	size_t addrs_num;
+
+	if (buf_size < sizeof(*req)) {
+		warnx("short Prepare for Endpoint Discovery message");
+		return -ENOMSG;
+	}
+
+	resp->ctrl_hdr.command_code = req->command_code;
+	resp->ctrl_hdr.rq_dgram_inst = RQDI_RESP;
+
+	if (ctx->verbose && ctx->discovered)
+		fprintf(stderr, "Clearing discovered flag\n");
+	ctx->discovered = false;
+
+
+	// clear local EIDs
+	addrs = mctp_nl_addrs_byindex(ctx->nl, addr->smctp_ifindex, &addrs_num);
+	if (!addrs) {
+		warnx("BUG: cannot get local EIDs at ifindex %d",
+		      addr->smctp_ifindex);
+		return -ENOENT;
+	}
+	for (size_t i = 0; i < addrs_num; i++) {
+		rc = mctp_nl_addr_del(ctx->nl, addrs[i],
+				      mctp_nl_if_byindex(ctx->nl,
+							 addr->smctp_ifindex));
+		if (rc < 0) {
+			errx(rc, "ERR: cannot remove local eid %d ifindex %d",
+			     addrs[i], addr->smctp_ifindex);
+		}
+	}
+	free(addrs);
+
+	// we need to send to physical location, no entry in routing table yet
+	return reply_message_phys(ctx, sd, resp, sizeof(*resp), addr);
+}
+
+static int
+handle_control_endpoint_discovery(ctx *ctx, int sd,
+				  const struct sockaddr_mctp_ext *addr,
+				  const uint8_t *buf, const size_t buf_size)
+{
+	struct mctp_ctrl_msg_hdr *req = (void *)buf;
+	struct mctp_ctrl_resp_endpoint_discovery respi = { 0 }, *resp = &respi;
+
+	if (buf_size < sizeof(*req)) {
+		warnx("short Endpoint Discovery message");
+		return -ENOMSG;
+	}
+
+	if (ctx->discovered) {
+		return 0;
+	}
+
+	resp->ctrl_hdr.command_code = req->command_code;
+	resp->ctrl_hdr.rq_dgram_inst = RQDI_RESP;
+
+	// we need to send to physical location, no entry in routing table yet
+	return reply_message_phys(ctx, sd, resp, sizeof(*resp), addr);
+}
+
 static int handle_control_unsupported(ctx *ctx,
 	int sd, const struct sockaddr_mctp_ext *addr,
 	const uint8_t *buf, const size_t buf_size)
@@ -766,6 +926,14 @@ static int cb_listen_control_msg(sd_event_source *s, int sd, uint32_t revents,
 		case MCTP_CTRL_CMD_RESOLVE_ENDPOINT_ID:
 			rc = handle_control_resolve_endpoint_id(ctx,
 				sd, &addr, buf, buf_size);
+			break;
+		case MCTP_CTRL_CMD_PREPARE_ENDPOINT_DISCOVERY:
+			rc = handle_control_prepare_endpoint_discovery(ctx,
+				sd, &addr, buf, buf_size);
+			break;
+		case MCTP_CTRL_CMD_ENDPOINT_DISCOVERY:
+			rc = handle_control_endpoint_discovery(ctx, sd, &addr,
+							       buf, buf_size);
 			break;
 		default:
 			if (ctx->verbose) {
