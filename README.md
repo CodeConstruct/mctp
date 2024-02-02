@@ -76,6 +76,7 @@ provides a few functions for configuring remote endpoints:
     NAME                                TYPE      SIGNATURE  RESULT/VALUE  FLAGS
     au.com.CodeConstruct.MCTP           interface -          -             -
     .AssignEndpoint                     method    say        yisb          -
+    .AssignEndpointStatic               method    sayy       yisb          -
     .LearnEndpoint                      method    say        yisb          -
     .SetupEndpoint                      method    say        yisb          -
 
