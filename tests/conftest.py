@@ -250,7 +250,9 @@ class Endpoint:
         else:
 
             raddr = MCTPSockAddr.for_ep_resp(self, addr, sock.addr_ext)
-            hdr = [0x00, opcode]
+            # Use IID from request, zero Rq and D bits
+            hdr = [iid, opcode]
+
             if opcode == 1:
                 # Set Endpoint ID
                 (op, eid) = data[2:]

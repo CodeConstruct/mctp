@@ -6,9 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## Unreleased
 
+
 ### Fixed
 
 1. Fixed build on musl; we were relying on an implicit definition for `AF_MCTP`
+
+### Changed
+
+1. We now enforce IID checks on MCTP control protocol responses; this
+   prevents odd behaviour from delayed or invalid responses.
 
 ## [2.0] - 2024-09-19
 

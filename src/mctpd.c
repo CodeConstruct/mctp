@@ -64,6 +64,7 @@ static size_t MAX_PEER_SIZE = 1000000;
 
 static const uint8_t RQDI_REQ = 1<<7;
 static const uint8_t RQDI_RESP = 0x0;
+static const uint8_t RQDI_IID_MASK = 0x1f;
 
 struct dest_phys {
 	int ifindex;
@@ -202,6 +203,9 @@ struct ctx {
 	// Timeout in usecs for a MCTP response
 	uint64_t mctp_timeout;
 
+	// Next IID to use
+	uint8_t iid;
+
 	uint8_t uuid[16];
 
 	// Verbose logging
@@ -329,6 +333,19 @@ static const char* peer_tostr(const peer *peer)
 	snprintf(str, l, "peer eid %d net %d phys %s state %d",
 		peer->eid, peer->net, dest_phys_tostr(&peer->phys),
 		peer->state);
+	return dfree(str);
+}
+
+static const char* peer_tostr_short(const peer *peer)
+{
+	size_t l = 30;
+	char *str = NULL;
+
+	str = malloc(l);
+	if (!str) {
+		return "Out of memory";
+	}
+	snprintf(str, l, "%d:%d", peer->net, peer->eid);
 	return dfree(str);
 }
 
@@ -1000,6 +1017,121 @@ static int listen_monitor(ctx *ctx)
 	return rc;
 }
 
+static uint8_t mctp_next_iid(ctx *ctx)
+{
+	uint8_t iid = ctx->iid;
+
+	ctx->iid = (iid + 1) & RQDI_IID_MASK;
+	return iid;
+}
+
+static const char *command_str(uint8_t cmd)
+{
+	static char unknown_cmd_str[32];
+
+	switch (cmd) {
+	case MCTP_CTRL_CMD_SET_ENDPOINT_ID:
+		return "Set Endpoint ID";
+	case MCTP_CTRL_CMD_GET_ENDPOINT_ID:
+		return "Get Endpoint ID";
+	case MCTP_CTRL_CMD_GET_ENDPOINT_UUID:
+		return "Get Endpoint UUID";
+	case MCTP_CTRL_CMD_GET_VERSION_SUPPORT:
+		return "Get Version Support";
+	case MCTP_CTRL_CMD_GET_MESSAGE_TYPE_SUPPORT:
+		return "Get Message Type Support";
+	case MCTP_CTRL_CMD_GET_VENDOR_MESSAGE_SUPPORT:
+		return "Get Vendor Message Support";
+	case MCTP_CTRL_CMD_RESOLVE_ENDPOINT_ID:
+		return "Resolve Endpoint ID";
+	case MCTP_CTRL_CMD_ALLOCATE_ENDPOINT_IDS:
+		return "Allocate Endpoint ID ";
+	case MCTP_CTRL_CMD_ROUTING_INFO_UPDATE:
+		return "Routing Info Update";
+	case MCTP_CTRL_CMD_GET_ROUTING_TABLE_ENTRIES:
+		return "Get Routing Table Entries";
+	case MCTP_CTRL_CMD_PREPARE_ENDPOINT_DISCOVERY:
+		return "Prepare Endpoint Discovery";
+	case MCTP_CTRL_CMD_ENDPOINT_DISCOVERY:
+		return "Endpoint Discovery";
+	case MCTP_CTRL_CMD_DISCOVERY_NOTIFY:
+		return "Discovery Notify";
+	case MCTP_CTRL_CMD_GET_NETWORK_ID:
+		return "Get Network ID";
+	case MCTP_CTRL_CMD_QUERY_HOP:
+		return "Query Hop";
+	case MCTP_CTRL_CMD_RESOLVE_UUID:
+		return "Resolve UUID";
+	case MCTP_CTRL_CMD_QUERY_RATE_LIMIT:
+		return "Query Rate Limit";
+	case MCTP_CTRL_CMD_REQUEST_TX_RATE_LIMIT:
+		return "Request TX Rate Limit";
+	case MCTP_CTRL_CMD_UPDATE_RATE_LIMIT:
+		return "Update Rate Limit";
+	case MCTP_CTRL_CMD_QUERY_SUPPORTED_INTERFACES:
+		return "Query Supported Interfaces";
+	}
+
+	sprintf(unknown_cmd_str, "Unknown command [0x%02x]", cmd);
+
+	return unknown_cmd_str;
+}
+
+static const char *peer_cmd_prefix(const char *peer, uint8_t cmd)
+{
+	static char pfx_str[64];
+
+	snprintf(pfx_str, sizeof(pfx_str), "[peer %s, cmd %s]",
+		 peer, command_str(cmd));
+
+	return pfx_str;
+}
+
+/* Common checks for responses: that we have enough data for a response,
+ * the expected IID and opcode, and that the response indicated success.
+ */
+static int mctp_ctrl_validate_response(uint8_t *buf, size_t rsp_size, size_t
+				       exp_size, const char *peer, uint8_t iid,
+				       uint8_t cmd)
+{
+	struct mctp_ctrl_resp *rsp;
+
+	if (exp_size <= sizeof(*rsp)) {
+		warnx("invalid expected response size!");
+		return -EINVAL;
+	}
+
+	if (rsp_size < exp_size) {
+		warnx("%s: Wrong reply length (%zu bytes)",
+		      peer_cmd_prefix(peer, cmd), rsp_size);
+		return -ENOMSG;
+	}
+
+	/* we have enough for the smallest common response message */
+	rsp = (void *)buf;
+
+	if ((rsp->ctrl_hdr.rq_dgram_inst & RQDI_IID_MASK) != iid) {
+		warnx("%s: Wrong IID (0x%02x, expected 0x%02x)",
+		      peer_cmd_prefix(peer, cmd),
+		      rsp->ctrl_hdr.rq_dgram_inst & RQDI_IID_MASK, iid);
+		return -ENOMSG;
+	}
+
+	if (rsp->ctrl_hdr.command_code != cmd) {
+		warnx("%s: Wrong opcode (0x%02x) in response",
+		      peer_cmd_prefix(peer, cmd), rsp->ctrl_hdr.command_code);
+		return -ENOMSG;
+	}
+
+	if (rsp->completion_code) {
+		warnx("%s: Command failed, completion code 0x%02x",
+		      peer_cmd_prefix(peer, cmd), rsp->completion_code);
+		return -ECONNREFUSED;
+	}
+
+	return 0;
+}
+
 /* Use endpoint_query_peer() or endpoint_query_phys() instead.
  *
  * resp buffer is allocated, caller to free.
@@ -1161,12 +1293,13 @@ static int endpoint_send_set_endpoint_id(const peer *peer, mctp_eid_t *new_eid)
 	int rc;
 	uint8_t* buf = NULL;
 	size_t buf_size;
-	uint8_t stat, alloc;
+	uint8_t iid, stat, alloc;
 	const dest_phys *dest = &peer->phys;
 
 	rc = -1;
 
-	req.ctrl_hdr.rq_dgram_inst = RQDI_REQ;
+	iid = mctp_next_iid(peer->ctx);
+	req.ctrl_hdr.rq_dgram_inst = RQDI_REQ | iid;
 	req.ctrl_hdr.command_code = MCTP_CTRL_CMD_SET_ENDPOINT_ID;
 	req.operation = 0; // 00b Set EID. TODO: do we want Force?
 	req.eid = peer->eid;
@@ -1175,21 +1308,13 @@ static int endpoint_send_set_endpoint_id(const peer *peer, mctp_eid_t *new_eid)
 	if (rc < 0)
 		goto out;
 
-	if (buf_size != sizeof(*resp)) {
-		warnx("%s: wrong reply length %zu bytes. dest %s", __func__,
-			buf_size, dest_phys_tostr(dest));
-		rc = -ENOMSG;
+	rc = mctp_ctrl_validate_response(buf, buf_size, sizeof(*resp),
+					 dest_phys_tostr(dest),
+					 iid, MCTP_CTRL_CMD_SET_ENDPOINT_ID);
+	if (rc)
 		goto out;
-	}
-	resp = (void*)buf;
 
-	if (resp->completion_code != 0) {
-		// TODO: make this a debug message?
-		warnx("Failure completion code 0x%02x from %s",
-			resp->completion_code, dest_phys_tostr(dest));
-		rc = -ECONNREFUSED;
-		goto out;
-	}
+	resp = (void*)buf;
 
 	stat = resp->status >> 4 & 0x3;
 	if (stat == 0x01) {
@@ -1546,29 +1671,25 @@ static int query_get_endpoint_id(ctx *ctx, const dest_phys *dest,
 	struct mctp_ctrl_resp_get_eid *resp = NULL;
 	uint8_t *buf = NULL;
 	size_t buf_size;
+	uint8_t iid;
 	int rc;
 
-	req.ctrl_hdr.rq_dgram_inst = RQDI_REQ;
+	iid = mctp_next_iid(ctx);
+
+	req.ctrl_hdr.rq_dgram_inst = RQDI_REQ | iid;
 	req.ctrl_hdr.command_code = MCTP_CTRL_CMD_GET_ENDPOINT_ID;
 	rc = endpoint_query_phys(ctx, dest, MCTP_CTRL_HDR_MSG_TYPE, &req,
 		sizeof(req), &buf, &buf_size, &addr);
 	if (rc < 0)
 		goto out;
 
-	if (buf_size != sizeof(*resp)) {
-		warnx("%s: wrong reply length %zu bytes. dest %s", __func__, buf_size,
-			dest_phys_tostr(dest));
-		rc = -ENOMSG;
+	rc = mctp_ctrl_validate_response(buf, buf_size, sizeof(*resp),
+					 dest_phys_tostr(dest),
+					 iid, MCTP_CTRL_CMD_GET_ENDPOINT_ID);
+	if (rc)
 		goto out;
-	}
-	resp = (void*)buf;
 
-	if (resp->completion_code != 0) {
-		warnx("Failure completion code 0x%02x from %s",
-			resp->completion_code, dest_phys_tostr(dest));
-		rc = -ECONNREFUSED;
-		goto out;
-	}
+	resp = (void *)buf;
 
 	*ret_eid = resp->eid;
 	*ret_ep_type = resp->eid_type;
@@ -1593,7 +1714,7 @@ static int get_endpoint_peer(ctx *ctx, sd_bus_error *berr,
 
 	*ret_peer = NULL;
 	rc = query_get_endpoint_id(ctx, dest, &eid, &ep_type, &medium_spec);
-	if (rc < 0)
+	if (rc)
 		return rc;
 
 	if (ret_cur_eid)
@@ -1649,13 +1770,15 @@ static int query_get_peer_msgtypes(peer *peer) {
 	struct mctp_ctrl_resp_get_msg_type_support *resp = NULL;
 	uint8_t* buf = NULL;
 	size_t buf_size, expect_size;
+	uint8_t iid;
 	int rc;
 
 	peer->num_message_types = 0;
 	free(peer->message_types);
 	peer->message_types = NULL;
+	iid = mctp_next_iid(peer->ctx);
 
-	req.ctrl_hdr.rq_dgram_inst = RQDI_REQ;
+	req.ctrl_hdr.rq_dgram_inst = RQDI_REQ | iid;
 	req.ctrl_hdr.command_code = MCTP_CTRL_CMD_GET_MESSAGE_TYPE_SUPPORT;
 
 	rc = endpoint_query_peer(peer, MCTP_CTRL_HDR_MSG_TYPE,
@@ -1663,12 +1786,12 @@ static int query_get_peer_msgtypes(peer *peer) {
 	if (rc < 0)
 		goto out;
 
-	if (buf_size < sizeof(*resp)) {
-		warnx("%s: short reply %zu bytes. dest %s", __func__, buf_size,
-			peer_tostr(peer));
-		rc = -ENOMSG;
+	rc = mctp_ctrl_validate_response(buf, buf_size, sizeof(*resp),
+					 peer_tostr_short(peer), iid,
+					 MCTP_CTRL_CMD_GET_MESSAGE_TYPE_SUPPORT);
+	if (rc)
 		goto out;
-	}
+
 	resp = (void*)buf;
 	expect_size = sizeof(*resp) + resp->msg_type_count;
 	if (buf_size != expect_size) {
@@ -1679,12 +1802,6 @@ static int query_get_peer_msgtypes(peer *peer) {
 		goto out;
 	}
 
-	if (resp->completion_code != 0x00) {
-		rc = -ECONNREFUSED;
-		goto out;
-	}
-
-	peer->num_message_types = resp->msg_type_count;
 	peer->message_types = malloc(resp->msg_type_count);
 	if (!peer->message_types) {
 		rc = -ENOMEM;
@@ -1716,9 +1833,11 @@ query_get_peer_uuid_by_phys(ctx *ctx, const dest_phys *dest, uint8_t uuid[16])
 	struct mctp_ctrl_resp_get_uuid *resp = NULL;
 	uint8_t* buf = NULL;
 	size_t buf_size;
+	uint8_t iid;
 	int rc;
 
-	req.ctrl_hdr.rq_dgram_inst = RQDI_REQ;
+	iid = mctp_next_iid(ctx);
+	req.ctrl_hdr.rq_dgram_inst = RQDI_REQ | iid;
 	req.ctrl_hdr.command_code = MCTP_CTRL_CMD_GET_ENDPOINT_UUID;
 
 	rc = endpoint_query_phys(ctx, dest, MCTP_CTRL_HDR_MSG_TYPE,
@@ -1726,21 +1845,13 @@ query_get_peer_uuid_by_phys(ctx *ctx, const dest_phys *dest, uint8_t uuid[16])
 	if (rc < 0)
 		goto out;
 
-	if (buf_size != sizeof(*resp)) {
-		warnx("%s: wrong reply %zu bytes. dest %s", __func__, buf_size,
-			dest_phys_tostr(dest));
-		rc = -ENOMSG;
+	rc = mctp_ctrl_validate_response(buf, buf_size, sizeof(*resp),
+					 dest_phys_tostr(dest),
+					 iid, MCTP_CTRL_CMD_GET_ENDPOINT_UUID);
+	if (rc)
 		goto out;
-	}
+
 	resp = (void*)buf;
-
-	if (resp->completion_code != 0x00) {
-		warnx("Failure completion code 0x%02x from %s",
-			resp->completion_code, dest_phys_tostr(dest));
-		rc = -ECONNREFUSED;
-		goto out;
-	}
-
 	memcpy(uuid, resp->uuid, 16);
 
 out:
@@ -1754,6 +1865,7 @@ static int query_get_peer_uuid(peer *peer) {
 	struct mctp_ctrl_resp_get_uuid *resp = NULL;
 	uint8_t* buf = NULL;
 	size_t buf_size;
+	uint8_t iid;
 	int rc;
 
 	if (peer->state != REMOTE) {
@@ -1761,7 +1873,8 @@ static int query_get_peer_uuid(peer *peer) {
 		return -EPROTO;
 	}
 
-	req.ctrl_hdr.rq_dgram_inst = RQDI_REQ;
+	iid = mctp_next_iid(peer->ctx);
+	req.ctrl_hdr.rq_dgram_inst = RQDI_REQ | iid;
 	req.ctrl_hdr.command_code = MCTP_CTRL_CMD_GET_ENDPOINT_UUID;
 
 	rc = endpoint_query_peer(peer, MCTP_CTRL_HDR_MSG_TYPE,
@@ -1769,18 +1882,13 @@ static int query_get_peer_uuid(peer *peer) {
 	if (rc < 0)
 		goto out;
 
-	if (buf_size != sizeof(*resp)) {
-		warnx("%s: wrong reply %zu bytes. dest %s", __func__, buf_size,
-			peer_tostr(peer));
-		rc = -ENOMSG;
+	rc = mctp_ctrl_validate_response(buf, buf_size, sizeof(*resp),
+					 peer_tostr_short(peer),
+					 iid, MCTP_CTRL_CMD_GET_ENDPOINT_UUID);
+	if (rc)
 		goto out;
-	}
-	resp = (void*)buf;
 
-	if (resp->completion_code != 0x00) {
-		rc = -ECONNREFUSED;
-		goto out;
-	}
+	resp = (void*)buf;
 
 	rc = peer_set_uuid(peer, resp->uuid);
 	if (rc < 0)

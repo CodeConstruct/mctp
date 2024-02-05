@@ -4,7 +4,7 @@ import uuid
 import asyncdbus
 
 from mctp_test_utils import mctpd_mctp_iface_obj, mctpd_mctp_endpoint_obj
-from conftest import Endpoint
+from conftest import Endpoint, MCTPSockAddr
 
 # DBus constant symbol suffixes:
 #
@@ -386,3 +386,47 @@ async def test_get_endpoint_id(dbus, mctpd):
     assert rsp[2] == 0x00
     # EID matches the system
     assert rsp[3] == mctpd.system.addresses[0].eid
+
+""" During a LearnEndpoint's Get Endpoint ID exchange, return a response
+from a different command; in this case Get Message Type Support, which happens
+to be the same length as a the expected Get Endpoint ID response."""
+async def test_learn_endpoint_invalid_response_command(dbus, mctpd):
+    class BusyEndpoint(Endpoint):
+        async def handle_mctp_control(self, sock, src_addr, msg):
+            flags, opcode = msg[0:2]
+            if opcode != 2:
+                return await super().handle_mctp_control(sock, src_addr, msg)
+            dst_addr = MCTPSockAddr.for_ep_resp(self, src_addr, sock.addr_ext)
+            msg = bytes([flags & 0x1f, 0x05, 0x00, 0x02, 0x00, 0x01])
+            await sock.send(dst_addr, msg)
+
+    iface = mctpd.system.interfaces[0]
+    ep = BusyEndpoint(iface, bytes([0x1e]), eid = 15)
+    mctpd.network.add_endpoint(ep)
+    mctp = await mctpd_mctp_iface_obj(dbus, iface)
+
+    with pytest.raises(asyncdbus.errors.DBusError) as ex:
+        rc = await mctp.call_learn_endpoint(ep.lladdr)
+
+    assert str(ex.value) == "Request failed"
+
+""" Ensure a response with an invalid IID is discarded """
+async def test_learn_endpoint_invalid_response_iid(dbus, mctpd):
+    class InvalidIIDEndpoint(Endpoint):
+        async def handle_mctp_control(self, sock, src_addr, msg):
+            # bump IID
+            flags = msg[0]
+            iid_mask = 0x1d
+            flags = (flags & ~iid_mask) | ((flags + 1) & iid_mask)
+            msg = bytes([flags]) + msg[1:]
+            return await super().handle_mctp_control(sock, src_addr, msg)
+
+    iface = mctpd.system.interfaces[0]
+    ep = InvalidIIDEndpoint(iface, bytes([0x1e]), eid = 15)
+    mctpd.network.add_endpoint(ep)
+    mctp = await mctpd_mctp_iface_obj(dbus, iface)
+
+    with pytest.raises(asyncdbus.errors.DBusError) as ex:
+        await mctp.call_learn_endpoint(ep.lladdr)
+
+    assert str(ex.value) == "Request failed"
