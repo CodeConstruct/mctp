@@ -40,11 +40,11 @@
 #define max(a, b) ((a) > (b) ? (a) : (b))
 #define min(a, b) ((a) < (b) ? (a) : (b))
 
-#define MCTP_DBUS_PATH "/xyz/openbmc_project/mctp"
-#define CC_MCTP_DBUS_IFACE "au.com.CodeConstruct.MCTP"
-#define CC_MCTP_DBUS_IFACE_ENDPOINT "au.com.CodeConstruct.MCTP.Endpoint"
-#define CC_MCTP_DBUS_IFACE_TESTING "au.com.CodeConstruct.MCTPTesting"
-#define MCTP_DBUS_IFACE "xyz.openbmc_project.MCTP"
+#define MCTP_DBUS_PATH "/au/com/codeconstruct/mctp1"
+#define CC_MCTP_DBUS_IFACE_BUSOWNER "au.com.codeconstruct.MCTP.BusOwner1"
+#define CC_MCTP_DBUS_IFACE_ENDPOINT "au.com.codeconstruct.MCTP.Endpoint1"
+#define CC_MCTP_DBUS_IFACE_TESTING "au.com.codeconstruct.MCTPTesting"
+#define MCTP_DBUS_NAME "au.com.codeconstruct.MCTP1"
 #define MCTP_DBUS_IFACE_ENDPOINT "xyz.openbmc_project.MCTP.Endpoint"
 #define OPENBMC_IFACE_COMMON_UUID "xyz.openbmc_project.Common.UUID"
 
@@ -397,8 +397,9 @@ static int peer_from_path(ctx *ctx, const char* path, peer **ret_peer)
 	int rc;
 
 	*ret_peer = NULL;
-	rc = sd_bus_path_decode_many(path, MCTP_DBUS_PATH "/%/%",
-		&netstr, &eidstr);
+	rc = sd_bus_path_decode_many(path,
+				     MCTP_DBUS_PATH "/networks/%/endpoints/%",
+				     &netstr, &eidstr);
 	if (rc == 0)
 		return -ENOENT;
 	if (rc < 0)
@@ -434,7 +435,7 @@ static int path_from_peer(const peer *peer, char ** ret_path) {
 		return -ENOMEM;
 	/* can't use sd_bus_path_encode_many() since it escapes
 	   leading digits */
-	snprintf(buf, l, "%s/%d/%d", MCTP_DBUS_PATH,
+	snprintf(buf, l, "%s/networks/%d/endpoints/%d", MCTP_DBUS_PATH,
 		peer->net, peer->eid);
 	*ret_path = buf;
 	return 0;
@@ -2919,7 +2920,7 @@ static char* net_path(int net)
 	}
 	/* can't use sd_bus_path_encode_many() since it escapes
 	   leading digits */
-	snprintf(buf, l, "%s/%d", MCTP_DBUS_PATH, net);
+	snprintf(buf, l, "%s/networks/%d", MCTP_DBUS_PATH, net);
 	return buf;
 }
 
@@ -3112,7 +3113,7 @@ static int setup_bus(ctx *ctx)
 	   mix non-fallback and fallback vtables on MCTP_DBUS_PATH */
 	rc = sd_bus_add_fallback_vtable(ctx->bus, NULL,
 					MCTP_DBUS_PATH,
-					CC_MCTP_DBUS_IFACE,
+					CC_MCTP_DBUS_IFACE_BUSOWNER,
 					bus_mctpd_vtable,
 					bus_mctpd_find,
 					ctx);
@@ -3174,14 +3175,17 @@ out:
 }
 
 
-int request_dbus(ctx *ctx) {
+int request_dbus(ctx *ctx)
+{
 	int rc;
 
-	rc = sd_bus_request_name(ctx->bus, MCTP_DBUS_IFACE, 0);
+	rc = sd_bus_request_name(ctx->bus, MCTP_DBUS_NAME, 0);
 	if (rc < 0) {
-		warnx("Failed requesting name %s", MCTP_DBUS_IFACE);
+		warnx("Failed requesting dbus name %s", MCTP_DBUS_NAME);
+		return rc;
 	}
-	return rc;
+
+	return 0;
 }
 
 

@@ -901,7 +901,7 @@ class MctpdWrapper:
 
         s = trio.Semaphore(initial_value = 0)
         def name_owner_changed(name, new_owner, old_owner):
-            if name == 'xyz.openbmc_project.MCTP':
+            if name == 'au.com.codeconstruct.MCTP1':
                 s.release()
 
         await interface.on_name_owner_changed(name_owner_changed)

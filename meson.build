@@ -27,7 +27,7 @@ conf.set10('MCTPD_RECOVER_NIL_UUID',
 )
 conf.set10('MCTPD_WRITABLE_CONNECTIVITY',
     get_option('unsafe-writable-connectivity'),
-    description: 'Allow writes to the Connectivity member of the au.com.CodeConstruct.MCTP.Endpoint interface on endpoint objects')
+    description: 'Allow writes to the Connectivity member of the au.com.codeconstruct.MCTP.Endpoint1 interface on endpoint objects')
 
 conf.set_quoted('MCTPD_CONF_FILE_DEFAULT',
     join_paths(get_option('prefix'), get_option('sysconfdir'), 'mctpd.conf'),

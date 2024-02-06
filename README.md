@@ -73,12 +73,12 @@ coordinate the local setup and the supervision of the mctpd process.
 An example configuration is in [`conf/mctpd.conf`](conf/mctpd.conf).
 
 The `mctpd` daemon will expose a dbus interface, claiming the bus name
-`xyz.openbmc_project.MCTP` and object path `/xyz/openbmc_project/mctp`. This
+`au.com.codeconstruct.MCTP1` and object path `/au/com/codeconstruct/mctp1`. This
 provides a few functions for configuring remote endpoints:
 
-    # busctl introspect xyz.openbmc_project.MCTP /xyz/openbmc_project/mctp
+    # busctl introspect au.com.codeconstruct.MCTP1 /au/com/codeconstruct/mctp1/
     NAME                                TYPE      SIGNATURE  RESULT/VALUE  FLAGS
-    au.com.CodeConstruct.MCTP           interface -          -             -
+    au.com.codeconstruct.MCTP           interface -          -             -
     .AssignEndpoint                     method    say        yisb          -
     .AssignEndpointStatic               method    sayy       yisb          -
     .LearnEndpoint                      method    say        yisb          -
@@ -88,7 +88,7 @@ Results of mctpd enumeration are also represented as dbus objects, using the
 OpenBMC-specified MCTP endpoint format. Each endpoint appears on the bus at the
 object path:
 
-    /xyz/openbmc_project/mctp/<network-id>/<endpoint-id>
+    /au/com/codeconstruct/mctp/networks/<network-id>/endpoints/<endpoint-id>
 
 where `mctpd` exposes three dbus interfaces for each:
 
@@ -103,7 +103,7 @@ where `mctpd` exposes three dbus interfaces for each:
 
    This interface is defined by the Common.UUID phosphor-dbus specification.
 
- - `au.com.CodeConstruct.MCTP.EndPoint`: Additional control methods for the
+ - `au.com.codeconstruct.MCTP1.Endpoint1`: Additional control methods for the
    endpoint - for example, `Remove`
 
 Testing
