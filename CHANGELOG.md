@@ -27,6 +27,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 3. The `tests` option has changed type from `feature` to `boolean`. Tests are
    enabled by default.
 
+4. Use a dbus owner name of au.com.CodeConstruct.MCTP. We still register the
+   previous name (xyz.openbmc_project.MCTP) for compatibility with existing
+   consumers, but this will be removed in a future release.
+
 ### Fixed
 
 1. mctpd: EID assignments now work in the case where a new endpoint has a

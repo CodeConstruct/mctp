@@ -72,7 +72,7 @@ The `mctpd` daemon will expose a dbus interface, claiming the bus name
 `xyz.openbmc_project.MCTP` and object path `/xyz/openbmc_project/mctp`. This
 provides a few functions for configuring remote endpoints:
 
-    # busctl introspect xyz.openbmc_project.MCTP /xyz/openbmc_project/mctp
+    # busctl introspect au.com.CodeConstruct.MCTP /xyz/openbmc_project/mctp
     NAME                                TYPE      SIGNATURE  RESULT/VALUE  FLAGS
     au.com.CodeConstruct.MCTP           interface -          -             -
     .AssignEndpoint                     method    say        yisb          -
