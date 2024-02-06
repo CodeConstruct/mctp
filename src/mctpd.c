@@ -42,7 +42,8 @@
 #define CC_MCTP_DBUS_IFACE "au.com.CodeConstruct.MCTP"
 #define CC_MCTP_DBUS_IFACE_ENDPOINT "au.com.CodeConstruct.MCTP.Endpoint"
 #define CC_MCTP_DBUS_IFACE_TESTING "au.com.CodeConstruct.MCTPTesting"
-#define MCTP_DBUS_IFACE "xyz.openbmc_project.MCTP"
+#define MCTP_DBUS_NAME_OBMC "xyz.openbmc_project.MCTP" /* deprecated */
+#define MCTP_DBUS_NAME "au.com.CodeConstruct.MCTP"
 #define MCTP_DBUS_IFACE_ENDPOINT "xyz.openbmc_project.MCTP.Endpoint"
 #define OPENBMC_IFACE_COMMON_UUID "xyz.openbmc_project.Common.UUID"
 
@@ -3134,14 +3135,24 @@ out:
 }
 
 
-int request_dbus(ctx *ctx) {
+int request_dbus(ctx *ctx)
+{
 	int rc;
 
-	rc = sd_bus_request_name(ctx->bus, MCTP_DBUS_IFACE, 0);
+	rc = sd_bus_request_name(ctx->bus, MCTP_DBUS_NAME, 0);
 	if (rc < 0) {
-		warnx("Failed requesting name %s", MCTP_DBUS_IFACE);
+		warnx("Failed requesting dbus name %s", MCTP_DBUS_NAME);
+		return rc;
 	}
-	return rc;
+
+	rc = sd_bus_request_name(ctx->bus, MCTP_DBUS_NAME_OBMC, 0);
+	if (rc < 0) {
+		/* non-fatal, but we do warn */
+		warnx("Failed requesting legacy dbus name %s",
+		      MCTP_DBUS_NAME_OBMC);
+	}
+
+	return 0;
 }
 
 

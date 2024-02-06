@@ -35,7 +35,7 @@ new  (bool) - true if a new EID was assigned
 An example:
 
 ```shell
-busctl call xyz.openbmc_project.MCTP /xyz/openbmc_project/mctp \
+busctl call au.com.CodeConstruct.MCTP /xyz/openbmc_project/mctp \
         au.com.CodeConstruct.MCTP SetupEndpoint say mctpi2c6 1 0x1d
 ```
 `1` is the length of the hwaddr array.
@@ -81,7 +81,7 @@ MTU, configurable with `mctp link set <ifname> mtu <value>`.
 An example, setting MTU of 80:
 
 ```shell
-busctl call xyz.openbmc_project.MCTP  /xyz/openbmc_project/mctp/1/11 \
+busctl call au.com.CodeConstruct.MCTP  /xyz/openbmc_project/mctp/1/11 \
         au.com.CodeConstruct.MCTP.Endpoint  SetMTU u 80
 ```
 
