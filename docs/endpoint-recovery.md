@@ -144,20 +144,21 @@ issues. This may include applications in addition to the process which requested
 `mctpd` currently structures its D-Bus objects as follows:
 
 ```
-root@cc-nvme-mi:~# busctl tree xyz.openbmc_project.MCTP
-`-/xyz
-  `-/xyz/openbmc_project
-    `-/xyz/openbmc_project/mctp
-      `-/xyz/openbmc_project/mctp/1
-        |-/xyz/openbmc_project/mctp/1/12
-        |-/xyz/openbmc_project/mctp/1/8
-        `-/xyz/openbmc_project/mctp/1/9
+root@cc-nvme-mi:~# busctl tree au.com.codeconstruct.MCTP1
+└─/au
+  └─/au/com
+    └─/au/com/codeconstruct
+      └─/au/com/codeconstruct/mctp1
+        ├─/au/com/codeconstruct/mctp1/networks/1
+        │ └─/au/com/codeconstruct/mctp1/networks/1/endpoints/12
+          ├─/au/com/codeconstruct/mctp1/networks/1/endpoints/8
+          └─/au/com/codeconstruct/mctp1/networks/1/endpoints/9
 ```
 
 ```
-root@cc-nvme-mi:~# busctl introspect xyz.openbmc_project.MCTP /xyz/openbmc_project/mctp
+root@cc-nvme-mi:~# busctl introspect au.com.codeconstruct.MCTP1 /au/com/codeconstruct/mctp1
 NAME                                TYPE      SIGNATURE  RESULT/VALUE  FLAGS
-au.com.CodeConstruct.MCTP           interface -          -             -
+au.com.codeconstruct.Endpoint1      interface -          -             -
 .AssignEndpoint                     method    say        yisb          -
 .LearnEndpoint                      method    say        yisb          -
 .SetupEndpoint                      method    say        yisb          -
@@ -178,7 +179,7 @@ org.freedesktop.DBus.Properties     interface -          -             -
 ```
 
 ```
-root@cc-nvme-mi:~# busctl introspect xyz.openbmc_project.MCTP /xyz/openbmc_project/mctp/1
+root@cc-nvme-mi:~# busctl introspect au.com.codeconstruct.MCTP1 /au/com/codecontrust/mctp1/networks/1
 NAME                                TYPE      SIGNATURE RESULT/VALUE FLAGS
 org.freedesktop.DBus.Introspectable interface -         -            -
 .Introspect                         method    -         s            -
@@ -193,9 +194,9 @@ org.freedesktop.DBus.Properties     interface -         -            -
 ```
 
 ```
-root@cc-nvme-mi:~# busctl introspect xyz.openbmc_project.MCTP /xyz/openbmc_project/mctp/1/9
+root@cc-nvme-mi:~# busctl introspect au.com.codeconstruct.MCTP1 /au/com/codecontrust/mctp1/networks/1/endpoints/9
 NAME                                TYPE      SIGNATURE RESULT/VALUE                           FLAGS
-au.com.CodeConstruct.MCTP.Endpoint  interface -         -                                      -
+au.com.codeconstruct.MCTP.Endpoint1 interface -         -                                      -
 .Remove                             method    -         -                                      -
 .SetMTU                             method    u         -                                      -
 org.freedesktop.DBus.Introspectable interface -         -                                      -
@@ -217,16 +218,16 @@ xyz.openbmc_project.MCTP.Endpoint   interface -         -                       
 ```
 
 The problem we have deals with specific endpoints. To satisfy the third scenario
-the object `/xyz/openbmc_project/mctp/1/9` would be removed.
+the object `/au/com/codeconstruct/mctp1/networks/1/endpoints/9` would be removed.
 
 For scenarios 1 and 2 we need to add capabilities on the endpoint object. The
-`au.com.CodeConstruct.MCTP.Endpoint` already exposes endpoint control APIs, and
+`au.com.codeconstruct.MCTP.Endpoint` already exposes endpoint control APIs, and
 given we're not removing capabilities we can change it.
 
 ## Proposed Design
 
 The approach is to add a `.Recover` method and a `.Connectivity` property to the
-`au.com.CodeConstruct.MCTP.Endpoint` interface. `.Recover` takes no arguments,
+`au.com.codeconstruct.MCTP.Endpoint1` interface. `.Recover` takes no arguments,
 produces no result, and returns immediately. `.Connectivity` takes one of two
 values:
 
@@ -346,11 +347,11 @@ The general strategy for tracking endpoint lifecycles is [as follows]
    data-structures
 
    ```
-   type='signal',sender='xyz.openbmc_project.MCTP',path_namespace='/xyz/openbmc_project/mctp'
+   type='signal',sender='xyz.openbmc_project.MCTP',path_namespace='/au/com/codeconstruct/mctp1'
    ```
 
 2. Issue a call to `GetManagedObjects` `org.freedesktop.DBus.ObjectManager` on
-   `/xyz/openbmc_project/mctp` for initial population of local data-structures
+   `/au/com/codeconstruct/mctp1` for initial population of local data-structures
 
 3. Issue
 
@@ -360,7 +361,8 @@ The general strategy for tracking endpoint lifecycles is [as follows]
    registered as an MCTP endpoint.
 
 2. The FRU data is decoded and `SetupEndpoint` on the
-   `au.com.CodeConstruct.MCTP` interface of the `/xyz/openbmc_project/mctp`
+   `au.com.codeconstruct.MCTP.BusOwner1` interface of the
+   `/au/com/codeconstruct/mctp1`
    object hosted by `mctpd` is invoked.
 
 3. The device was not previously configured and has no programmed static EID.
@@ -372,8 +374,8 @@ The general strategy for tracking endpoint lifecycles is [as follows]
    interfaces):
 
    ```
-   "/xyz/openbmc_project/mctp/1/9": {
-     "au.com.CodeConstruct.MCTP.Endpoint": { },
+   "/au.com.codeconstruct/mctp1/networks/1/endpoints/9": {
+     "au.com.codeconstruct.MCTP.Endpoint1": { },
      "xyz.openbmc_project.Common.UUID": {
        "UUID": "..."
      },
@@ -394,16 +396,18 @@ The general strategy for tracking endpoint lifecycles is [as follows]
 7. MCTP endpoint 9 stops responding to NVMe-MI commands from `nvmesensor`.
 
 8. `nvmesensor` calls the `Recover` method on the
-   `au.com.CodeConstruct.MCTP.Endpoint` of the `/xyz/openbmc_project/mctp/1/9`
+   `au.com.codeconstruct.MCTP.Endpoint1` of the
+   `/au/com/codeconstruct/mctp1/networks/1/endpoints/9`
    D-Bus object hosted by `mctpd`. This may occur via e.g. failure to regularly
    poll the drive CTEMP.
 
 9. `mctpd` [emits a `PropertiesChanged` signal][dbus-spec-standard-interfaces-properties]
-   from `/xyz/openbmc_project/mctp/1/9` with the following contents:
+   from `/au/com/codeconstruct/mctp/networks/1/enpoints/9` with the following
+   contents:
 
    ```
    [
-     "au.com.CodeConstruct.MCTP.Endpoint",
+     "au.com.codeconstruct.MCTP.Endpoint1",
      { "Connectivity": "Degraded" },
      { }
    ]
@@ -417,12 +421,12 @@ The general strategy for tracking endpoint lifecycles is [as follows]
 
 12. The device fails to respond to all (retried) queries issued inside `Treclaim`.
 
-13. `mctpd` removes `/xyz/openbmc_project/mctp/1/9` from D-Bus, emitting an
-    `InterfacesRemoved` signal with the following content
+13. `mctpd` removes `/au/com/codeconstruct/mctp1/networks/1/endpoints/9` from
+    D-Bus, emitting an `InterfacesRemoved` signal with the following content
 
     ```
-    "/xyz/openbmc_project/mctp/1/9": [
-      "au.com.CodeConstruct.MCTP.Endpoint",
+    "/au/com/codeconstruct/mctp1/networks/1/endpoints/9": [
+      "au.com.codeconstruct.MCTP.Endpoint1",
       "xyz.openbmc_project.MCTP.Endpoint",
       ...
     ]

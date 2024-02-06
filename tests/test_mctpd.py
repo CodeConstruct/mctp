@@ -11,10 +11,10 @@ from conftest import Endpoint
 # - C: Connection
 # - P: Path
 # - I: Interface
-MCTPD_C = 'xyz.openbmc_project.MCTP'
-MCTPD_MCTP_P = '/xyz/openbmc_project/mctp'
-MCTPD_MCTP_I = 'au.com.CodeConstruct.MCTP'
-MCTPD_ENDPOINT_I = 'au.com.CodeConstruct.MCTP.Endpoint'
+MCTPD_C = 'au.com.codeconstruct.MCTP1'
+MCTPD_MCTP_P = '/au/com/codeconstruct/mctp1'
+MCTPD_MCTP_I = 'au.com.codeconstruct.MCTP.BusOwner1'
+MCTPD_ENDPOINT_I = 'au.com.codeconstruct.MCTP.Endpoint1'
 DBUS_OBJECT_MANAGER_I = 'org.freedesktop.DBus.ObjectManager'
 DBUS_PROPERTIES_I = 'org.freedesktop.DBus.Properties'
 

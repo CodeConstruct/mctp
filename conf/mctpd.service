@@ -6,7 +6,7 @@ After=mctp-local.target
 
 [Service]
 Type=dbus
-BusName=xyz.openbmc_project.MCTP
+BusName=au.com.codeconstruct.MCTP1
 ExecStart=/usr/sbin/mctpd
 
 [Install]

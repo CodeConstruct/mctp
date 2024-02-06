@@ -28,6 +28,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 3. The `tests` option has changed type from `feature` to `boolean`. Tests are
    enabled by default.
 
+4. The dbus interface has undergone a major rework, using standard prefixes
+   and version interface, bus owner and entry-point object names. See
+   docs/mctpd.md for full details on the new interface.
+
 ### Fixed
 
 1. mctpd: EID assignments now work in the case where a new endpoint has a
