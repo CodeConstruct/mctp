@@ -27,6 +27,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 3. The `tests` option has changed type from `feature` to `boolean`. Tests are
    enabled by default.
 
+4. We now enforce IID checks on MCTP control protocol responses; this
+   prevents odd behaviour from delayed responses.
+
 ### Fixed
 
 1. mctpd: EID assignments now work in the case where a new endpoint has a

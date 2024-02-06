@@ -13,6 +13,11 @@ struct mctp_ctrl_msg_hdr {
 	uint8_t command_code;
 } __attribute__((__packed__));
 
+struct mctp_ctrl_resp {
+	struct mctp_ctrl_msg_hdr ctrl_hdr;
+	uint8_t completion_code;
+} __attribute__((packed));
+
 typedef enum {
 	set_eid,
 	force_eid,
