@@ -1163,3 +1163,75 @@ int mctp_nl_route_del(struct mctp_nl *nl, uint8_t eid, const char* ifname)
 	return mctp_nl_send(nl, &msg.nh);
 }
 
+/* Common parts of RTM_NEWNEIGH and RTM_DELNEIGH */
+struct mctp_ndalter_msg {
+	struct nlmsghdr nh;
+	struct ndmsg ndmsg;
+	uint8_t rta_buff[RTA_SPACE(1) + RTA_SPACE(MAX_ADDR_LEN)];
+};
+
+static int fill_ndalter_args(struct mctp_nl *nl, struct mctp_ndalter_msg *msg,
+			     struct rtattr **prta, size_t *prta_len,
+			     mctp_eid_t eid, const char *ifname)
+{
+	struct rtattr *rta;
+	size_t rta_len;
+	int ifindex;
+
+	ifindex = mctp_nl_ifindex_byname(nl, ifname);
+	if (!ifindex) {
+		warnx("invalid device %s", ifname);
+		return -1;
+	}
+
+	msg->nh.nlmsg_flags = NLM_F_REQUEST | NLM_F_ACK;
+	msg->ndmsg.ndm_ifindex = ifindex;
+	msg->ndmsg.ndm_family = AF_MCTP;
+	msg->nh.nlmsg_len = NLMSG_LENGTH(sizeof(msg->ndmsg));
+
+	rta_len = sizeof(msg->rta_buff);
+	rta = (void *)msg->rta_buff;
+
+	msg->nh.nlmsg_len += mctp_put_rtnlmsg_attr(&rta, &rta_len, NDA_DST,
+						   &eid, sizeof(eid));
+
+	if (prta)
+		*prta = rta;
+	if (prta_len)
+		*prta_len = rta_len;
+
+	return 0;
+}
+
+int mctp_nl_neigh_add(struct mctp_nl *nl, uint8_t eid, const char *ifname,
+		      uint8_t *haddr, uint8_t halen)
+{
+	struct mctp_ndalter_msg msg;
+	struct rtattr *rta;
+	size_t rta_len;
+	int rc;
+
+	rc = fill_ndalter_args(nl, &msg, &rta, &rta_len, eid, ifname);
+	if (rc) {
+		return rc;
+	}
+	msg.nh.nlmsg_type = RTM_NEWNEIGH;
+	msg.nh.nlmsg_len +=
+		mctp_put_rtnlmsg_attr(&rta, &rta_len, NDA_LLADDR, haddr, halen);
+
+	return mctp_nl_send(nl, &msg.nh);
+}
+
+int mctp_nl_neigh_del(struct mctp_nl *nl, uint8_t eid, const char *ifname)
+{
+	struct mctp_ndalter_msg msg;
+	int rc;
+
+	rc = fill_ndalter_args(nl, &msg, NULL, NULL, eid, ifname);
+	if (rc) {
+		return rc;
+	}
+	msg.nh.nlmsg_type = RTM_DELNEIGH;
+
+	return mctp_nl_send(nl, &msg.nh);
+}

@@ -74,6 +74,11 @@ int mctp_nl_route_add(struct mctp_nl *nl, uint8_t eid, const char* ifname,
 		uint32_t mtu);
 int mctp_nl_route_del(struct mctp_nl *nl, uint8_t eid, const char* ifname);
 
+/* MCTP neigh helper */
+int mctp_nl_neigh_add(struct mctp_nl *nl, uint8_t eid, const char *ifname,
+		      uint8_t *haddr, uint8_t halen);
+int mctp_nl_neigh_del(struct mctp_nl *nl, uint8_t eid, const char *ifname);
+
 /* Helpers */
 
 void* mctp_get_rtnlmsg_attr(int rta_type, struct rtattr *rta, size_t len,

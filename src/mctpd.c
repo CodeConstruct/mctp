@@ -2033,26 +2033,28 @@ static int query_peer_properties(peer *peer)
 	return rc;
 }
 
+// type is RTM_NEWNEIGH or RTM_DELNEIGH
 static int peer_neigh_update(peer *peer, uint16_t type)
 {
-	struct {
-		struct nlmsghdr		nh;
-		struct ndmsg		ndmsg;
-		uint8_t			rta_buff[RTA_SPACE(1) + RTA_SPACE(MAX_ADDR_LEN)];
-	} msg = {0};
-	size_t rta_len = sizeof(msg.rta_buff);
-	struct rtattr *rta = (void*)msg.rta_buff;
+	const char *link;
 
-	msg.nh.nlmsg_type = type;
-	msg.nh.nlmsg_flags = NLM_F_REQUEST | NLM_F_ACK;
-	msg.ndmsg.ndm_ifindex = peer->phys.ifindex;
-	msg.ndmsg.ndm_family = AF_MCTP;
-	msg.nh.nlmsg_len = NLMSG_LENGTH(sizeof(msg.ndmsg));
-	msg.nh.nlmsg_len += mctp_put_rtnlmsg_attr(&rta, &rta_len,
-		NDA_DST, &peer->eid, sizeof(peer->eid));
-	msg.nh.nlmsg_len += mctp_put_rtnlmsg_attr(&rta, &rta_len,
-		NDA_LLADDR, peer->phys.hwaddr, peer->phys.hwaddr_len);
-	return mctp_nl_send(peer->ctx->nl_query, &msg.nh);
+	link = mctp_nl_if_byindex(peer->ctx->nl_query, peer->phys.ifindex);
+	if (!link) {
+		warnx("BUG %s: Unknown ifindex %d", __func__,
+		      peer->phys.ifindex);
+		return -ENODEV;
+	}
+
+	if (type == RTM_NEWNEIGH) {
+		return mctp_nl_neigh_add(peer->ctx->nl_query, peer->eid, link,
+					 peer->phys.hwaddr,
+					 peer->phys.hwaddr_len);
+	} else if (type == RTM_DELNEIGH) {
+		return mctp_nl_neigh_del(peer->ctx->nl_query, peer->eid, link);
+	}
+
+	warnx("BUG %s: bad type %d", __func__, type);
+	return -EPROTO;
 }
 
 // type is RTM_NEWROUTE or RTM_DELROUTE
