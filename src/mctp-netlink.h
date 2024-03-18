@@ -69,10 +69,19 @@ int *mctp_nl_net_list(const mctp_nl *nl, size_t *ret_num_nets);
 /* Returns an allocated list of ifindex, caller to free */
 int *mctp_nl_if_list(const mctp_nl *nl, size_t *ret_num_if);
 
+/* MCTP addr helper */
+int mctp_nl_addr_add(struct mctp_nl *nl, uint8_t eid, const char *ifname);
+int mctp_nl_addr_del(struct mctp_nl *nl, uint8_t eid, const char *ifname);
+
 /* MCTP route helper */
 int mctp_nl_route_add(struct mctp_nl *nl, uint8_t eid, const char* ifname,
 		uint32_t mtu);
 int mctp_nl_route_del(struct mctp_nl *nl, uint8_t eid, const char* ifname);
+
+/* MCTP neigh helper */
+int mctp_nl_neigh_add(struct mctp_nl *nl, uint8_t eid, const char *ifname,
+		      uint8_t *haddr, uint8_t halen);
+int mctp_nl_neigh_del(struct mctp_nl *nl, uint8_t eid, const char *ifname);
 
 /* Helpers */
 

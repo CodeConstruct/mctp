@@ -1023,62 +1023,14 @@ static int cmd_neigh_show(struct ctx *ctx, int argc, const char **argv)
 	return 0;
 }
 
-struct mctp_neighalter_msg {
-	struct nlmsghdr		nh;
-	struct ndmsg		ndmsg;
-	uint8_t			rta_buff[RTA_SPACE(1) + RTA_SPACE(MAX_ADDR_LEN)];
-};
-
-static int fill_neighalter_args(struct ctx *ctx,
-		struct mctp_neighalter_msg *msg,
-		struct rtattr **prta, size_t *prta_len,
-		const char *eidstr, const char *linkstr) {
-	struct rtattr *rta;
-	uint32_t tmp;
-	uint8_t eid;
-	int ifindex;
-	size_t rta_len;
-
-	ifindex = mctp_nl_ifindex_byname(ctx->nl, linkstr);
-	if (!ifindex) {
-		warnx("invalid device %s", linkstr);
-		return -1;
-	}
-
-	if (parse_uint32(eidstr, &tmp) < 0 || tmp > 0xff) {
-		warnx("invalid address %s", eidstr);
-		return -1;
-	}
-	eid = tmp & 0xff;
-
-	memset(msg, 0x0, sizeof(*msg));
-	msg->nh.nlmsg_flags = NLM_F_REQUEST | NLM_F_ACK;
-	msg->ndmsg.ndm_ifindex = ifindex;
-	msg->ndmsg.ndm_family = AF_MCTP;
-
-	msg->nh.nlmsg_len = NLMSG_LENGTH(sizeof(msg->ndmsg));
-	rta_len = sizeof(msg->rta_buff);
-	rta = (void*)msg->rta_buff;
-
-	msg->nh.nlmsg_len += mctp_put_rtnlmsg_attr(&rta, &rta_len,
-		NDA_DST, &eid, sizeof(eid));
-
-
-	if (prta)
-		*prta = rta;
-	if (prta_len)
-		*prta_len = rta_len;
-	return 0;
-}
-
 static int cmd_neigh_add(struct ctx *ctx, int argc, const char **argv)
 {
-	struct mctp_neighalter_msg msg;
-	struct rtattr *rta;
 	const char *linkstr, *eidstr, *lladdrstr;
-	int rc;
 	uint8_t llbuf[MAX_ADDR_LEN];
-	size_t llbuf_len, rta_len;
+	size_t llbuf_len;
+	mctp_eid_t eid;
+	uint32_t tmp;
+	int rc;
 
 	rc = 0;
 	if (argc != 6) {
@@ -1107,22 +1059,20 @@ static int cmd_neigh_add(struct ctx *ctx, int argc, const char **argv)
 		return rc;
 	}
 
-	rc = fill_neighalter_args(ctx, &msg, &rta, &rta_len,
-		eidstr, linkstr);
-	if (rc) {
+	if (parse_uint32(eidstr, &tmp) < 0 || tmp > 0xff) {
+		warnx("invalid address %s", eidstr);
 		return -1;
 	}
+	eid = tmp & 0xff;
 
-	msg.nh.nlmsg_type = RTM_NEWNEIGH;
-	msg.nh.nlmsg_len += mctp_put_rtnlmsg_attr(&rta, &rta_len,
-		NDA_LLADDR, llbuf, llbuf_len);
-	return mctp_nl_send(ctx->nl, &msg.nh);
+	return mctp_nl_neigh_add(ctx->nl, eid, linkstr, llbuf, llbuf_len);
 }
 
 static int cmd_neigh_del(struct ctx *ctx, int argc, const char **argv)
 {
-	struct mctp_neighalter_msg msg;
 	const char *linkstr, *eidstr;
+	mctp_eid_t eid;
+	uint32_t tmp;
 	int rc;
 
 	rc = 0;
@@ -1141,14 +1091,13 @@ static int cmd_neigh_del(struct ctx *ctx, int argc, const char **argv)
 	eidstr = argv[1];
 	linkstr = argv[3];
 
-	rc = fill_neighalter_args(ctx, &msg, NULL, NULL,
-		eidstr, linkstr);
-	if (rc) {
+	if (parse_uint32(eidstr, &tmp) < 0 || tmp > 0xff) {
+		warnx("invalid address %s", eidstr);
 		return -1;
 	}
+	eid = tmp & 0xff;
 
-	msg.nh.nlmsg_type = RTM_DELNEIGH;
-	return mctp_nl_send(ctx->nl, &msg.nh);
+	return mctp_nl_neigh_del(ctx->nl, eid, linkstr);
 }
 
 static int cmd_neigh(struct ctx *ctx, int argc, const char **argv) {
