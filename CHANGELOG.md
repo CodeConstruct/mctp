@@ -13,6 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 3. mctpd: Allow configuring .Connectivity as writable for development
 4. mctpd: Add AssignEndpointStatic for static EID allocations
 5. mctpd: Add a configuration file facility, defaulting to /etc/mctpd.conf.
+6. mctpd: Add mctp/interfaces/<name> D-Bus object
 
 ### Changed
 

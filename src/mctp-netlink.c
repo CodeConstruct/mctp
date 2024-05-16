@@ -952,6 +952,19 @@ void *mctp_nl_get_link_userdata(const mctp_nl *nl, int ifindex)
 	return entry ? entry->userdata : NULL;
 }
 
+void *mctp_nl_get_link_userdata_byname(const mctp_nl *nl, const char *ifname)
+{
+       size_t i;
+
+       for (i = 0; i < nl->linkmap_count; i++) {
+               struct linkmap_entry *entry = &nl->linkmap[i];
+               if (!strcmp(entry->ifname, ifname))
+                       return entry->userdata;
+       }
+
+       return NULL;
+}
+
 bool mctp_nl_up_byindex(const mctp_nl *nl, int index)
 {
 	struct linkmap_entry *entry = entry_byindex(nl, index);

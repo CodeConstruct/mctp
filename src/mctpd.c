@@ -42,12 +42,14 @@
 
 #define MCTP_DBUS_PATH "/au/com/codeconstruct/mctp1"
 #define MCTP_DBUS_PATH_NETWORKS "/au/com/codeconstruct/mctp1/networks"
+#define MCTP_DBUS_PATH_LINKS "/au/com/codeconstruct/mctp1/interfaces"
 #define CC_MCTP_DBUS_IFACE_BUSOWNER "au.com.codeconstruct.MCTP.BusOwner1.DRAFT"
 #define CC_MCTP_DBUS_IFACE_ENDPOINT "au.com.codeconstruct.MCTP.Endpoint1"
 #define CC_MCTP_DBUS_IFACE_TESTING "au.com.codeconstruct.MCTPTesting"
 #define MCTP_DBUS_NAME "au.com.codeconstruct.MCTP1"
 #define MCTP_DBUS_IFACE_ENDPOINT "xyz.openbmc_project.MCTP.Endpoint"
 #define OPENBMC_IFACE_COMMON_UUID "xyz.openbmc_project.Common.UUID"
+#define CC_MCTP_DBUS_IFACE_LINK "au.com.CodeConstruct.MCTP.Link1"
 
 // an arbitrary constant for use with sd_id128_get_machine_app_specific()
 static const char* mctpd_appid = "67369c05-4b97-4b7e-be72-65cfd8639f10";
@@ -89,22 +91,33 @@ enum endpoint_role {
 	ENDPOINT_ROLE_ENDPOINT,
 };
 
+struct link_userdata {
+    bool published;
+    enum endpoint_role role;
+};
+typedef struct link_userdata link_userdata;
+
 struct role {
 	enum endpoint_role role;
 	const char *conf_val;
+	const char *dbus_val;
 };
 
 static const struct role roles[] = {
 	[ENDPOINT_ROLE_UNKNOWN] = {
 		.role = ENDPOINT_ROLE_UNKNOWN,
+		.conf_val = "unknown",
+		.dbus_val = "Unknown",
 	},
 	[ENDPOINT_ROLE_BUS_OWNER] = {
 		.role = ENDPOINT_ROLE_BUS_OWNER,
 		.conf_val = "bus-owner",
+		.dbus_val = "BusOwner",
 	},
 	[ENDPOINT_ROLE_ENDPOINT] = {
 		.role = ENDPOINT_ROLE_ENDPOINT,
 		.conf_val = "endpoint",
+		.dbus_val = "Endpoint",
 	},
 };
 
@@ -176,8 +189,8 @@ struct ctx {
 	// Second instance for sending mctp socket requests. State is unused.
 	mctp_nl *nl_query;
 
-	// Whether we are running as the bus owner
-	bool bus_owner;
+	// Default BMC role in All of MCTP medium interface
+	enum endpoint_role default_role;
 
 	// An allocated array of peers, changes address (reallocated) during runtime
 	peer *peers;
@@ -199,6 +212,8 @@ typedef struct ctx ctx;
 
 static int emit_endpoint_added(const peer *peer);
 static int emit_endpoint_removed(const peer *peer);
+static int emit_interface_added(ctx *ctx, int ifindex);
+static int emit_interface_removed(ctx *ctx, int ifindex);
 static int emit_net_added(ctx *ctx, int net);
 static int emit_net_removed(ctx *ctx, int net);
 static int query_peer_properties(peer *peer);
@@ -215,6 +230,7 @@ static int change_net_interface(ctx *ctx, int ifindex, int old_net);
 static int add_local_eid(ctx *ctx, int net, int eid);
 static int del_local_eid(ctx *ctx, int net, int eid);
 static int add_net(ctx *ctx, int net);
+static int add_interface(ctx *ctx, int ifindex);
 
 mctp_eid_t local_addr(const ctx *ctx, int ifindex) {
 	mctp_eid_t *eids, ret = 0;
@@ -442,6 +458,19 @@ static int path_from_peer(const peer *peer, char ** ret_path) {
 	return 0;
 }
 
+static int get_role(const char *mode, struct role *role)
+{
+	unsigned int i;
+
+	for (i = 0; i < ARRAY_SIZE(roles); i++) {
+		if (roles[i].dbus_val && (strcmp(roles[i].dbus_val, mode) == 0)) {
+			memcpy(role, &roles[i], sizeof(struct role));
+			return 0;
+		}
+	}
+
+	return -1;
+}
 
 /* Returns the message from a socket.
    ret_buf is allocated, should be freed by the caller */
@@ -625,7 +654,7 @@ static int handle_control_get_endpoint_id(ctx *ctx,
 	resp->ctrl_hdr.rq_dgram_inst = RQDI_RESP;
 
 	resp->eid = local_addr(ctx, addr->smctp_ifindex);
-	if (ctx->bus_owner)
+	if (ctx->default_role == ENDPOINT_ROLE_BUS_OWNER)
 		SET_ENDPOINT_TYPE(resp->eid_type, MCTP_BUS_OWNER_BRIDGE);
 	// 10b = 2 = static EID supported, matches currently assigned.
 	SET_ENDPOINT_ID_TYPE(resp->eid_type, 2);
@@ -895,6 +924,7 @@ static int cb_listen_monitor(sd_event_source *s, int sd, uint32_t revents,
 
 		case MCTP_NL_DEL_LINK:
 		{
+			free(c->link_userdata);
 			// Local addresses have already been deleted with DEL_EID
 			rc = del_interface(ctx, c->ifindex);
 			any_error |= (rc < 0);
@@ -2733,12 +2763,63 @@ static const sd_bus_vtable testing_vtable[] = {
 	SD_BUS_VTABLE_END
 };
 
+static bool is_endpoint_path(const char *path)
+{
+	char *netstr = NULL, *eidstr = NULL;
+	uint32_t tmp, net;
+	int rc;
+
+	rc = sd_bus_path_decode_many(path,
+				     MCTP_DBUS_PATH "/networks/%/endpoints/%",
+				     &netstr, &eidstr);
+
+	if (rc == 0)
+		return false;
+	if (rc < 0)
+		return false;
+
+	dfree(netstr);
+	dfree(eidstr);
+
+	if (parse_uint32(eidstr, &tmp) < 0 || tmp > 0xff)
+		return false;
+
+	if (parse_uint32(netstr, &net) < 0)
+		return false;
+
+	return true;
+}
+
+static bool is_interfaces_path(const char *path)
+{
+	char *intfName = NULL;
+	int rc;
+
+	rc = sd_bus_path_decode_many(path,
+				     MCTP_DBUS_PATH "/interfaces/%",
+				     &intfName);
+
+	if (rc == 0)
+		return false;
+
+	if (rc < 0)
+		return false;
+
+	dfree(intfName);
+
+	return true;
+}
+
 static int bus_endpoint_get_prop(sd_bus *bus,
 		const char *path, const char *interface, const char *property,
 		sd_bus_message *reply, void *userdata, sd_bus_error *berr)
 {
 	peer *peer = userdata;
 	int rc;
+
+	if (!is_endpoint_path(path)) {
+		return -ENOENT;
+	}
 
 	if (strcmp(property, "NetworkId") == 0) {
 		rc = sd_bus_message_append(reply, "u", peer->net);
@@ -2760,6 +2841,116 @@ static int bus_endpoint_get_prop(sd_bus *bus,
 	return rc;
 }
 
+static int bus_link_get_prop(sd_bus *bus,
+		const char *path, const char *interface, const char *property,
+		sd_bus_message *reply, void *userdata, sd_bus_error *berr)
+{
+	ctx *ctx = userdata;
+	char *tmpstr = NULL;
+	char *link_name = NULL;
+	link_userdata *lmUserData = NULL;
+	int rc = 0;
+
+	if (!is_interfaces_path(path)) {
+		sd_bus_error_setf(berr, SD_BUS_ERROR_INVALID_ARGS,
+				"Invalid Object Path");
+		goto out;
+	}
+
+	rc = sd_bus_path_decode_many(path, MCTP_DBUS_PATH "/%/%", &tmpstr,
+		&link_name);
+	if (rc <= 0) {
+		sd_bus_error_setf(berr, SD_BUS_ERROR_INVALID_ARGS,
+				"Invalid Object Path");
+		goto out;
+	}
+
+	lmUserData = mctp_nl_get_link_userdata_byname(ctx->nl, link_name);
+	if (!lmUserData) {
+		rc = -ENOENT;
+		goto out;
+	}
+
+	if (lmUserData->published && strcmp(property, "Role") == 0) {
+		rc = sd_bus_message_append(reply, "s", roles[lmUserData->role].dbus_val);
+	} else {
+		sd_bus_error_setf(berr, SD_BUS_ERROR_INVALID_ARGS,
+				"Unknown property.");
+		rc = -ENOENT;
+	}
+
+out:
+	set_berr(ctx, rc, berr);
+
+	return rc;
+}
+
+static int bus_link_set_prop(sd_bus *bus,
+		const char *path, const char *interface, const char *property,
+		sd_bus_message *value, void *userdata, sd_bus_error *berr)
+{
+	ctx *ctx = userdata;
+	const char *state;
+	char *tmpstr = NULL;
+	char *link_name = NULL;
+	link_userdata *lmUserData;
+	int rc;
+	struct role role;
+
+	if (!is_interfaces_path(path)) {
+		sd_bus_error_setf(berr, SD_BUS_ERROR_INVALID_ARGS,
+				"Invalid Object Path");
+		goto out;
+	}
+
+	rc = sd_bus_path_decode_many(path, MCTP_DBUS_PATH "/%/%", &tmpstr,
+		&link_name);
+	if (rc <= 0) {
+		sd_bus_error_setf(berr, SD_BUS_ERROR_INVALID_ARGS,
+				"Invalid Object Path");
+		goto out;
+	}
+
+	lmUserData = mctp_nl_get_link_userdata_byname(ctx->nl, link_name);
+	if (!lmUserData) {
+		rc = -ENOENT;
+		goto out;
+	}
+
+	if (strcmp(property, "Role") != 0) {
+		printf("Unknown property '%s' for %s iface %s\n", property, path, interface);
+		rc = -ENOENT;
+		goto out;
+	}
+
+	if (lmUserData->role != ENDPOINT_ROLE_UNKNOWN) {
+		sd_bus_error_setf(berr, SD_BUS_ERROR_INVALID_ARGS,
+					"Role is already set.");
+		rc = -ENOENT;
+		goto out;
+	}
+
+	rc = sd_bus_message_read(value, "s", &state);
+	if (rc < 0) {
+		sd_bus_error_setf(berr, SD_BUS_ERROR_INVALID_ARGS,
+				"Unknown Role. Only Support BusOwner/EndPoint.");
+		goto out;
+	}
+
+	rc = get_role(state, &role);
+	if (rc < 0) {
+		printf("Invalid property value '%s' for property '%s' from interface '%s' on object '%s'\n",
+			state, property, interface, path);
+		rc = -EINVAL;
+		goto out;
+	}
+	lmUserData->role = role.role;
+
+out:
+	set_berr(ctx, rc, berr);
+	return rc;
+}
+
 __attribute__((unused))
 static int bus_endpoint_set_prop(sd_bus *bus, const char *path,
                                  const char *interface,
@@ -2772,6 +2963,11 @@ static int bus_endpoint_set_prop(sd_bus *bus, const char *path,
 	peer *peer = userdata;
 	ctx *ctx = peer->ctx;
 	int rc;
+
+	if (!is_endpoint_path(path)) {
+		rc = -ENOENT;
+		goto out;
+	}
 
 	if (strcmp(property, "Connectivity") == 0) {
 		bool previously = peer->degraded;
@@ -2833,6 +3029,17 @@ static const sd_bus_vtable bus_endpoint_uuid_vtable[] = {
 	SD_BUS_VTABLE_END
 };
 
+static const sd_bus_vtable bus_endpoint_link_vtable[] = {
+	SD_BUS_VTABLE_START(0),
+	SD_BUS_WRITABLE_PROPERTY("Role",
+			"s",
+			bus_link_get_prop,
+			bus_link_set_prop,
+			0,
+			SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
+	SD_BUS_VTABLE_END
+};
+
 static const sd_bus_vtable bus_endpoint_cc_vtable[] = {
 	SD_BUS_VTABLE_START(0),
 	SD_BUS_METHOD_WITH_ARGS("SetMTU",
@@ -2874,6 +3081,9 @@ static int bus_endpoint_find(sd_bus *bus, const char *path,
 	ctx *ctx = userdata;
 	peer *peer = NULL;
 	int rc;
+	if (!is_endpoint_path(path)) {
+		return 0;
+	}
 
 	rc = peer_from_path(ctx, path, &peer);
 	if (rc >= 0 && peer->published) {
@@ -2891,6 +3101,9 @@ static int bus_endpoint_find_uuid(sd_bus *bus, const char *path,
 	ctx *ctx = userdata;
 	peer *peer = NULL;
 	int rc;
+	if (!is_endpoint_path(path)) {
+		return 0;
+	}
 
 	rc = peer_from_path(ctx, path, &peer);
 	if (rc >= 0 && peer->published) {
@@ -2916,6 +3129,42 @@ static char* root_endpoints_path(int net)
 	return buf;
 }
 
+/* au.com.CodeConstruct.MCTP.Link1 interface */
+static int bus_mctp_link_find(sd_bus *bus, const char *path,
+	const char *interface, void *userdata, void **ret_found,
+	sd_bus_error *ret_error)
+{
+	ctx *ctx = userdata;
+	char *tmpstr = NULL;
+	char *link_name = NULL;
+	link_userdata *lmUserData = NULL;
+	int rc = 0;
+
+	if (!is_interfaces_path(path)) {
+		return 0;
+	}
+
+	rc = sd_bus_path_decode_many(path, MCTP_DBUS_PATH "/%/%", &tmpstr,
+		&link_name);
+	if (rc == 0)
+		return -ENOENT;
+	if (rc < 0)
+		return rc;
+
+	lmUserData = mctp_nl_get_link_userdata_byname(ctx->nl, link_name);
+	if (!lmUserData) {
+		warnx("Linkmap entry of link %s is not existing\n", link_name);
+		return -ENOMEM;
+	}
+
+	if (lmUserData->published) {
+		*ret_found = ctx;
+		return 1;
+	}
+
+	return 0;
+}
+
 static char* net_path(int net)
 {
 	size_t l;
@@ -2929,6 +3178,21 @@ static char* net_path(int net)
 	/* can't use sd_bus_path_encode_many() since it escapes
 	   leading digits */
 	snprintf(buf, l, "%s/networks/%d", MCTP_DBUS_PATH, net);
+	return buf;
+}
+
+static char* interface_path(const char* link_name)
+{
+	size_t l;
+	char *buf = NULL;
+
+	l = strlen(MCTP_DBUS_PATH) + 30;
+	buf = malloc(l);
+	if (!buf) {
+		return NULL;
+	}
+
+	snprintf(buf, l, "%s/interfaces/%s", MCTP_DBUS_PATH, link_name);
 	return buf;
 }
 
@@ -2977,6 +3241,29 @@ static int emit_net_added(ctx *ctx, int net) {
 	return rc;
 }
 
+static int emit_interface_added(ctx *ctx, int ifindex) {
+	const char* ifname = NULL;
+	char *path = NULL;
+	int rc;
+
+	ifname = mctp_nl_if_byindex(ctx->nl, ifindex);
+	if (!ifname) {
+		warnx("BUG %s: no interface for ifindex %d", __func__, ifindex);
+		return -EPROTO;
+	}
+
+	path = interface_path(ifname);
+	if (path == NULL) {
+		warnx("%s: out of memory", __func__);
+		return -ENOMEM;
+	}
+	rc = sd_bus_emit_object_added(ctx->bus, dfree(path));
+	if (rc < 0)
+		warnx("%s: error emitting, %s", __func__, strerror(-rc));
+
+	return rc;
+}
+
 static int emit_net_removed(ctx *ctx, int net) {
 	char *path = NULL;
 	int rc;
@@ -2989,6 +3276,31 @@ static int emit_net_removed(ctx *ctx, int net) {
 	rc = sd_bus_emit_object_removed(ctx->bus, dfree(path));
 	if (rc < 0)
 		warnx("%s: error emitting, %s", __func__, strerror(-rc));
+	return rc;
+}
+
+static int emit_interface_removed(ctx *ctx, int ifindex) {
+	const char* ifname = NULL;
+	char *path = NULL;
+	int rc;
+
+	ifname = mctp_nl_if_byindex(ctx->nl_query, ifindex);
+	if (!ifname) {
+		warnx("BUG %s: no interface for ifindex %d", __func__, ifindex);
+		return -EPROTO;
+	}
+
+	path = interface_path(ifname);
+	if (path == NULL) {
+		warnx("%s: out of memory", __func__);
+		return -ENOMEM;
+	}
+	rc = sd_bus_emit_object_removed(ctx->bus, dfree(path));
+	if (rc < 0) {
+		errno = -rc;
+		warn("%s: error emitting", __func__);
+	}
+
 	return rc;
 }
 
@@ -3007,9 +3319,16 @@ static int mctpd_dbus_enumerate(sd_bus *bus, const char* path,
 	void *data, char ***out, sd_bus_error *err)
 {
 	ctx *ctx = data;
+	link_userdata* lmUserData = NULL;
 	size_t num_nodes, i, j;
 	char **nodes = NULL;
+	const char* ifname = NULL;
 	int rc;
+	size_t num_ifs;
+	int *ifs;
+
+	/* Set up local addresses */
+	ifs = mctp_nl_if_list(ctx->nl, &num_ifs);
 
 	// NULL terminator
 	num_nodes = 1;
@@ -3034,6 +3353,17 @@ static int mctpd_dbus_enumerate(sd_bus *bus, const char* path,
 	for (i = 0; i < ctx->size_peers; i++)
 		if (ctx->peers[i].published)
 			num_nodes++;
+
+	// .../mctp1/interfaces object
+	num_nodes++;
+
+	// .../mctp1/interface/<name>
+	for (size_t i = 0; i < num_ifs; i++) {
+		lmUserData = mctp_nl_get_link_userdata(ctx->nl, ifs[i]);
+		if (lmUserData && lmUserData->published) {
+			num_nodes++;
+		}
+	}
 
 	nodes = malloc(sizeof(*nodes) * num_nodes);
 	if (!nodes) {
@@ -3095,6 +3425,31 @@ static int mctpd_dbus_enumerate(sd_bus *bus, const char* path,
 		j++;
 	}
 
+	// .../mctp1/interfaces object
+	nodes[j] = strdup(MCTP_DBUS_PATH_LINKS);
+	if (!nodes[j]) {
+		rc = -ENOMEM;
+		goto out;
+	}
+	j++;
+
+	for (size_t i = 0; i < num_ifs; i++) {
+		lmUserData = mctp_nl_get_link_userdata(ctx->nl, ifs[i]);
+		if (!lmUserData || !lmUserData->published)
+			continue;
+		ifname = mctp_nl_if_byindex(ctx->nl, ifs[i]);
+		if (!ifname) {
+			continue;
+		}
+		nodes[j] = interface_path(ifname);
+		if (nodes[j] == NULL) {
+			rc = -ENOMEM;
+			goto out;
+		}
+		j++;
+	}
+
+	free(ifs);
 	// NULL terminator
 	nodes[j] = NULL;
 	j++;
@@ -3197,6 +3552,17 @@ static int setup_bus(ctx *ctx)
 					ctx);
 	if (rc < 0) {
 		warnx("Failed adding uuid D-Bus interface: %s", strerror(-rc));
+		goto out;
+	}
+
+	rc = sd_bus_add_fallback_vtable(ctx->bus, NULL,
+					MCTP_DBUS_PATH,
+					CC_MCTP_DBUS_IFACE_LINK,
+					bus_endpoint_link_vtable,
+					bus_mctp_link_find,
+					ctx);
+	if (rc < 0) {
+		warnx("Failed adding link D-Bus interface: %s", strerror(-rc));
 		goto out;
 	}
 
@@ -3315,7 +3681,11 @@ static int del_interface(ctx *ctx, int old_ifindex)
 			remove_peer(p);
 		}
 	}
+
+	if (emit_interface_removed(ctx, old_ifindex) < 0)
+		warnx("Failed to remove D-Bus interface of ifindex %d", old_ifindex);
 	prune_old_nets(ctx);
+
 	return 0;
 }
 
@@ -3452,6 +3822,7 @@ static int add_local_eid(ctx *ctx, int net, int eid)
 static int add_interface_local(ctx *ctx, int ifindex)
 {
 	mctp_eid_t *eids = NULL;
+	link_userdata *lmUserData = NULL;
 	size_t num;
 	int net;
 	int rc;
@@ -3477,11 +3848,19 @@ static int add_interface_local(ctx *ctx, int ifindex)
 		if (rc < 0)
 			return rc;
 	}
-
 	eids = mctp_nl_addrs_byindex(ctx->nl, ifindex, &num);
 	for (size_t j = 0; j < num; j++) {
 		add_local_eid(ctx, net, eids[j]);
 	}
+
+	// Add new link if required
+	lmUserData = mctp_nl_get_link_userdata(ctx->nl, ifindex);
+	if (!lmUserData || !lmUserData->published) {
+		rc = add_interface(ctx, ifindex);
+		if (rc < 0)
+			return rc;
+	}
+
 	free(eids);
 	return 0;
 }
@@ -3510,6 +3889,41 @@ static int add_net(ctx *ctx, int net)
 	}
 	emit_net_added(ctx, net);
 	return 0;
+}
+
+static int add_interface(ctx *ctx, int ifindex)
+{
+	link_userdata *lmUserData = malloc(sizeof(link_userdata));
+	int rc;
+
+	int net = mctp_nl_net_byindex(ctx->nl, ifindex);
+	if (net <= 0) {
+		warnx("Can't find link index %d\n", ifindex);
+		return -ENOMEM;
+	}
+
+	/* Use the `mode` setting in conf/mctp.conf */
+	lmUserData->role = ctx->default_role;
+	lmUserData->published = true;
+
+	rc = mctp_nl_set_link_userdata(ctx->nl, ifindex, lmUserData);
+	if (rc < 0) {
+		warnx("Failed to set UserData for link index %d", ifindex);
+		return -ENOMEM;
+	}
+
+	rc = emit_interface_added(ctx, ifindex);
+	if (rc < 0) {
+		lmUserData->published = false;
+		rc = mctp_nl_set_link_userdata(ctx->nl, ifindex, lmUserData);
+		if (rc < 0) {
+			warnx("Failed to set UserData for link index %d\n", ifindex);
+			return -ENOMEM;
+		}
+		return -ENOMEM;
+	}
+
+	return rc;
 }
 
 static int setup_nets(ctx *ctx)
@@ -3673,7 +4087,7 @@ static int parse_config_mode(ctx *ctx, const char *mode)
 		if (!role->conf_val || strcmp(role->conf_val, mode))
 			continue;
 
-		ctx->bus_owner = role->role == ENDPOINT_ROLE_BUS_OWNER;
+		ctx->default_role = role->role;
 		return 0;
 	}
 
@@ -3796,7 +4210,7 @@ out_close:
 static void setup_config_defaults(ctx *ctx)
 {
 	ctx->mctp_timeout = 250000; // 250ms
-	ctx->bus_owner = true;
+	ctx->default_role = ENDPOINT_ROLE_BUS_OWNER;
 }
 
 int main(int argc, char **argv)

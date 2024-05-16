@@ -84,6 +84,8 @@ int mctp_nl_set_link_userdata(mctp_nl *nl, int ifindex, void *userdata);
 
 /* Returns NULL if the link does not exist */
 void *mctp_nl_get_link_userdata(const mctp_nl *nl, int ifindex);
+/* Returns NULL if the link does not exist */
+void *mctp_nl_get_link_userdata_byname(const mctp_nl *nl, const char *ifname);
 
 /* MCTP route helper */
 int mctp_nl_route_add(struct mctp_nl *nl, uint8_t eid, const char* ifname,
