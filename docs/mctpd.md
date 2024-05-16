@@ -104,3 +104,17 @@ busctl call au.com.codeconstruct.MCTP1 \
 
 Removes the MCTP endpoint from `mctpd`, and deletes routes and neighbour entries.
 
+## D-Bus /au/com/codeconstruct/mctp1/interfaces/<name>
+
+`mctpd` provides a D-Bus path of `/au/com/codeconstruct/mctp1/interfaces`.
+For each known MCTP interfaces, `mctpd` will populate an D-Bus object
+`/au/com/codeconstruct/mctp1/interfaces/<name>`. The D-Bus objects have
+interface `au.com.CodeConstruct.MCTP.Interface1`.
+The D-Bus interface includes the `Role` property which reports BMC roles
+in the link. The possible value of `Role` are `BusOwner`, `Endpoint` and
+`Unknown`. The `Role` property is a changeable value but it can only be
+changed when the current configured value is `Unknown` because the BMC
+`Role` in the MCTP link is specific depend on the system.
+The D-Bus `/au/com/codeconstruct/mctp1/interfaces/<name>` objects also
+includes an au.com.codeconstruct.MCTP.BusOwner1 which exposes bus-owner
+level functions.

@@ -14,6 +14,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 4. mctpd: Add AssignEndpointStatic for static EID allocations
 5. mctpd: New test infrastructure for control procotol messaging to mctpd
 6. mctpd: Add a configuration file facility, defaulting to /etc/mctpd.conf.
+7. mctpd: Add mctp/interfaces/<name> D-Bus object
 
 ### Changed
 
