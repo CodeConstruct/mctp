@@ -361,7 +361,7 @@ The general strategy for tracking endpoint lifecycles is [as follows]
    registered as an MCTP endpoint.
 
 2. The FRU data is decoded and `SetupEndpoint` on the
-   `au.com.codeconstruct.MCTP.BusOwner1` interface of the
+   `au.com.codeconstruct.MCTP.BusOwner1.DRAFT` interface of the
    `/au/com/codeconstruct/mctp1`
    object hosted by `mctpd` is invoked.
 
@@ -402,7 +402,7 @@ The general strategy for tracking endpoint lifecycles is [as follows]
    poll the drive CTEMP.
 
 9. `mctpd` [emits a `PropertiesChanged` signal][dbus-spec-standard-interfaces-properties]
-   from `/au/com/codeconstruct/mctp/networks/1/enpoints/9` with the following
+   from `/au/com/codeconstruct/mctp/networks/1/endpoints/9` with the following
    contents:
 
    ```
