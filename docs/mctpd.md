@@ -13,7 +13,7 @@ As well as those standard interfaces, `mctpd` provides methods to add and
 configure MCTP endpoints. These are provided by the `au.com.codeconstruct.MCTP1`
 D-Bus interface.
 
-## Bus-owner methods: `au.com.codeconstruct.MCTP.BusOwner1` interface
+## Bus-owner methods: `au.com.codeconstruct.MCTP.BusOwner1.DRAFT` interface
 
 This interface exposes bus-owner level functions.
 
