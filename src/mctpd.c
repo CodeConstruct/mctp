@@ -82,6 +82,31 @@ struct ctx;
 // all local peers have the same phys
 static const dest_phys local_phys = { .ifindex = 0 };
 
+enum endpoint_role {
+	ENDPOINT_ROLE_UNKNOWN,
+	ENDPOINT_ROLE_BUS_OWNER,
+	ENDPOINT_ROLE_ENDPOINT,
+};
+
+struct role {
+	enum endpoint_role role;
+	const char *conf_val;
+};
+
+static const struct role roles[] = {
+	[ENDPOINT_ROLE_UNKNOWN] = {
+		.role = ENDPOINT_ROLE_UNKNOWN,
+	},
+	[ENDPOINT_ROLE_BUS_OWNER] = {
+		.role = ENDPOINT_ROLE_BUS_OWNER,
+		.conf_val = "bus-owner",
+	},
+	[ENDPOINT_ROLE_ENDPOINT] = {
+		.role = ENDPOINT_ROLE_ENDPOINT,
+		.conf_val = "endpoint",
+	},
+};
+
 struct peer {
 	int net;
 	mctp_eid_t eid;
@@ -3592,16 +3617,20 @@ static int parse_args(ctx *ctx, int argc, char **argv)
 
 static int parse_config_mode(ctx *ctx, const char *mode)
 {
-	if (!strcmp(mode, "bus-owner")) {
-		ctx->bus_owner = true;
-	} else if (!strcmp(mode, "endpoint")) {
-		ctx->bus_owner = false;
-	} else {
-		warnx("invalid value '%s' for mode configuration", mode);
-		return -1;
+	unsigned int i;
+
+	for (i = 0; i < ARRAY_SIZE(roles); i++) {
+		const struct role *role = &roles[i];
+
+		if (!role->conf_val || strcmp(role->conf_val, mode))
+			continue;
+
+		ctx->bus_owner = role->role == ENDPOINT_ROLE_BUS_OWNER;
+		return 0;
 	}
 
-	return 0;
+	warnx("invalid value '%s' for mode configuration", mode);
+	return -1;
 }
 
 static int fill_uuid(ctx *ctx)
