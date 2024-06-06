@@ -47,11 +47,6 @@ struct mctp_nl {
 	bool quiet_eexist;
 };
 
-#define max(a, b) ((a) > (b) ? (a) : (b))
-#define min(a, b) ((a) < (b) ? (a) : (b))
-
-#define ARRAY_SIZE(a) (sizeof(a)/sizeof((a)[0]))
-
 static int fill_local_addrs(mctp_nl *nl);
 static int fill_linkmap(mctp_nl *nl);
 static void sort_linkmap(mctp_nl *nl);
