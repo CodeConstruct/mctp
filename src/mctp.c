@@ -35,11 +35,6 @@
 #include "mctp-netlink.h"
 #include "mctp-ops.h"
 
-#define max(a, b) ((a) > (b) ? (a) : (b))
-#define min(a, b) ((a) < (b) ? (a) : (b))
-
-#define ARRAY_SIZE(a) (sizeof(a)/sizeof((a)[0]))
-
 struct ctx {
 	mctp_nl			*nl;
 	bool			verbose;

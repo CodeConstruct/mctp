@@ -1,5 +1,10 @@
 #include <stdint.h>
 
+#define max(a, b) ((a) > (b) ? (a) : (b))
+#define min(a, b) ((a) < (b) ? (a) : (b))
+
+#define ARRAY_SIZE(a) (sizeof(a)/sizeof((a)[0]))
+
 void mctp_hexdump(const void *b, int len, const char *indent);
 void print_hex_addr(const uint8_t *data, size_t len);
 int write_hex_addr(const uint8_t *data, size_t len, char* dest, size_t dest_len);
