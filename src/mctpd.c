@@ -41,6 +41,7 @@
 #define min(a, b) ((a) < (b) ? (a) : (b))
 
 #define MCTP_DBUS_PATH "/au/com/codeconstruct/mctp1"
+#define MCTP_DBUS_PATH_NETWORKS "/au/com/codeconstruct/mctp1/networks"
 #define CC_MCTP_DBUS_IFACE_BUSOWNER "au.com.codeconstruct.MCTP.BusOwner1.DRAFT"
 #define CC_MCTP_DBUS_IFACE_ENDPOINT "au.com.codeconstruct.MCTP.Endpoint1"
 #define CC_MCTP_DBUS_IFACE_TESTING "au.com.codeconstruct.MCTPTesting"
@@ -2908,6 +2909,20 @@ static int bus_endpoint_find_uuid(sd_bus *bus, const char *path,
 	return 0;
 }
 
+static char* root_endpoints_path(int net)
+{
+	size_t l;
+	char *buf = NULL;
+
+	l = strlen(MCTP_DBUS_PATH) + 30;
+	buf = malloc(l);
+	if (!buf) {
+		return NULL;
+	}
+	snprintf(buf, l, "%s/networks/%d/endpoints", MCTP_DBUS_PATH, net);
+	return buf;
+}
+
 static char* net_path(int net)
 {
 	size_t l;
@@ -3005,14 +3020,27 @@ static int mctpd_dbus_enumerate(sd_bus *bus, const char* path,
 
 	// NULL terminator
 	num_nodes = 1;
-	// .../mctp object
+	// .../mctp1 object
+	num_nodes++;
+	// .../mctp1/networks object
 	num_nodes++;
 
+	// .../mctp1/networks/<NetID>
+	for (i = 0; i < ctx->num_nets; i++) {
+		num_nodes++;
+		for (size_t t = 0; t < 256; t++) {
+			if (ctx->nets[i].peeridx[t] != -1) {
+				// .../mctp1/networks/<NetID>/endpoints object
+				num_nodes++;
+				break;
+			}
+		}
+	}
+
+	// .../mctp1/networks/<NetID>/endpoints/<EID> object
 	for (i = 0; i < ctx->size_peers; i++)
 		if (ctx->peers[i].published)
 			num_nodes++;
-
-	num_nodes += ctx->num_nets;
 
 	nodes = malloc(sizeof(*nodes) * num_nodes);
 	if (!nodes) {
@@ -3021,12 +3049,45 @@ static int mctpd_dbus_enumerate(sd_bus *bus, const char* path,
 	}
 
 	j = 0;
+	// .../mctp1
 	nodes[j] = strdup(MCTP_DBUS_PATH);
 	if (!nodes[j]) {
 		rc = -ENOMEM;
 		goto out;
 	}
 	j++;
+
+	// .../mctp1/networks
+	nodes[j] = strdup(MCTP_DBUS_PATH_NETWORKS);
+	if (!nodes[j]) {
+		rc = -ENOMEM;
+		goto out;
+	}
+	j++;
+
+	for (i = 0; i < ctx->num_nets; i++) {
+		// .../mctp1/networks/<NetId>
+		nodes[j] = net_path(ctx->nets[i].net);
+		if (nodes[j] == NULL) {
+			rc = -ENOMEM;
+			goto out;
+		}
+		j++;
+
+		for (size_t t = 0; t < 256; t++) {
+			if (ctx->nets[i].peeridx[t] == -1) {
+				continue;
+			}
+			// .../mctp1/networks/<NetID>/endpoints object
+			nodes[j] = root_endpoints_path(ctx->nets[i].net);
+			if (nodes[j] == NULL) {
+				rc = -ENOMEM;
+				goto out;
+			}
+			j++;
+			break;
+		}
+	}
 
 	// Peers
 	for (i = 0; i < ctx->size_peers; i++) {
@@ -3038,16 +3099,6 @@ static int mctpd_dbus_enumerate(sd_bus *bus, const char* path,
 		rc = path_from_peer(peer, &nodes[j]);
 		if (rc < 0)
 			goto out;
-		j++;
-	}
-
-	// Nets
-	for (i = 0; i < ctx->num_nets; i++) {
-		nodes[j] = net_path(ctx->nets[i].net);
-		if (nodes[j] == NULL) {
-			rc = -ENOMEM;
-			goto out;
-		}
 		j++;
 	}
 
