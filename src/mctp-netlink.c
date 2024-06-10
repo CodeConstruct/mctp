@@ -28,6 +28,8 @@ struct linkmap_entry {
 
 	mctp_eid_t *local_eids;
 	size_t num_local;
+
+	void	*userdata;
 };
 
 struct mctp_nl {
@@ -242,7 +244,7 @@ static void fill_eid_changes(const struct linkmap_entry *oe,
 }
 
 static void fill_link_changes(const struct linkmap_entry *old, size_t old_count,
-	const struct linkmap_entry *new, size_t new_count,
+	struct linkmap_entry *new, size_t new_count,
 	mctp_nl_change **changes, size_t *num_changes) {
 
 	size_t siz = 0;
@@ -250,7 +252,7 @@ static void fill_link_changes(const struct linkmap_entry *old, size_t old_count,
 	// iterate and match old/new interface lists
 	for (size_t o = 0, n = 0; o < old_count || n < new_count; ) {
 		const struct linkmap_entry *oe = &old[o];
-		const struct linkmap_entry *ne = &new[n];
+		struct linkmap_entry *ne = &new[n];
 		mctp_nl_change *ch = NULL;
 
 		if (o >= old_count)
@@ -261,6 +263,7 @@ static void fill_link_changes(const struct linkmap_entry *old, size_t old_count,
 
 		if (oe && ne && oe->ifindex == ne->ifindex) {
 			// Same link.
+			ne->userdata = oe->userdata;
 			if (oe->net == ne->net) {
 				// Same net. Check for eid changes.
 				fill_eid_changes(oe,
@@ -280,6 +283,7 @@ static void fill_link_changes(const struct linkmap_entry *old, size_t old_count,
 				ch->op = MCTP_NL_CHANGE_NET;
 				ch->ifindex = ne->ifindex;
 				ch->old_net = oe->net;
+				ch->link_userdata = oe->userdata;
 			}
 
 			if (oe->up != ne->up) {
@@ -287,6 +291,7 @@ static void fill_link_changes(const struct linkmap_entry *old, size_t old_count,
 				ch->op = MCTP_NL_CHANGE_UP;
 				ch->ifindex = ne->ifindex;
 				ch->old_up = oe->up;
+				ch->link_userdata = oe->userdata;
 			}
 			o++;
 			n++;
@@ -309,6 +314,7 @@ static void fill_link_changes(const struct linkmap_entry *old, size_t old_count,
 			ch->op = MCTP_NL_DEL_LINK;
 			ch->ifindex = oe->ifindex;
 			ch->old_net = oe->net;
+			ch->link_userdata = oe->userdata;
 			o++;
 		}
 	}
@@ -927,6 +933,23 @@ int mctp_nl_net_byindex(const mctp_nl *nl, int index)
 	if (entry)
 		return entry->net;
 	return 0;
+}
+
+int mctp_nl_set_link_userdata(mctp_nl *nl, int ifindex, void *userdata)
+{
+	struct linkmap_entry *entry = entry_byindex(nl, ifindex);
+	if (!entry)
+		return -1;
+
+	entry->userdata = userdata;
+	return 0;
+}
+
+void *mctp_nl_get_link_userdata(const mctp_nl *nl, int ifindex)
+{
+	struct linkmap_entry *entry = entry_byindex(nl, ifindex);
+
+	return entry ? entry->userdata : NULL;
 }
 
 bool mctp_nl_up_byindex(const mctp_nl *nl, int index)
