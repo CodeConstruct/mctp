@@ -31,6 +31,10 @@ struct mctp_nl_change {
 
 	// Filled for CHANGE_UP
 	bool old_up;
+
+	// If userdata is present on the link, it is passed here. Populated for
+	// link change events (DEL_LINK, CHANGE_NET, CHANGE_UP).
+	void *link_userdata;
 };
 typedef struct mctp_nl_change mctp_nl_change;
 
@@ -68,6 +72,18 @@ void mctp_nl_linkmap_dump(const mctp_nl *nl);
 int *mctp_nl_net_list(const mctp_nl *nl, size_t *ret_num_nets);
 /* Returns an allocated list of ifindex, caller to free */
 int *mctp_nl_if_list(const mctp_nl *nl, size_t *ret_num_if);
+
+/* Get/set userdata for a link. The userdata is attached to a link
+ * with index @ifindex. Userdata will also be populated into
+ * struct mctp_nl_change->userdata, and would typically be freed on
+ * MCTP_NL_DEL_LINK events
+ *
+ * Returns non-zero if the link does not exist.
+ */
+int mctp_nl_set_link_userdata(mctp_nl *nl, int ifindex, void *userdata);
+
+/* Returns NULL if the link does not exist */
+void *mctp_nl_get_link_userdata(const mctp_nl *nl, int ifindex);
 
 /* MCTP route helper */
 int mctp_nl_route_add(struct mctp_nl *nl, uint8_t eid, const char* ifname,
