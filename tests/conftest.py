@@ -322,6 +322,16 @@ class BaseSocket:
             level = int.from_bytes(level, byteorder = sys.byteorder)
             optname = int.from_bytes(optname, byteorder = sys.byteorder)
             await self.handle_setsockopt(level, optname, optval)
+        elif typ == 3:
+            # bind
+            addr = data[:MAX_SOCKADDR_SIZE]
+            addrlen = int.from_bytes(
+                    data[MAX_SOCKADDR_SIZE:MAX_SOCKADDR_SIZE+4],
+                    byteorder = sys.byteorder
+                )
+            addr = addr[:addrlen]
+            await self.handle_bind(addr)
+
         else:
             print(f"unknown message type {typ}")
 
@@ -331,6 +341,9 @@ class BaseSocket:
         addr += b'\0' * (MAX_SOCKADDR_SIZE - addrlen)
         buf = struct.pack("@I", 0) + addr + struct.pack("@I", addrlen) + data
         await self.sock.send(buf)
+
+    async def handle_bind(self, addr):
+        pass
 
 class MCTPSockAddr:
     base_addr_fmt = "@HHiBBBB"

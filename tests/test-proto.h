@@ -31,6 +31,7 @@ struct sock_msg {
 		SOCK_RECV,
 		SOCK_SEND,
 		SOCK_SETSOCKOPT,
+		SOCK_BIND,
 	} type;
 	union {
 		struct sock_msg_recv {
@@ -48,6 +49,10 @@ struct sock_msg {
 			int optname;
 			uint8_t optdata[];
 		} setsockopt;
+		struct sock_msg_bind {
+			union sock_msg_sockaddr addr;
+			socklen_t addrlen;
+		} bind;
 	};
 };
 

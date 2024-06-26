@@ -83,6 +83,30 @@ static int mctp_op_netlink_socket(void)
 
 static int mctp_op_bind(int sd, struct sockaddr *addr, socklen_t addrlen)
 {
+	struct msghdr msg = { 0 };
+	struct sock_msg sock_msg;
+	struct iovec iov;
+	ssize_t rc;
+
+	sock_msg.type = SOCK_BIND;
+	sock_msg.bind.addrlen = addrlen;
+	memcpy(&sock_msg.bind.addr.buf, addr, addrlen);
+
+	iov.iov_base = &sock_msg;
+	iov.iov_len = sizeof(sock_msg);
+
+	msg.msg_iov = &iov;
+	msg.msg_iovlen = 1;
+
+	rc = sendmsg(sd, &msg, 0);
+	if (rc < 0)
+		return rc;
+
+	if (rc < (int)sizeof(sock_msg)) {
+		errno = EPROTO;
+		return -1;
+	}
+
 	return 0;
 }
 
