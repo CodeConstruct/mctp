@@ -773,10 +773,10 @@ class MctpdWrapper:
             elif op == 0x01:
                 # MCTP socket()
                 (local, remote) = self.socketpair()
-                nl = MCTPSocket(local, self.system, self.network)
+                sd = MCTPSocket(local, self.system, self.network)
                 await send_fd(self.sock_local, remote.fileno())
                 remote.close()
-                nursery.start_soon(nl.run)
+                nursery.start_soon(sd.run)
 
             elif op == 0x02:
                 # NL socket()
