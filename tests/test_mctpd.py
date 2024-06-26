@@ -368,3 +368,25 @@ async def test_assign_endpoint_static_varies(dbus, mctpd):
         await mctp.call_assign_endpoint_static(iface.name, dev.lladdr, 13)
 
     assert str(ex.value) == "Already assigned a different EID"
+
+""" Test that the mctpd control protocol responder support has support
+for a basic Get Endpoint ID command"""
+async def test_get_endpoint_id(dbus, mctpd):
+    iface = mctpd.system.interfaces[0]
+    dev = mctpd.network.endpoints[0]
+    mctp = await mctpd_mctp_obj(dbus)
+    dev.eid = 12
+
+    mctpd.system.add_route(mctpd.system.Route(iface, dev.eid, 0))
+    mctpd.system.add_neighbour(
+        mctpd.system.Neighbour(iface, dev.lladdr, dev.eid)
+    )
+
+    rsp = await dev.send_control(mctpd.network.mctp_socket, 0x02)
+
+    # command code
+    assert rsp[1] == 0x02
+    # completion code indicates success
+    assert rsp[2] == 0x00
+    # EID matches the system
+    assert rsp[3] == mctpd.system.addresses[0].eid
