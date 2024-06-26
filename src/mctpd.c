@@ -426,6 +426,13 @@ static int read_message(ctx *ctx, int sd, uint8_t **ret_buf, size_t *ret_buf_siz
 		goto out;
 	}
 
+	if (len == 0) {
+		*ret_buf = NULL;
+		*ret_buf_size = 0;
+		rc = 0;
+		goto out;
+	}
+
 	buf_size = len;
 	buf = malloc(buf_size);
 	if (!buf) {
@@ -721,7 +728,7 @@ static int cb_listen_control_msg(sd_event_source *s, int sd, uint32_t revents,
 	if (rc < 0)
 		goto out;
 
-	if (rc == 0)
+	if (buf_size == 0)
 		errx(EXIT_FAILURE, "Control socket returned EOF");
 
 	if (addr.smctp_base.smctp_type != MCTP_CTRL_HDR_MSG_TYPE) {

@@ -33,4 +33,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
    pre-configured EID that would conflict with other (already enumerated)
    endpoints. The new endpoint will get a non-conflicting address assigned.
 
+2. mctpd: fix incorrect error detection on control socket reads
+
 ## [1.1] - 2023-04-13
