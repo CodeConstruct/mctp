@@ -200,6 +200,46 @@ class Endpoint:
     def reset(self):
         self.eid = 0
 
+    async def handle_mctp_message(self, sock, addr, data):
+        if addr.type == 0:
+            await self.handle_mctp_control(sock, addr, data)
+        else:
+            print(f"unknown MCTP message type {a.type}")
+
+    async def handle_mctp_control(self, sock, addr, data):
+        flags, opcode = data[0:2]
+
+        # we're only a responder, ensure we have the Rq bit set
+        assert flags & 0x80
+
+        raddr = MCTPSockAddr.for_ep_resp(self, addr, sock.addr_ext)
+        hdr = [0x00, opcode]
+        if opcode == 1:
+            # Set Endpoint ID
+            (op, eid) = data[2:]
+            self.eid = eid
+            data = bytes(hdr + [0x00, 0x00, self.eid, 0x00])
+            await sock.send(raddr, data)
+
+        elif opcode == 2:
+            # Get Endpoint ID
+            data = bytes(hdr + [0x00, self.eid, 0x00, 0x00])
+            await sock.send(raddr, data)
+
+        elif opcode == 3:
+            # Get Endpoint UUID
+            data = bytes(hdr + [0x00]) + self.uuid.bytes
+            await sock.send(raddr, data)
+
+        elif opcode == 5:
+            # Get Message Type Support
+            types = self.types
+            data = bytes(hdr + [0x00, len(types)] + types)
+            await sock.send(raddr, data)
+
+        else:
+            await sock.send(raddr, bytes(hdr + [0x05])) # unsupported command
+
 class Network:
     def __init__(self):
         self.endpoints = []
@@ -427,41 +467,7 @@ class MCTPSocket(BaseSocket):
         if ep is None:
             return
 
-        if a.type == 0:
-            await self._handle_mctp_control(ep, a, data)
-        else:
-            print(f"unknown MCTP message type {a.type}")
-
-    async def _handle_mctp_control(self, ep, addr, data):
-        flags, opcode = data[0:2]
-        raddr = MCTPSockAddr.for_ep_resp(ep, addr, self.addr_ext)
-        hdr = [0x00, opcode]
-        if opcode == 1:
-            # Set Endpoint ID
-            (op, eid) = data[2:]
-            ep.eid = eid
-            data = bytes(hdr + [0x00, 0x00, ep.eid, 0x00])
-            await self.send(raddr, data)
-
-        elif opcode == 2:
-            # Get Endpoint ID
-            data = bytes(hdr + [0x00, ep.eid, 0x00, 0x00])
-            await self.send(raddr, data)
-
-        elif opcode == 3:
-            # Get Endpoint UUID
-            data = bytes(hdr + [0x00]) + ep.uuid.bytes
-            await self.send(raddr, data)
-
-        elif opcode == 5:
-            # Get Message Type Support
-            types = ep.types
-            data = bytes(hdr + [0x00, len(types)] + types)
-            await self.send(raddr, data)
-
-        else:
-            await self.send(raddr, bytes(hdr + [0x05])) # unsupported command
-
+        await ep.handle_mctp_message(self, a, data)
 
     async def handle_setsockopt(self, level, optname, optval):
         if level == 285 and optname == 1:
