@@ -236,6 +236,7 @@ class Endpoint:
         else:
             print(f"unknown MCTP message type {a.type}")
 
+
     async def handle_mctp_control(self, sock, addr, data):
         flags, opcode = data[0:2]
         rq = flags & 0x80
@@ -250,7 +251,9 @@ class Endpoint:
         else:
 
             raddr = MCTPSockAddr.for_ep_resp(self, addr, sock.addr_ext)
-            hdr = [0x00, opcode]
+            # Use IID from request, zero Rq and D bits
+            hdr = [iid, opcode]
+
             if opcode == 1:
                 # Set Endpoint ID
                 (op, eid) = data[2:]
