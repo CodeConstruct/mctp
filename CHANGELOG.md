@@ -34,6 +34,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
    and version interface, bus owner and entry-point object names. See
    docs/mctpd.md for full details on the new interface.
 
+5. In line with the above, bus-owner related dbus methods (SetupEndpoint and
+   friends) now exist on the MCTP interface objects, and only when those
+   interface objects have the bus owner role. Because those methods are
+   now associated with the interface object, they no longer take the
+   interface name as their first argument.
+
 ### Fixed
 
 1. mctpd: EID assignments now work in the case where a new endpoint has a

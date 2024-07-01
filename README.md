@@ -73,16 +73,18 @@ coordinate the local setup and the supervision of the mctpd process.
 An example configuration is in [`conf/mctpd.conf`](conf/mctpd.conf).
 
 The `mctpd` daemon will expose a dbus interface, claiming the bus name
-`au.com.codeconstruct.MCTP1` and object path `/au/com/codeconstruct/mctp1`. This
-provides a few functions for configuring remote endpoints:
+`au.com.codeconstruct.MCTP1` and object path `/au/com/codeconstruct/mctp1`.
 
-    # busctl introspect au.com.codeconstruct.MCTP1 /au/com/codeconstruct/mctp1/
-    NAME                                TYPE      SIGNATURE  RESULT/VALUE  FLAGS
-    au.com.codeconstruct.MCTP           interface -          -             -
-    .AssignEndpoint                     method    say        yisb          -
-    .AssignEndpointStatic               method    sayy       yisb          -
-    .LearnEndpoint                      method    say        yisb          -
-    .SetupEndpoint                      method    say        yisb          -
+Each detected MCTP interface on the system provides a few functions for
+configuring remote endpoints on that bus:
+
+    # busctl introspect au.com.codeconstruct.MCTP1 /au/com/codeconstruct/mctp1/interfaces/mctpi2c1
+    NAME                                 TYPE      SIGNATURE  RESULT/VALUE  FLAGS
+    au.com.codeconstruct.MCTP.Interface1 interface -          -             -
+    .AssignEndpoint                      method    ay         yisb          -
+    .AssignEndpointStatic                method    ayy        yisb          -
+    .LearnEndpoint                       method    ay         yisb          -
+    .SetupEndpoint                       method    ay         yisb          -
 
 Results of mctpd enumeration are also represented as dbus objects, using the
 OpenBMC-specified MCTP endpoint format. Each endpoint appears on the bus at the

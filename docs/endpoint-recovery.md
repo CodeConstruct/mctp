@@ -149,6 +149,7 @@ root@cc-nvme-mi:~# busctl tree au.com.codeconstruct.MCTP1
   └─/au/com
     └─/au/com/codeconstruct
       └─/au/com/codeconstruct/mctp1
+        ├─/au/com/codeconstruct/mctp1/interfaces/mctpi2c0
         ├─/au/com/codeconstruct/mctp1/networks/1
         │ └─/au/com/codeconstruct/mctp1/networks/1/endpoints/12
           ├─/au/com/codeconstruct/mctp1/networks/1/endpoints/8
@@ -158,16 +159,31 @@ root@cc-nvme-mi:~# busctl tree au.com.codeconstruct.MCTP1
 ```
 root@cc-nvme-mi:~# busctl introspect au.com.codeconstruct.MCTP1 /au/com/codeconstruct/mctp1
 NAME                                TYPE      SIGNATURE  RESULT/VALUE  FLAGS
-au.com.codeconstruct.Endpoint1      interface -          -             -
-.AssignEndpoint                     method    say        yisb          -
-.LearnEndpoint                      method    say        yisb          -
-.SetupEndpoint                      method    say        yisb          -
 org.freedesktop.DBus.Introspectable interface -          -             -
 .Introspect                         method    -          s             -
 org.freedesktop.DBus.ObjectManager  interface -          -             -
 .GetManagedObjects                  method    -          a{oa{sa{sv}}} -
 .InterfacesAdded                    signal    oa{sa{sv}} -             -
 .InterfacesRemoved                  signal    oas        -             -
+org.freedesktop.DBus.Peer           interface -          -             -
+.GetMachineId                       method    -          s             -
+.Ping                               method    -          -             -
+org.freedesktop.DBus.Properties     interface -          -             -
+.Get                                method    ss         v             -
+.GetAll                             method    s          a{sv}         -
+.Set                                method    ssv        -             -
+.PropertiesChanged                  signal    sa{sv}as   -             -
+```
+
+```
+root@cc-nvme-mi:~# busctl introspect au.com.codeconstruct.MCTP1 /au/com/codeconstruct/mctp1/interfaces/mctpi2c0
+NAME                                TYPE      SIGNATURE  RESULT/VALUE  FLAGS
+au.com.codeconstruct.Interface1     interface -          -             -
+.AssignEndpoint                     method    ay         yisb          -
+.LearnEndpoint                      method    ay         yisb          -
+.SetupEndpoint                      method    ay         yisb          -
+org.freedesktop.DBus.Introspectable interface -          -             -
+.Introspect                         method    -          s             -
 org.freedesktop.DBus.Peer           interface -          -             -
 .GetMachineId                       method    -          s             -
 .Ping                               method    -          -             -
@@ -361,8 +377,8 @@ The general strategy for tracking endpoint lifecycles is [as follows]
    registered as an MCTP endpoint.
 
 2. The FRU data is decoded and `SetupEndpoint` on the
-   `au.com.codeconstruct.MCTP.BusOwner1.DRAFT` interface of the
-   `/au/com/codeconstruct/mctp1`
+   `au.com.codeconstruct.MCTP.BusOwner1` interface of the
+   `/au/com/codeconstruct/mctp1/interfaces/<interface>`
    object hosted by `mctpd` is invoked.
 
 3. The device was not previously configured and has no programmed static EID.

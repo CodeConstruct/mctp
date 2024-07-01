@@ -13,19 +13,20 @@ As well as those standard interfaces, `mctpd` provides methods to add and
 configure MCTP endpoints. These are provided by the `au.com.codeconstruct.MCTP1`
 D-Bus interface.
 
-## Bus-owner methods: `au.com.codeconstruct.MCTP.BusOwner1.DRAFT` interface
+## Bus-owner methods: `au.com.codeconstruct.MCTP.BusOwner1` interface
 
-This interface exposes bus-owner level functions.
+This interface exposes bus-owner level functions, on each interface object that
+represents the bus-owner side of a transport.
 
-### `.SetupEndpoint`: `say` → `yisb`
+### `.SetupEndpoint`: `ay` → `yisb`
 
-This method is the normal method used to add a MCTP endpoint. The endpoint is
-identified by MCTP network interface, and physical address. `mctpd` will query
-for the endpoint's current EID, and assign an EID to the endpoint if needed.
-`mctpd` will add local MCTP routes and neighbour table entries for endpoints as
-they are added.
+This method is the normal method used to add a MCTP endpoint on this interface.
+The endpoint is identified by physical address. `mctpd` will query for the
+endpoint's current EID, and assign an EID to the endpoint if needed. `mctpd`
+will add local MCTP routes and neighbour table entries for endpoints as they are
+added.
 
-`SetupEndpoint <interface name> <hwaddr>`
+`SetupEndpoint <hwaddr>`
 
 Returns
 ```
@@ -45,24 +46,24 @@ An example:
 
 ```shell
 busctl call au.com.codeconstruct.MCTP1 \
-    /au/com/codeconstruct/mctp1 \
-    au.com.codeconstruct.MCTP1 \
-    SetupEndpoint say mctpi2c6 1 0x1d
+    /au/com/codeconstruct/mctp1/interfaces/mctpi2c6 \
+    au.com.codeconstruct.MCTP.Interface1 \
+    SetupEndpoint ay 1 0x1d
 ```
 `1` is the length of the hwaddr array.
 
-### `.AssignEndpoint`: `say` → `yisb`
+### `.AssignEndpoint`: `ay` → `yisb`
 
 Similar to SetupEndpoint, but will always assign an EID rather than querying for
 existing ones. Will return `new = false` when an endpoint is already known to
 `mctpd`.
 
-### `.AssignEndpointStatic`: `sayy` → `yisb`
+### `.AssignEndpointStatic`: `ayy` → `yisb`
 
 Similar to AssignEndpoint, but takes an additional EID argument:
 
 ```
-AssignEndpointStatic <interface name> <hwaddr> <static-EID>
+AssignEndpointStatic <hwaddr> <static-EID>
 ```
 
 to assign `<static-EID>` to the endpoint with hardware address `hwaddr`.
@@ -71,7 +72,7 @@ This call will fail if the endpoint already has an EID, and that EID is
 different from `static-EID`, or if `static-EID` is already assigned to another
 endpoint.
 
-### `.LearnEndpoint`: `say` → `yisb`
+### `.LearnEndpoint`: `ay` → `yisb`
 
 Like SetupEndpoint but will not assign EIDs, will only query endpoints for a
 current EID. The `new` return value is set to `false` for an already known

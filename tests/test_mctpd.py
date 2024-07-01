@@ -3,7 +3,7 @@ import trio
 import uuid
 import asyncdbus
 
-from mctp_test_utils import mctpd_mctp_obj, mctpd_mctp_endpoint_obj
+from mctp_test_utils import mctpd_mctp_iface_obj, mctpd_mctp_endpoint_obj
 from conftest import Endpoint
 
 # DBus constant symbol suffixes:
@@ -13,7 +13,7 @@ from conftest import Endpoint
 # - I: Interface
 MCTPD_C = 'au.com.codeconstruct.MCTP1'
 MCTPD_MCTP_P = '/au/com/codeconstruct/mctp1'
-MCTPD_MCTP_I = 'au.com.codeconstruct.MCTP.BusOwner1.DRAFT'
+MCTPD_MCTP_I = 'au.com.codeconstruct.MCTP.BusOwner1'
 MCTPD_ENDPOINT_I = 'au.com.codeconstruct.MCTP.Endpoint1'
 DBUS_OBJECT_MANAGER_I = 'org.freedesktop.DBus.ObjectManager'
 DBUS_PROPERTIES_I = 'org.freedesktop.DBus.Properties'
@@ -28,8 +28,8 @@ the new kernel neighbour and route entries.
 
 We have a few things provided by the test infrastructure:
 
- - dbus is the dbus connection, call the mctpd_mctp_obj helper to
-   get the MCTP dbus object
+ - dbus is the dbus connection, call the mctpd_mctp_iface_obj helper to
+   get the MCTP dbus interface object
 
  - mctpd is our wrapper for the mctpd process and mock MCTP environment. This
    has two properties that represent external state:
@@ -64,10 +64,10 @@ async def test_setup_endpoint(dbus, mctpd):
     ep = mctpd.network.endpoints[0]
 
     # our proxy dbus object for mctpd
-    mctp = await mctpd_mctp_obj(dbus)
+    mctp = await mctpd_mctp_iface_obj(dbus, iface)
 
     # call SetupEndpoint. This will raise an exception on any dbus error.
-    (eid, net, path, new) = await mctp.call_setup_endpoint(iface.name, ep.lladdr)
+    (eid, net, path, new) = await mctp.call_setup_endpoint(ep.lladdr)
 
     # ep.eid will be updated (through the Set Endpoint ID message); this
     # should match the returned EID
@@ -93,26 +93,27 @@ We have the following scenario:
 At (3), we should reconfigure the EID to B.
 """
 async def test_setup_endpoint_conflict(dbus, mctpd):
-    mctp = await mctpd_mctp_obj(dbus)
-
     iface = mctpd.system.interfaces[0]
+
+    mctp = await mctpd_mctp_iface_obj(dbus, iface)
+
     ep1 = mctpd.network.endpoints[0]
-    (eid1, _, _, _) = await mctp.call_setup_endpoint(iface.name, ep1.lladdr)
+    (eid1, _, _, _) = await mctp.call_setup_endpoint(ep1.lladdr)
 
     # endpoint configured with eid1 already
     ep2 = Endpoint(iface, bytes([0x1e]), eid=eid1)
     mctpd.network.add_endpoint(ep2)
 
-    (eid2, _, _, _) = await mctp.call_setup_endpoint(iface.name, ep2.lladdr)
+    (eid2, _, _, _) = await mctp.call_setup_endpoint(ep2.lladdr)
     assert eid1 != eid2
 
 """ Test neighbour removal """
 async def test_remove_endpoint(dbus, mctpd):
-    mctp = await mctpd_mctp_obj(dbus)
-
     iface = mctpd.system.interfaces[0]
     ep1 = mctpd.network.endpoints[0]
-    (_, _, path, _) = await mctp.call_setup_endpoint(iface.name, ep1.lladdr)
+
+    mctp = await mctpd_mctp_iface_obj(dbus, iface)
+    (_, _, path, _) = await mctp.call_setup_endpoint(ep1.lladdr)
 
     assert(len(mctpd.system.neighbours) == 1)
 
@@ -124,8 +125,8 @@ async def test_remove_endpoint(dbus, mctpd):
 async def test_recover_endpoint_present(dbus, mctpd):
     iface = mctpd.system.interfaces[0]
     dev = mctpd.network.endpoints[0]
-    mctp = await mctpd_mctp_obj(dbus)
-    (eid, net, path, new) = await mctp.call_setup_endpoint(iface.name, dev.lladdr)
+    mctp = await mctpd_mctp_iface_obj(dbus, iface)
+    (eid, net, path, new) = await mctp.call_setup_endpoint(dev.lladdr)
 
     ep = await dbus.get_proxy_object(MCTPD_C, path)
     ep_props = await ep.get_interface(DBUS_PROPERTIES_I)
@@ -152,8 +153,8 @@ async def test_recover_endpoint_removed(dbus, mctpd):
     iface = mctpd.system.interfaces[0]
     dev = mctpd.network.endpoints[0]
     mctp = await dbus.get_proxy_object(MCTPD_C, MCTPD_MCTP_P)
-    mctp_mctp = await mctp.get_interface(MCTPD_MCTP_I)
-    (eid, net, path, new) = await mctp_mctp.call_setup_endpoint(iface.name, dev.lladdr)
+    mctp_iface = await mctpd_mctp_iface_obj(dbus, iface)
+    (eid, net, path, new) = await mctp_iface.call_setup_endpoint(dev.lladdr)
 
     ep = await dbus.get_proxy_object(MCTPD_C, path)
     ep_props = await ep.get_interface(DBUS_PROPERTIES_I)
@@ -189,8 +190,8 @@ async def test_recover_endpoint_reset(dbus, mctpd):
     iface = mctpd.system.interfaces[0]
     dev = mctpd.network.endpoints[0]
     mctp = await dbus.get_proxy_object(MCTPD_C, MCTPD_MCTP_P)
-    mctp_mctp = await mctp.get_interface(MCTPD_MCTP_I)
-    (eid, net, path, new) = await mctp_mctp.call_setup_endpoint(iface.name, dev.lladdr)
+    mctp_iface = await mctpd_mctp_iface_obj(dbus, iface)
+    (eid, net, path, new) = await mctp_iface.call_setup_endpoint(dev.lladdr)
 
     ep = await dbus.get_proxy_object(MCTPD_C, path)
     ep_props = await ep.get_interface(DBUS_PROPERTIES_I)
@@ -225,8 +226,8 @@ async def test_recover_endpoint_exchange(dbus, mctpd):
     iface = mctpd.system.interfaces[0]
     dev = mctpd.network.endpoints[0]
     mctp = await dbus.get_proxy_object(MCTPD_C, MCTPD_MCTP_P)
-    mctp_mctp = await mctp.get_interface(MCTPD_MCTP_I)
-    (eid, net, path, new) = await mctp_mctp.call_setup_endpoint(iface.name, dev.lladdr)
+    mctp_iface = await mctpd_mctp_iface_obj(dbus, iface)
+    (eid, net, path, new) = await mctp_iface.call_setup_endpoint(dev.lladdr)
 
     ep = await dbus.get_proxy_object(MCTPD_C, path)
     ep_props = await ep.get_interface(DBUS_PROPERTIES_I)
@@ -279,11 +280,10 @@ on an AssignEndpointStatic call """
 async def test_assign_endpoint_static(dbus, mctpd):
     iface = mctpd.system.interfaces[0]
     dev = mctpd.network.endpoints[0]
-    mctp = await mctpd_mctp_obj(dbus)
+    mctp = await mctpd_mctp_iface_obj(dbus, iface)
     static_eid = 12
 
     (eid, _, _, new) = await mctp.call_assign_endpoint_static(
-        iface.name,
         dev.lladdr,
         static_eid
     )
@@ -301,12 +301,11 @@ async def test_assign_endpoint_static(dbus, mctpd):
 EID"""
 async def test_assign_endpoint_static_allocated(dbus, mctpd):
     iface = mctpd.system.interfaces[0]
-    mctp = await mctpd_mctp_obj(dbus)
+    mctp = await mctpd_mctp_iface_obj(dbus, iface)
     dev = mctpd.network.endpoints[0]
     static_eid = 12
 
     (eid, _, _, new) = await mctp.call_assign_endpoint_static(
-        iface.name,
         dev.lladdr,
         static_eid,
     )
@@ -316,7 +315,6 @@ async def test_assign_endpoint_static_allocated(dbus, mctpd):
 
     # repeat, same EID
     (eid, _, _, new) = await mctp.call_assign_endpoint_static(
-        iface.name,
         dev.lladdr,
         static_eid,
     )
@@ -327,7 +325,7 @@ async def test_assign_endpoint_static_allocated(dbus, mctpd):
 """ Test that we cannot assign a conflicting static EID """
 async def test_assign_endpoint_static_conflict(dbus, mctpd):
     iface = mctpd.system.interfaces[0]
-    mctp = await mctpd_mctp_obj(dbus)
+    mctp = await mctpd_mctp_iface_obj(dbus, iface)
     dev1 = mctpd.network.endpoints[0]
 
     dev2 = Endpoint(iface, bytes([0x1e]))
@@ -335,7 +333,6 @@ async def test_assign_endpoint_static_conflict(dbus, mctpd):
 
     # dynamic EID assigment for dev1
     (eid, _, _, new) = await mctp.call_assign_endpoint(
-        iface.name,
         dev1.lladdr,
     )
 
@@ -343,7 +340,7 @@ async def test_assign_endpoint_static_conflict(dbus, mctpd):
 
     # try to assign dev2 with the dev1's existing EID
     with pytest.raises(asyncdbus.errors.DBusError) as ex:
-        await mctp.call_assign_endpoint_static(iface.name, dev2.lladdr, eid)
+        await mctp.call_assign_endpoint_static(dev2.lladdr, eid)
 
     assert str(ex.value) == "Address in use"
 
@@ -352,11 +349,10 @@ a different EID allocated"""
 async def test_assign_endpoint_static_varies(dbus, mctpd):
     iface = mctpd.system.interfaces[0]
     dev = mctpd.network.endpoints[0]
-    mctp = await mctpd_mctp_obj(dbus)
+    mctp = await mctpd_mctp_iface_obj(dbus, iface)
     static_eid = 12
 
     (eid, _, _, new) = await mctp.call_assign_endpoint_static(
-        iface.name,
         dev.lladdr,
         static_eid
     )
@@ -365,7 +361,7 @@ async def test_assign_endpoint_static_varies(dbus, mctpd):
     assert new
 
     with pytest.raises(asyncdbus.errors.DBusError) as ex:
-        await mctp.call_assign_endpoint_static(iface.name, dev.lladdr, 13)
+        await mctp.call_assign_endpoint_static(dev.lladdr, 13)
 
     assert str(ex.value) == "Already assigned a different EID"
 
@@ -374,7 +370,7 @@ for a basic Get Endpoint ID command"""
 async def test_get_endpoint_id(dbus, mctpd):
     iface = mctpd.system.interfaces[0]
     dev = mctpd.network.endpoints[0]
-    mctp = await mctpd_mctp_obj(dbus)
+    mctp = await mctpd_mctp_iface_obj(dbus, iface)
     dev.eid = 12
 
     mctpd.system.add_route(mctpd.system.Route(iface, dev.eid, 0))

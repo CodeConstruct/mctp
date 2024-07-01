@@ -43,7 +43,7 @@
 #define MCTP_DBUS_PATH "/au/com/codeconstruct/mctp1"
 #define MCTP_DBUS_PATH_NETWORKS "/au/com/codeconstruct/mctp1/networks"
 #define MCTP_DBUS_PATH_LINKS "/au/com/codeconstruct/mctp1/interfaces"
-#define CC_MCTP_DBUS_IFACE_BUSOWNER "au.com.codeconstruct.MCTP.BusOwner1.DRAFT"
+#define CC_MCTP_DBUS_IFACE_BUSOWNER "au.com.codeconstruct.MCTP.BusOwner1"
 #define CC_MCTP_DBUS_IFACE_ENDPOINT "au.com.codeconstruct.MCTP.Endpoint1"
 #define CC_MCTP_DBUS_IFACE_TESTING "au.com.codeconstruct.MCTPTesting"
 #define MCTP_DBUS_NAME "au.com.codeconstruct.MCTP1"
@@ -1790,6 +1790,31 @@ out:
 	return rc;
 }
 
+static int interface_call_to_ifindex_busowner(ctx *ctx, sd_bus_message *msg)
+{
+	const char *iface, *path;
+	link_userdata *link;
+	int rc, ifindex;
+
+	path = sd_bus_message_get_path(msg);
+	if (!path)
+		return -1;
+
+	rc = sd_bus_path_decode_many(path, MCTP_DBUS_PATH_LINKS "/%", &iface);
+	if (rc <= 0)
+		return -1;
+
+	ifindex = mctp_nl_ifindex_byname(ctx->nl, iface);
+	if (ifindex < 0)
+		return -1;
+
+	link = mctp_nl_get_link_userdata(ctx->nl, ifindex);
+	if (!link || link->role != ENDPOINT_ROLE_BUS_OWNER)
+		return -1;
+
+	return ifindex;
+}
+
 static int validate_dest_phys(ctx *ctx, const dest_phys *dest)
 {
 	if (dest->hwaddr_len > MAX_ADDR_LEN) {
@@ -1831,24 +1856,19 @@ static int message_read_hwaddr(sd_bus_message *call, dest_phys* dest)
 static int method_setup_endpoint(sd_bus_message *call, void *data, sd_bus_error *berr)
 {
 	int rc;
-	const char *ifname = NULL;
 	dest_phys desti = {0}, *dest = &desti;
 	char *peer_path = NULL;
 	ctx *ctx = data;
 	peer *peer = NULL;
 
-	rc = sd_bus_message_read(call, "s", &ifname);
-	if (rc < 0)
-		goto err;
+	dest->ifindex = interface_call_to_ifindex_busowner(ctx, call);
+	if (dest->ifindex <= 0)
+		return sd_bus_error_setf(berr, SD_BUS_ERROR_INVALID_ARGS,
+			"Unknown MCTP interface");
 
 	rc = message_read_hwaddr(call, dest);
 	if (rc < 0)
 		goto err;
-
-	dest->ifindex = mctp_nl_ifindex_byname(ctx->nl, ifname);
-	if (dest->ifindex <= 0)
-		return sd_bus_error_setf(berr, SD_BUS_ERROR_INVALID_ARGS,
-			"Unknown MCTP ifname '%s'", ifname);
 
 	rc = validate_dest_phys(ctx, dest);
 	if (rc < 0)
@@ -1895,24 +1915,19 @@ err:
 static int method_assign_endpoint(sd_bus_message *call, void *data, sd_bus_error *berr)
 {
 	int rc;
-	const char *ifname = NULL;
 	dest_phys desti, *dest = &desti;
 	char *peer_path = NULL;
 	ctx *ctx = data;
 	peer *peer = NULL;
 
-	rc = sd_bus_message_read(call, "s", &ifname);
-	if (rc < 0)
-		goto err;
+	dest->ifindex = interface_call_to_ifindex_busowner(ctx, call);
+	if (dest->ifindex <= 0)
+		return sd_bus_error_setf(berr, SD_BUS_ERROR_INVALID_ARGS,
+			"Unknown MCTP interface");
 
 	rc = message_read_hwaddr(call, dest);
 	if (rc < 0)
 		goto err;
-
-	dest->ifindex = mctp_nl_ifindex_byname(ctx->nl, ifname);
-	if (dest->ifindex <= 0)
-		return sd_bus_error_setf(berr, SD_BUS_ERROR_INVALID_ARGS,
-			"Unknown MCTP ifname '%s'", ifname);
 
 	rc = validate_dest_phys(ctx, dest);
 	if (rc < 0)
@@ -1951,16 +1966,16 @@ static int method_assign_endpoint_static(sd_bus_message *call, void *data,
 					 sd_bus_error *berr)
 {
 	dest_phys desti, *dest = &desti;
-	const char *ifname = NULL;
 	char *peer_path = NULL;
 	peer *peer = NULL;
 	ctx *ctx = data;
 	uint8_t eid;
 	int rc;
 
-	rc = sd_bus_message_read(call, "s", &ifname);
-	if (rc < 0)
-		goto err;
+	dest->ifindex = interface_call_to_ifindex_busowner(ctx, call);
+	if (dest->ifindex <= 0)
+		return sd_bus_error_setf(berr, SD_BUS_ERROR_INVALID_ARGS,
+			"Unknown MCTP interface");
 
 	rc = message_read_hwaddr(call, dest);
 	if (rc < 0)
@@ -1969,11 +1984,6 @@ static int method_assign_endpoint_static(sd_bus_message *call, void *data,
 	rc = sd_bus_message_read(call, "y", &eid);
 	if (rc < 0)
 		goto err;
-
-	dest->ifindex = mctp_nl_ifindex_byname(ctx->nl, ifname);
-	if (dest->ifindex <= 0)
-		return sd_bus_error_setf(berr, SD_BUS_ERROR_INVALID_ARGS,
-			"Unknown MCTP ifname '%s'", ifname);
 
 	rc = validate_dest_phys(ctx, dest);
 	if (rc < 0)
@@ -2028,25 +2038,20 @@ err:
 static int method_learn_endpoint(sd_bus_message *call, void *data, sd_bus_error *berr)
 {
 	int rc;
-	const char *ifname = NULL;
 	char *peer_path = NULL;
 	dest_phys desti, *dest = &desti;
 	ctx *ctx = data;
 	peer *peer = NULL;
 	mctp_eid_t eid = 0;
 
-	rc = sd_bus_message_read(call, "s", &ifname);
-	if (rc < 0)
-		goto err;
+	dest->ifindex = interface_call_to_ifindex_busowner(ctx, call);
+	if (dest->ifindex <= 0)
+		return sd_bus_error_setf(berr, SD_BUS_ERROR_INVALID_ARGS,
+			"Unknown MCTP interface");
 
 	rc = message_read_hwaddr(call, dest);
 	if (rc < 0)
 		goto err;
-
-	dest->ifindex = mctp_nl_ifindex_byname(ctx->nl, ifname);
-	if (dest->ifindex <= 0)
-		return sd_bus_error_setf(berr, SD_BUS_ERROR_INVALID_ARGS,
-			"Unknown MCTP ifname '%s'", ifname);
 
 	rc = validate_dest_phys(ctx, dest);
 	if (rc < 0)
@@ -2673,12 +2678,11 @@ static int method_test_timer(sd_bus_message *call, void *data, sd_bus_error *sde
 	return rc;
 }
 
-static const sd_bus_vtable bus_mctpd_vtable[] = {
+static const sd_bus_vtable bus_owner_vtable[] = {
 	SD_BUS_VTABLE_START(0),
 
 	SD_BUS_METHOD_WITH_NAMES("SetupEndpoint",
-		"say",
-		SD_BUS_PARAM(ifname)
+		"ay",
 		SD_BUS_PARAM(physaddr),
 		"yisb",
 		SD_BUS_PARAM(eid)
@@ -2689,8 +2693,7 @@ static const sd_bus_vtable bus_mctpd_vtable[] = {
 		0),
 
 	SD_BUS_METHOD_WITH_NAMES("AssignEndpoint",
-		"say",
-		SD_BUS_PARAM(ifname)
+		"ay",
 		SD_BUS_PARAM(physaddr),
 		"yisb",
 		SD_BUS_PARAM(eid)
@@ -2701,8 +2704,7 @@ static const sd_bus_vtable bus_mctpd_vtable[] = {
 		0),
 
 	SD_BUS_METHOD_WITH_NAMES("AssignEndpointStatic",
-		"sayy",
-		SD_BUS_PARAM(ifname)
+		"ayy",
 		SD_BUS_PARAM(physaddr)
 		SD_BUS_PARAM(eid),
 		"yisb",
@@ -2714,8 +2716,7 @@ static const sd_bus_vtable bus_mctpd_vtable[] = {
 		0),
 
 	SD_BUS_METHOD_WITH_NAMES("LearnEndpoint",
-		"say",
-		SD_BUS_PARAM(ifname)
+		"ay",
 		SD_BUS_PARAM(physaddr),
 		"yisb",
 		SD_BUS_PARAM(eid)
@@ -3137,9 +3138,9 @@ static char* root_endpoints_path(int net)
 }
 
 /* au.com.CodeConstruct.MCTP.Interface1 interface */
-static int bus_mctp_link_find(sd_bus *bus, const char *path,
-	const char *interface, void *userdata, void **ret_found,
-	sd_bus_error *ret_error)
+static int __bus_mctp_link_find(sd_bus *bus, const char *path,
+	const char *interface, void *userdata, bool owner_only,
+	void **ret_found, sd_bus_error *ret_error)
 {
 	ctx *ctx = userdata;
 	char *tmpstr = NULL;
@@ -3164,12 +3165,34 @@ static int bus_mctp_link_find(sd_bus *bus, const char *path,
 		return -ENOMEM;
 	}
 
+	printf("%s: owner_only %d, role %d\n", __func__, owner_only,
+	       lmUserData->role);
+
+	if (owner_only && lmUserData->role != ENDPOINT_ROLE_BUS_OWNER)
+		return 0;
+
 	if (lmUserData->published) {
 		*ret_found = ctx;
 		return 1;
 	}
 
 	return 0;
+}
+
+static int bus_mctp_link_find(sd_bus *bus, const char *path,
+	const char *interface, void *userdata,
+	void **ret_found, sd_bus_error *ret_error)
+{
+	return __bus_mctp_link_find(bus, path, interface, userdata, false,
+				    ret_found, ret_error);
+}
+
+static int bus_mctp_link_busowner_find(sd_bus *bus, const char *path,
+	const char *interface, void *userdata, void **ret_found,
+	sd_bus_error *ret_error)
+{
+	return __bus_mctp_link_find(bus, path, interface, userdata, true,
+				    ret_found, ret_error);
 }
 
 static char* net_path(int net)
@@ -3517,16 +3540,6 @@ static int setup_bus(ctx *ctx)
 
 	/* mctp object needs to use _fallback_vtable() since we can't
 	   mix non-fallback and fallback vtables on MCTP_DBUS_PATH */
-	rc = sd_bus_add_fallback_vtable(ctx->bus, NULL,
-					MCTP_DBUS_PATH,
-					CC_MCTP_DBUS_IFACE_BUSOWNER,
-					bus_mctpd_vtable,
-					bus_mctpd_find,
-					ctx);
-	if (rc < 0) {
-		warnx("Failed creating D-Bus object");
-		goto out;
-	}
 
 	rc = sd_bus_add_fallback_vtable(ctx->bus, NULL,
 					MCTP_DBUS_PATH,
@@ -3573,6 +3586,16 @@ static int setup_bus(ctx *ctx)
 		goto out;
 	}
 
+	rc = sd_bus_add_fallback_vtable(ctx->bus, NULL,
+					MCTP_DBUS_PATH,
+					CC_MCTP_DBUS_IFACE_BUSOWNER,
+					bus_owner_vtable,
+					bus_mctp_link_busowner_find,
+					ctx);
+	if (rc < 0) {
+		warnx("Failed creating D-Bus object");
+		goto out;
+	}
 	rc = sd_bus_add_object_manager(ctx->bus, NULL, MCTP_DBUS_PATH);
 	if (rc < 0) {
 		warnx("Adding object manager failed: %s", strerror(-rc));
