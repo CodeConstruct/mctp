@@ -3,22 +3,86 @@
 ## D-Bus
 
 `mctpd` provides a D-Bus service named `au.com.codeconstruct.MCTP1`, and a base
-object path of `/au/com/codeconstruct/mctp1`. For each known MCTP endpoint,
-`mctpd` will populate an object at
-`/au/com/codeconstruct/mctp1/networks/<NetworkId>/endpoints/<EID>`. The objects have
-interface `xyz.openbmc_project.MCTP.Endpoint`, as per [OpenBMC
-documentation](https://github.com/openbmc/phosphor-dbus-interfaces/tree/master/yaml/xyz/openbmc_project/MCTP).
+object path of `/au/com/codeconstruct/mctp1`. This tree represents both the
+local MCTP stack state and the results of remote device enumeration.
 
-As well as those standard interfaces, `mctpd` provides methods to add and
-configure MCTP endpoints. These are provided by the `au.com.codeconstruct.MCTP1`
-D-Bus interface.
+```
+Service au.com.codeconstruct.MCTP1:
+└─ /au
+  └─ /au/com
+    └─ /au/com/codeconstruct
+      └─ /au/com/codeconstruct/mctp1
+        ├─ /au/com/codeconstruct/mctp1/interfaces
+        │ ├─ /au/com/codeconstruct/mctp1/interfaces/lo
+        │ └─ /au/com/codeconstruct/mctp1/interfaces/mctpi2c1
+        └─ /au/com/codeconstruct/mctp1/networks
+          └─ /au/com/codeconstruct/mctp1/networks/1
+            └─ /au/com/codeconstruct/mctp1/networks/1/endpoints
+              ├─ /au/com/codeconstruct/mctp1/networks/1/endpoints/8
+              └─ /au/com/codeconstruct/mctp1/networks/1/endpoints/10
+```
 
-## Bus-owner methods: `au.com.codeconstruct.MCTP.BusOwner1` interface
+
+## Top-level object: `/au/com/codeconstruct/mctp1`
+
+This object serves as the global MCTP daemon namespace; it doesn't contain
+much at present, but hosts two trees of MCTP objects:
+
+ * Interfaces: Local hardware transport bindings that connect us to a MCTP bus
+ * Endpoints: MCTP endpoints that `mctpd` knows about, both remote and local
+
+This object implements the `org.freedesktop.DBus.ObjectManager` interface,
+allowing enumeration of managed networks, endpoints and interfaces.
+
+## MCTP Interface objects: `/au/com/codeconstruct/interfaces/<name>`
+
+The interface objects represent a connection to a MCTP bus; these will be
+1:1 with the MCTP network interfaces on the system.
+
+### MCTP interface interface: `au.com.codeconstruct.MCTP.Interface1`
+
+All MCTP interface objects host the `au.com.codeconstruct.Interface1` dbus
+interface:
+
+```
+NAME                                 TYPE      SIGNATURE RESULT/VALUE FLAGS
+au.com.CodeConstruct.MCTP.Interface1 interface -         -            -
+.Role                                property  s         "BusOwner"   emits-change writable
+```
+
+The D-Bus interface includes the `Role` property which reports BMC roles
+in the link. The possible value of `Role` are:
+
+ * `BusOwner`: this link is the owner of the attached bus,
+ * `Endpoint`: this link is not the owner of the attached bus; and
+ * `Unknown`: not yet configured.
+
+The `Role` property is writable, but it can only be changed when the current
+configured value is `Unknown`. Other platform setup infrastructure may use
+this to configure the initial MCTP state of the platform.
+
+When the interface `Role` is `BusOwner`, the MCTP interface object will
+also host the `BusOwner1` dbus interface:
+
+### Bus-owner interface: `au.com.codeconstruct.MCTP.BusOwner1` interface
 
 This interface exposes bus-owner level functions, on each interface object that
 represents the bus-owner side of a transport.
 
-### `.SetupEndpoint`: `ay` → `yisb`
+```
+NAME                                 TYPE      SIGNATURE RESULT/VALUE FLAGS
+au.com.CodeConstruct.MCTP.Interface1 interface -         -            -
+.Role                                property  s         "BusOwner"   emits-change writable
+au.com.codeconstruct.MCTP.BusOwner1  interface -         -            -
+.AssignEndpoint                      method    ay        yisb         -
+.AssignEndpointStatic                method    ayy       yisb         -
+.LearnEndpoint                       method    ay        yisb         -
+.SetupEndpoint                       method    ay        yisb         -
+```
+
+Those BusOwner methods are:
+
+#### `.SetupEndpoint`: `ay` → `yisb`
 
 This method is the normal method used to add a MCTP endpoint on this interface.
 The endpoint is identified by physical address. `mctpd` will query for the
@@ -50,15 +114,16 @@ busctl call au.com.codeconstruct.MCTP1 \
     au.com.codeconstruct.MCTP.Interface1 \
     SetupEndpoint ay 1 0x1d
 ```
+
 `1` is the length of the hwaddr array.
 
-### `.AssignEndpoint`: `ay` → `yisb`
+#### `.AssignEndpoint`: `ay` → `yisb`
 
 Similar to SetupEndpoint, but will always assign an EID rather than querying for
 existing ones. Will return `new = false` when an endpoint is already known to
 `mctpd`.
 
-### `.AssignEndpointStatic`: `ayy` → `yisb`
+#### `.AssignEndpointStatic`: `ayy` → `yisb`
 
 Similar to AssignEndpoint, but takes an additional EID argument:
 
@@ -72,18 +137,26 @@ This call will fail if the endpoint already has an EID, and that EID is
 different from `static-EID`, or if `static-EID` is already assigned to another
 endpoint.
 
-### `.LearnEndpoint`: `ay` → `yisb`
+#### `.LearnEndpoint`: `ay` → `yisb`
 
 Like SetupEndpoint but will not assign EIDs, will only query endpoints for a
 current EID. The `new` return value is set to `false` for an already known
 endpoint, or `true` when an endpoint's EID is newly discovered.
 
-## Endpoint methods: the `au.com.codeconstruct.MCTP.Endpoint1` interface
+## Endpoint objects: `/au/com/codeconstruct/networks/<net>/endpoints/<eid>`
+
+These objects represent MCTP endpoints that `mctpd` has either discovered
+locally (typically: MCTP addresses assigned to the local stack), or remote
+interfaces discovered during device enumeration.
+
+These objects host the interface `xyz.openbmc_project.MCTP.Endpoint`, as per
+[OpenBMC
+documentation](https://github.com/openbmc/phosphor-dbus-interfaces/tree/master/yaml/xyz/openbmc_project/MCTP).
 
 Each endpoint object has methods to configure it, through the
 `au.com.codeconstruct.MCTP.Endpoint1` interface on each endpoint.
 
-## `.SetMTU`: `u`
+### `.SetMTU`: `u`
 
 Sets the MTU (maximum transmission unit) on the route for that endpoint. This
 must be within the MTU range allowed for the network device. For i2c that is
@@ -101,21 +174,6 @@ busctl call au.com.codeconstruct.MCTP1 \
     SetMTU u 80
 ```
 
-## `.Remove`
+### `.Remove`
 
 Removes the MCTP endpoint from `mctpd`, and deletes routes and neighbour entries.
-
-## D-Bus /au/com/codeconstruct/mctp1/interfaces/<name>
-
-`mctpd` provides a D-Bus path of `/au/com/codeconstruct/mctp1/interfaces`.
-For each known MCTP interfaces, `mctpd` will populate an D-Bus object
-`/au/com/codeconstruct/mctp1/interfaces/<name>`. The D-Bus objects have
-interface `au.com.CodeConstruct.MCTP.Interface1`.
-The D-Bus interface includes the `Role` property which reports BMC roles
-in the link. The possible value of `Role` are `BusOwner`, `Endpoint` and
-`Unknown`. The `Role` property is a changeable value but it can only be
-changed when the current configured value is `Unknown` because the BMC
-`Role` in the MCTP link is specific depend on the system.
-The D-Bus `/au/com/codeconstruct/mctp1/interfaces/<name>` objects also
-includes an au.com.codeconstruct.MCTP.BusOwner1 which exposes bus-owner
-level functions.
