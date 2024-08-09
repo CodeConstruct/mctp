@@ -369,8 +369,6 @@ The general strategy for tracking endpoint lifecycles is [as follows]
 2. Issue a call to `GetManagedObjects` `org.freedesktop.DBus.ObjectManager` on
    `/au/com/codeconstruct/mctp1` for initial population of local data-structures
 
-3. Issue
-
 ### An example order of MCTP device events, consumed by `nvmesensor`
 
 1. A series of events yields a new FRU EEPROM device on an I2C bus already
