@@ -697,6 +697,7 @@ static int handle_control_get_message_type_support(ctx *ctx,
 	struct mctp_ctrl_cmd_get_msg_type_support *req = NULL;;
 	struct mctp_ctrl_resp_get_msg_type_support *resp = NULL;
 	uint8_t resp_buf[sizeof(*resp) + 1];
+	size_t resp_len;
 
 	if (buf_size < sizeof(*req)) {
 		warnx("short Get Message Type Support message");
@@ -711,8 +712,9 @@ static int handle_control_get_message_type_support(ctx *ctx,
 	// Only control messages supported
 	resp->msg_type_count = 1;
 	*((uint8_t*)(resp+1)) = MCTP_CTRL_HDR_MSG_TYPE;
+	resp_len = sizeof(*resp) + resp->msg_type_count;
 
-	return reply_message(ctx, sd, resp, sizeof(*resp), addr);
+	return reply_message(ctx, sd, resp, resp_len, addr);
 }
 
 static int handle_control_resolve_endpoint_id(ctx *ctx,
