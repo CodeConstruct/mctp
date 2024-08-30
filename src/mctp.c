@@ -213,12 +213,16 @@ static int display_ifinfo(struct ctx *ctx, void *p, size_t len) {
 	updown = msg->ifi_flags & IFF_UP ? "up" : "down";
 	// not sure if will be NULL terminated, handle either
 	name_len = strnlen(name, name_len);
-	printf("dev %*s index %d address 0x",
+	printf("dev %*s index %d address ",
 		(int)name_len, name, msg->ifi_index);
+	if (addr_len == 1) {
+		// make it clear that it is hex not decimal
+		printf("0x");
+	}
 	if (addr && addr_len)
 		print_hex_addr(addr, addr_len);
 	else
-		printf("(no-addr)");
+		printf("none");
 	printf(" net %d mtu %d %s\n", net, mtu, updown);
 	return 0;
 }
