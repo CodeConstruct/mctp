@@ -146,7 +146,8 @@ struct peer {
 	bool have_neigh;
 	bool have_route;
 
-	// set by SetMTU method, 0 otherwise
+	// MTU for the route. Set to the interface's minimum MTU initially,
+	// or changed by .SetMTU method
 	uint32_t mtu;
 
 	// malloc()ed list of supported message types, from Get Message Type
@@ -2160,6 +2161,10 @@ static int peer_route_update(peer *peer, uint16_t type)
 static int setup_added_peer(peer *peer)
 {
 	int rc;
+
+	// Set minimum MTU by default for compatibility. Clients can increase
+	// this with .SetMTU as needed
+	peer->mtu = mctp_nl_min_mtu_byindex(peer->ctx->nl_query, peer->phys.ifindex);
 
 	// add route before querying
 	add_peer_route(peer);

@@ -40,12 +40,18 @@ class NetlinkError(Exception):
 
 class System:
     class Interface:
-        def __init__(self, name, ifindex, net, lladdr, mtu, up = False):
+        """Interface constructor.
+
+        Initial mtu is set to max_mtu.
+        """
+        def __init__(self, name, ifindex, net, lladdr, min_mtu, max_mtu, up = False):
             self.name = name
             self.ifindex = ifindex
             self.net = net
             self.lladdr = lladdr,
-            self.mtu = mtu
+            self.min_mtu = min_mtu
+            self.max_mtu = max_mtu
+            self.mtu = max_mtu
             self.up = up
 
         def __str__(self):
@@ -652,6 +658,8 @@ class NLSocket(BaseSocket):
                 ['IFLA_IFNAME', iface.name],
                 ['IFLA_ADDRESS', iface.lladdr],
                 ['IFLA_MTU', iface.mtu],
+                ['IFLA_MIN_MTU', iface.min_mtu],
+                ['IFLA_MAX_MTU', iface.max_mtu],
                 ['IFLA_AF_SPEC', {
                     'attrs': [['AF_MCTP', {
                         'attrs': [['IFLA_MCTP_NET', iface.net]],
@@ -929,15 +937,15 @@ class MctpdWrapper:
 
 Sysnet = namedtuple('SysNet', ['system', 'network'])
 
+"""Simple system & network.
+
+Contains one interface (lladdr 0x10, local EID 8), and one endpoint (lladdr
+0x1d), that reports support for MCTP control and PLDM.
+"""
 @pytest.fixture
 async def sysnet():
-    """Simple system & network.
-
-    Contains one interface (lladdr 0x10, local EID 8), and one endpoint (lladdr
-    0x1d), that reports support for MCTP control and PLDM.
-    """
     system = System()
-    iface = System.Interface('mctp0', 1, 1, bytes([0x10]), 68, True)
+    iface = System.Interface('mctp0', 1, 1, bytes([0x10]), 68, 254, True)
     system.add_interface(iface)
     system.add_address(System.Address(iface, 8))
 
