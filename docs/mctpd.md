@@ -111,7 +111,7 @@ An example:
 ```shell
 busctl call au.com.codeconstruct.MCTP1 \
     /au/com/codeconstruct/mctp1/interfaces/mctpi2c6 \
-    au.com.codeconstruct.MCTP.Interface1 \
+    au.com.codeconstruct.MCTP.BusOwner1 \
     SetupEndpoint ay 1 0x1d
 ```
 
