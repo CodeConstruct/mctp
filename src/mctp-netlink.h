@@ -62,6 +62,7 @@ int mctp_nl_recv_all(mctp_nl *nl, int sd,
 /* Lookup MCTP interfaces */
 int mctp_nl_ifindex_byname(const mctp_nl *nl, const char *ifname);
 const char* mctp_nl_if_byindex(const mctp_nl *nl, int index);
+uint8_t *mctp_nl_ifaddr_byindex(const mctp_nl *nl, int index, size_t *ret_len);
 int mctp_nl_net_byindex(const mctp_nl *nl, int index);
 bool mctp_nl_up_byindex(const mctp_nl *nl, int index);
 /* Caller to free */

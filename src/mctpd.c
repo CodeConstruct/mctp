@@ -2895,6 +2895,48 @@ out:
 	return rc;
 }
 
+static int notify_discovery(ctx *ctx, int ifindex)
+{
+	int rc = 0;
+	dest_phys desti = { 0 }, *dest = &desti;
+	struct mctp_ctrl_cmd_discovery_notify req = { 0 };
+	struct mctp_ctrl_resp_discovery_notify *resp;
+	uint8_t *buf;
+	size_t buf_size;
+	struct sockaddr_mctp_ext resp_addr;
+
+	dest->ifindex = ifindex;
+	mctp_nl_ifaddr_byindex(ctx->nl, dest->ifindex, &dest->hwaddr_len);
+	memset(dest->hwaddr, 0, sizeof dest->hwaddr);
+
+	req.ctrl_hdr.command_code = MCTP_CTRL_CMD_DISCOVERY_NOTIFY;
+	req.ctrl_hdr.rq_dgram_inst = RQDI_REQ;
+
+	rc = endpoint_query_phys(ctx, dest, MCTP_CTRL_HDR_MSG_TYPE, &req,
+				 sizeof(req), &buf, &buf_size, &resp_addr);
+	if (rc < 0)
+		goto free_buf;
+
+	if (buf_size != sizeof(*resp)) {
+		warnx("%s: wrong reply length %zu bytes. dest %s", __func__,
+		      buf_size, dest_phys_tostr(dest));
+		rc = -ENOMSG;
+		goto free_buf;
+	}
+	resp = (void *)buf;
+
+	if (resp->completion_code != 0) {
+		// TODO: make this a debug message?
+		warnx("Failure completion code 0x%02x from %s",
+		      resp->completion_code, dest_phys_tostr(dest));
+		rc = -ECONNREFUSED;
+		goto free_buf;
+	}
+free_buf:
+	free(buf);
+	return rc;
+}
+
 static int bus_link_set_prop(sd_bus *bus,
 		const char *path, const char *interface, const char *property,
 		sd_bus_message *value, void *userdata, sd_bus_error *berr)
@@ -2906,6 +2948,7 @@ static int bus_link_set_prop(sd_bus *bus,
 	link_userdata *lmUserData;
 	int rc;
 	struct role role;
+	int ifindex;
 
 	if (!is_interfaces_path(path)) {
 		sd_bus_error_setf(berr, SD_BUS_ERROR_INVALID_ARGS,
@@ -2921,11 +2964,13 @@ static int bus_link_set_prop(sd_bus *bus,
 		goto out;
 	}
 
-	lmUserData = mctp_nl_get_link_userdata_byname(ctx->nl, link_name);
-	if (!lmUserData) {
+	ifindex = mctp_nl_ifindex_byname(ctx->nl, link_name);
+	if (!ifindex) {
 		rc = -ENOENT;
 		goto out;
 	}
+	lmUserData = mctp_nl_get_link_userdata(ctx->nl, ifindex);
+	assert(lmUserData);
 
 	if (strcmp(property, "Role") != 0) {
 		printf("Unknown property '%s' for %s iface %s\n", property, path, interface);
@@ -2955,6 +3000,16 @@ static int bus_link_set_prop(sd_bus *bus,
 		goto out;
 	}
 	lmUserData->role = role.role;
+
+	// Announce on the bus we are endpoint, print warning and ignore error if failed
+	if (lmUserData->role == ENDPOINT_ROLE_ENDPOINT) {
+		rc = notify_discovery(ctx, ifindex);
+		if (rc) {
+			warnx("Warning: discovery notify on interface '%s' failed: %s", link_name,
+			      strerror(-rc));
+			rc = 0;
+		}
+	}
 
 out:
 	set_berr(ctx, rc, berr);

@@ -23,6 +23,8 @@
 struct linkmap_entry {
 	int	ifindex;
 	char	ifname[IFNAMSIZ+1];
+	uint8_t	ifaddr[MAX_ADDR_LEN];
+	size_t	ifaddr_len;
 	int	net;
 	bool 	up;
 
@@ -53,8 +55,9 @@ static int fill_local_addrs(mctp_nl *nl);
 static int fill_linkmap(mctp_nl *nl);
 static void sort_linkmap(mctp_nl *nl);
 static int linkmap_add_entry(mctp_nl *nl, struct ifinfomsg *info,
-		const char *ifname, size_t ifname_len, int net,
-		bool up);
+			     const char *ifname, size_t ifname_len,
+			     uint8_t *ifaddr, size_t ifaddr_len, int net,
+			     bool up);
 static struct linkmap_entry *entry_byindex(const mctp_nl *nl,
 	int index);
 
@@ -679,8 +682,9 @@ static int parse_getlink_dump(mctp_nl *nl, struct nlmsghdr *nlh, uint32_t len)
 
 	for (; NLMSG_OK(nlh, len); nlh = NLMSG_NEXT(nlh, len)) {
 		struct rtattr *rta, *rt_nest, *rt_mctp;
+		uint8_t *ifaddr;
 		char *ifname;
-		size_t ifname_len, rlen, nlen, mlen;
+		size_t ifname_len, ifaddr_len, rlen, nlen, mlen;
 		uint32_t net;
 		bool up;
 
@@ -722,8 +726,13 @@ static int parse_getlink_dump(mctp_nl *nl, struct nlmsghdr *nlh, uint32_t len)
 			continue;
 		}
 		ifname_len = strnlen(ifname, ifname_len);
+
+		ifaddr = mctp_get_rtnlmsg_attr(IFLA_ADDRESS, rta, rlen,
+					       &ifaddr_len);
+
 		up = info->ifi_flags & IFF_UP;
-		linkmap_add_entry(nl, info, ifname, ifname_len, net, up);
+		linkmap_add_entry(nl, info, ifname, ifname_len, ifaddr,
+				  ifaddr_len, net, up);
 	}
 	// Not done.
 	return 1;
@@ -927,6 +936,16 @@ const char* mctp_nl_if_byindex(const mctp_nl *nl, int index)
 	return NULL;
 }
 
+uint8_t *mctp_nl_ifaddr_byindex(const mctp_nl *nl, int index, size_t *ret_len)
+{
+	struct linkmap_entry *entry = entry_byindex(nl, index);
+	if (entry) {
+		*ret_len = entry->ifaddr_len;
+		return entry->ifaddr;
+	}
+	return NULL;
+}
+
 int mctp_nl_net_byindex(const mctp_nl *nl, int index)
 {
 	struct linkmap_entry *entry = entry_byindex(nl, index);
@@ -1054,8 +1073,9 @@ int *mctp_nl_if_list(const mctp_nl *nl, size_t *ret_num_ifs)
 }
 
 static int linkmap_add_entry(mctp_nl *nl, struct ifinfomsg *info,
-		const char *ifname, size_t ifname_len, int net,
-		bool up)
+			     const char *ifname, size_t ifname_len,
+			     uint8_t *ifaddr, size_t ifaddr_len, int net,
+			     bool up)
 {
 	struct linkmap_entry *entry;
 	size_t newsz;
@@ -1064,6 +1084,12 @@ static int linkmap_add_entry(mctp_nl *nl, struct ifinfomsg *info,
 
 	if (ifname_len > IFNAMSIZ) {
 		warnx("linkmap, too long ifname '%*s'", (int)ifname_len, ifname);
+		return -1;
+	}
+
+	if (ifaddr_len > MAX_ADDR_LEN) {
+		warnx("linkmap, too long ifaddr (%zu bytes long, expected max %d bytes)",
+		      ifaddr_len, MAX_ADDR_LEN);
 		return -1;
 	}
 
@@ -1088,6 +1114,8 @@ static int linkmap_add_entry(mctp_nl *nl, struct ifinfomsg *info,
 	entry = &nl->linkmap[idx];
 	memset(entry, 0, sizeof(*entry));
 	snprintf(entry->ifname, IFNAMSIZ, "%*s", (int)ifname_len, ifname);
+	memcpy(entry->ifaddr, ifaddr, ifaddr_len);
+	entry->ifaddr_len = ifaddr_len;
 	entry->ifindex = info->ifi_index;
 	entry->net = net;
 	entry->up = up;
