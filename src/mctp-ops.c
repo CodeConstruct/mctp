@@ -10,6 +10,7 @@
 #include <unistd.h>
 #include <linux/netlink.h>
 
+#include "mctp.h"
 #include "mctp-ops.h"
 
 static int mctp_op_mctp_socket(void)
