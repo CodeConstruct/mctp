@@ -23,6 +23,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
    interface default (normally the maximum MTU).
    The .SetMTU method can be used to set the endpoint route MTU.
 
+3. Hardware address formatting has been improved in cases where the address
+   size is something other than a 1-byte value.
+
 ## [2.0] - 2024-09-19
 
 ### Added
