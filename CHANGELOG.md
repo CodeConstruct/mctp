@@ -40,6 +40,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
    now associated with the interface object, they no longer take the
    interface name as their first argument.
 
+6. Hardware address formatting has been improved in cases where the address
+   size is something other than a 1-byte value.
+
 ### Fixed
 
 1. mctpd: EID assignments now work in the case where a new endpoint has a
