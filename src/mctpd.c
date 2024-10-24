@@ -9,8 +9,9 @@
 #include "config.h"
 
 #include <assert.h>
-#include <bits/time.h>
 #include <systemd/sd-bus-vtable.h>
+#include <time.h>
+
 #define _GNU_SOURCE
 
 #include <sys/socket.h>
