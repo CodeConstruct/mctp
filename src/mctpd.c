@@ -3018,7 +3018,7 @@ static int bus_link_set_prop(sd_bus *bus,
 	char *tmpstr = NULL;
 	char *link_name = NULL;
 	link_userdata *lmUserData;
-	int rc;
+	int rc = -1;
 	struct role role;
 
 	if (!is_interfaces_path(path)) {
