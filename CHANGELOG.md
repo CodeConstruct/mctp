@@ -13,6 +13,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 2. Fixed some header includes where we were previously assuming a glibc layout
 
+3. Fixed incorrect setup of peer message type data, where peer endpoints would
+   report no types supported over dbus.
+
 ### Changed
 
 1. We now enforce IID checks on MCTP control protocol responses; this

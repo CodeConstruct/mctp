@@ -1809,6 +1809,7 @@ static int query_get_peer_msgtypes(peer *peer) {
 		rc = -ENOMEM;
 		goto out;
 	}
+	peer->num_message_types = resp->msg_type_count;
 	memcpy(peer->message_types, (void*)(resp+1), resp->msg_type_count);
 	rc = 0;
 out:

@@ -5,6 +5,7 @@ import asyncdbus
 
 from mctp_test_utils import (
     mctpd_mctp_iface_obj,
+    mctpd_mctp_endpoint_common_obj,
     mctpd_mctp_endpoint_control_obj
 )
 from conftest import Endpoint, MCTPSockAddr
@@ -433,3 +434,24 @@ async def test_learn_endpoint_invalid_response_iid(dbus, mctpd):
         await mctp.call_learn_endpoint(ep.lladdr)
 
     assert str(ex.value) == "Request failed"
+
+""" Ensure we're parsing Get Message Type Support responses"""
+async def test_query_message_types(dbus, mctpd):
+    iface = mctpd.system.interfaces[0]
+    ep = mctpd.network.endpoints[0]
+    ep_types = [0, 1, 5]
+    ep.types = ep_types
+
+    mctp = await mctpd_mctp_iface_obj(dbus, iface)
+
+    (eid, net, path, new) = await mctp.call_setup_endpoint(ep.lladdr)
+
+    assert eid == ep.eid
+
+    ep = await mctpd_mctp_endpoint_common_obj(dbus, path)
+
+    query_types = list(await ep.get_supported_message_types())
+    ep_types.sort()
+    query_types.sort()
+
+    assert ep_types == query_types
