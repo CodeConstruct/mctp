@@ -3,7 +3,10 @@ import trio
 import uuid
 import asyncdbus
 
-from mctp_test_utils import mctpd_mctp_iface_obj, mctpd_mctp_endpoint_obj
+from mctp_test_utils import (
+    mctpd_mctp_iface_obj,
+    mctpd_mctp_endpoint_control_obj
+)
 from conftest import Endpoint, MCTPSockAddr
 
 # DBus constant symbol suffixes:
@@ -117,7 +120,7 @@ async def test_remove_endpoint(dbus, mctpd):
 
     assert(len(mctpd.system.neighbours) == 1)
 
-    ep = await mctpd_mctp_endpoint_obj(dbus, path)
+    ep = await mctpd_mctp_endpoint_control_obj(dbus, path)
 
     await ep.call_remove()
     assert(len(mctpd.system.neighbours) == 0)
