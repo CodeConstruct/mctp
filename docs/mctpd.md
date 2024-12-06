@@ -143,6 +143,27 @@ Like SetupEndpoint but will not assign EIDs, will only query endpoints for a
 current EID. The `new` return value is set to `false` for an already known
 endpoint, or `true` when an endpoint's EID is newly discovered.
 
+## Network objects: `/au/com/codeconstruct/networks/<net>`
+
+These objects represent MCTP networks which have been added use `mctp link`
+commands. These will be 1:1 with the MCTP networks on the system.
+
+These objects host the interface `au.com.codeconstruct.MCTP.Network1`.
+
+### MCTP network interface: `au.com.codeconstruct.MCTP.Network1`
+
+All MCTP networks objects host the `au.com.codeconstruct.MCTP.Network1` dbus
+interface:
+
+```
+NAME                                 TYPE      SIGNATURE RESULT/VALUE FLAGS
+au.com.codeconstruct.MCTP.Network1  interface -         -            -
+.LocalEIDs                          property  ay        1 8          const
+```
+
+The D-Bus interface includes the `LocalEIDs` property which reports BMC local EIDs
+in the network.
+
 ## Endpoint objects: `/au/com/codeconstruct/networks/<net>/endpoints/<eid>`
 
 These objects represent MCTP endpoints that `mctpd` has either discovered
