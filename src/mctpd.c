@@ -51,6 +51,7 @@
 #define MCTP_DBUS_IFACE_ENDPOINT "xyz.openbmc_project.MCTP.Endpoint"
 #define OPENBMC_IFACE_COMMON_UUID "xyz.openbmc_project.Common.UUID"
 #define CC_MCTP_DBUS_IFACE_INTERFACE "au.com.codeconstruct.MCTP.Interface1"
+#define CC_MCTP_DBUS_NETWORK_INTERFACE "au.com.codeconstruct.MCTP.Network1"
 
 // an arbitrary constant for use with sd_id128_get_machine_app_specific()
 static const char* mctpd_appid = "67369c05-4b97-4b7e-be72-65cfd8639f10";
@@ -286,6 +287,31 @@ static peer * find_peer_by_addr(ctx *ctx, mctp_eid_t eid, int net)
 	if (eid != 0 && n && n->peeridx[eid] >= 0)
 		return &ctx->peers[n->peeridx[eid]];
 	return NULL;
+}
+
+static int find_local_eids_by_net(ctx *ctx, uint32_t net,
+                                  size_t* local_eid_cnt,
+                                  mctp_eid_t *ret_eids)
+{
+	size_t local_count = 0;
+	net_det *n = lookup_net(ctx, net);
+	peer *peer;
+
+	*local_eid_cnt = 0;
+	if (!n)
+		return -EINVAL;
+
+	for (size_t t = 0; t < 256; t++) {
+		if (n->peeridx[t] < 0)
+			continue;
+
+		peer = &ctx->peers[n->peeridx[t]];
+		if (peer && (peer->state == LOCAL))
+			ret_eids[local_count++] = t;
+	}
+	*local_eid_cnt = local_count;
+
+	return 0;
 }
 
 /* Returns a deferred free pointer */
@@ -2915,6 +2941,26 @@ static bool is_endpoint_path(const char *path)
 	return true;
 }
 
+static bool get_networkid_from_path(const char *path, uint32_t* netid)
+{
+	char *netstr = NULL;
+	int rc;
+
+	rc = sd_bus_path_decode_many(path,
+				     MCTP_DBUS_PATH "/networks/%",
+				     &netstr);
+
+	if (rc <= 0)
+		return false;
+
+	dfree(netstr);
+
+	if (parse_uint32(netstr, netid) < 0)
+		return false;
+
+	return true;
+}
+
 static bool is_interfaces_path(const char *path)
 {
 	char *intfName = NULL;
@@ -2961,6 +3007,33 @@ static int bus_endpoint_get_prop(sd_bus *bus,
 	} else {
 		printf("Unknown property '%s' for %s iface %s\n", property, path, interface);
 		rc = -ENOENT;
+	}
+
+	return rc;
+}
+
+static int bus_network_get_prop(sd_bus *bus,
+		const char *path, const char *interface, const char *property,
+		sd_bus_message *reply, void *userdata, sd_bus_error *berr)
+{
+	ctx *ctx = userdata;
+	int rc = 0;
+	uint32_t netid;
+	mctp_eid_t *eids = (mctp_eid_t *)malloc(256);
+	size_t num;
+
+	if (!get_networkid_from_path(path, &netid)) {
+		return -ENOENT;
+	}
+
+	if (strcmp(property, "LocalEIDs") == 0) {
+		rc = find_local_eids_by_net(ctx, netid, &num, eids);
+		if (rc < 0) {
+			return -ENOENT;
+		}
+
+		dfree(eids);
+		rc = sd_bus_message_append_array(reply, 'y', eids, num);
 	}
 
 	return rc;
@@ -3165,6 +3238,16 @@ static const sd_bus_vtable bus_endpoint_link_vtable[] = {
 	SD_BUS_VTABLE_END
 };
 
+static const sd_bus_vtable bus_network_vtable[] = {
+	SD_BUS_VTABLE_START(0),
+	SD_BUS_PROPERTY("LocalEIDs",
+			"ay",
+			bus_network_get_prop,
+			0,
+			SD_BUS_VTABLE_PROPERTY_CONST),
+	SD_BUS_VTABLE_END
+};
+
 static const sd_bus_vtable bus_endpoint_cc_vtable[] = {
 	SD_BUS_VTABLE_START(0),
 	SD_BUS_METHOD_WITH_ARGS("SetMTU",
@@ -3215,6 +3298,26 @@ static int bus_endpoint_find(sd_bus *bus, const char *path,
 		*ret_found = peer;
 		return 1;
 	}
+	return 0;
+}
+
+static int bus_mctp_network_find(sd_bus *bus, const char *path,
+	const char *interface, void *userdata, void **ret_found,
+	sd_bus_error *ret_error)
+{
+	ctx *ctx = userdata;
+	uint32_t netid;
+
+	if (!get_networkid_from_path(path, &netid)) {
+		return 0;
+	}
+
+	net_det *n = lookup_net(ctx, netid);
+	if (n) {
+		*ret_found = ctx;
+		return 1;
+	}
+
 	return 0;
 }
 
@@ -3710,6 +3813,18 @@ static int setup_bus(ctx *ctx)
 		warnx("Failed creating D-Bus object");
 		goto out;
 	}
+
+	rc = sd_bus_add_fallback_vtable(ctx->bus, NULL,
+					MCTP_DBUS_PATH,
+					CC_MCTP_DBUS_NETWORK_INTERFACE,
+					bus_network_vtable,
+					bus_mctp_network_find,
+					ctx);
+	if (rc < 0) {
+		warnx("Failed adding Network D-Bus interface: %s", strerror(-rc));
+		goto out;
+	}
+
 	rc = sd_bus_add_object_manager(ctx->bus, NULL, MCTP_DBUS_PATH);
 	if (rc < 0) {
 		warnx("Adding object manager failed: %s", strerror(-rc));
