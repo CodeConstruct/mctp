@@ -16,6 +16,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 3. Fixed incorrect setup of peer message type data, where peer endpoints would
    report no types supported over dbus.
 
+4. Interface objects (MCTP.Interface1) are now under au.com.codeconstruct
+   prefix, to be consistent with the other interface names.
+
 ### Changed
 
 1. We now enforce IID checks on MCTP control protocol responses; this

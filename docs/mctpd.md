@@ -46,7 +46,7 @@ interface:
 
 ```
 NAME                                 TYPE      SIGNATURE RESULT/VALUE FLAGS
-au.com.CodeConstruct.MCTP.Interface1 interface -         -            -
+au.com.codeconstruct.MCTP.Interface1 interface -         -            -
 .Role                                property  s         "BusOwner"   emits-change writable
 ```
 
@@ -71,7 +71,7 @@ represents the bus-owner side of a transport.
 
 ```
 NAME                                 TYPE      SIGNATURE RESULT/VALUE FLAGS
-au.com.CodeConstruct.MCTP.Interface1 interface -         -            -
+au.com.codeconstruct.MCTP.Interface1 interface -         -            -
 .Role                                property  s         "BusOwner"   emits-change writable
 au.com.codeconstruct.MCTP.BusOwner1  interface -         -            -
 .AssignEndpoint                      method    ay        yisb         -

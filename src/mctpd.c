@@ -50,7 +50,7 @@
 #define MCTP_DBUS_NAME "au.com.codeconstruct.MCTP1"
 #define MCTP_DBUS_IFACE_ENDPOINT "xyz.openbmc_project.MCTP.Endpoint"
 #define OPENBMC_IFACE_COMMON_UUID "xyz.openbmc_project.Common.UUID"
-#define CC_MCTP_DBUS_IFACE_INTERFACE "au.com.CodeConstruct.MCTP.Interface1"
+#define CC_MCTP_DBUS_IFACE_INTERFACE "au.com.codeconstruct.MCTP.Interface1"
 
 // an arbitrary constant for use with sd_id128_get_machine_app_specific()
 static const char* mctpd_appid = "67369c05-4b97-4b7e-be72-65cfd8639f10";
@@ -3254,7 +3254,7 @@ static char* root_endpoints_path(int net)
 	return buf;
 }
 
-/* au.com.CodeConstruct.MCTP.Interface1 interface */
+/* au.com.codeconstruct.MCTP.Interface1 interface */
 static int __bus_mctp_link_find(sd_bus *bus, const char *path,
 	const char *interface, void *userdata, bool owner_only,
 	void **ret_found, sd_bus_error *ret_error)
