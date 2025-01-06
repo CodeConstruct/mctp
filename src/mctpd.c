@@ -3278,8 +3278,8 @@ static int __bus_mctp_link_find(sd_bus *bus, const char *path,
 
 	lmUserData = mctp_nl_get_link_userdata_byname(ctx->nl, link_name);
 	if (!lmUserData) {
-		warnx("Linkmap entry of link %s is not existing\n", link_name);
-		return -ENOMEM;
+		warnx("No linkmap entry for link %s\n", link_name);
+		return -ENOENT;
 	}
 
 	if (owner_only && lmUserData->role != ENDPOINT_ROLE_BUS_OWNER)
