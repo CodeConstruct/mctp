@@ -3282,9 +3282,6 @@ static int __bus_mctp_link_find(sd_bus *bus, const char *path,
 		return -ENOMEM;
 	}
 
-	printf("%s: owner_only %d, role %d\n", __func__, owner_only,
-	       lmUserData->role);
-
 	if (owner_only && lmUserData->role != ENDPOINT_ROLE_BUS_OWNER)
 		return 0;
 
