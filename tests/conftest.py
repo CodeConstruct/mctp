@@ -119,6 +119,14 @@ class System:
         if self.nl:
             await self.nl.notify_newaddr(address)
 
+    async def del_address(self, address):
+        addr = self.lookup_address(address.iface, address.eid)
+        if not addr:
+            raise NetlinkError(errno.ENOENT)
+        self.addresses.remove(addr)
+        if self.nl:
+            await self.nl.notify_deladdr(address)
+
     async def add_neighbour(self, neigh):
         if self.lookup_neighbour(neigh.iface, neigh.eid):
             raise NetlinkError(errno.EEXIST)
@@ -164,6 +172,12 @@ class System:
         for neighbour in self.neighbours:
             if neighbour.iface == iface and neighbour.eid == eid:
                 return neighbour
+        return None
+
+    def lookup_address(self, iface, eid):
+        for address in self.addresses:
+            if address.iface == iface and address.eid == eid:
+                return address
         return None
 
     def find_endpoint(self, addr):
@@ -725,13 +739,19 @@ class NLSocket(BaseSocket):
 
         await self._send_msg(buf)
 
-    async def notify_newaddr(self, addr):
-        msg = self._create_msg(ifaddrmsg_mctp, rtnl.RTM_NEWADDR, 0)
+    async def _notify_addr(self, addr, typ):
+        msg = self._create_msg(ifaddrmsg_mctp, typ, 0)
         self._format_addr(msg, addr)
         buf = bytearray()
         msg.encode()
         buf.extend(msg.data)
         await self._send_msg(buf)
+
+    async def notify_newaddr(self, addr):
+        await self._notify_addr(addr, rtnl.RTM_NEWADDR)
+
+    async def notify_deladdr(self, addr):
+        await self._notify_addr(addr, rtnl.RTM_DELADDR)
 
     def _format_neigh(self, msg, neigh):
         msg['ifindex'] = neigh.iface.ifindex
