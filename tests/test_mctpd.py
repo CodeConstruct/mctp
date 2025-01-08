@@ -377,8 +377,8 @@ async def test_get_endpoint_id(dbus, mctpd):
     mctp = await mctpd_mctp_iface_obj(dbus, iface)
     dev.eid = 12
 
-    mctpd.system.add_route(mctpd.system.Route(iface, dev.eid, 0))
-    mctpd.system.add_neighbour(
+    await mctpd.system.add_route(mctpd.system.Route(iface, dev.eid, 0))
+    await mctpd.system.add_neighbour(
         mctpd.system.Neighbour(iface, dev.lladdr, dev.eid)
     )
 

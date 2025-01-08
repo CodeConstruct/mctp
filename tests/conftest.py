@@ -92,34 +92,47 @@ class System:
         self.addresses = []
         self.neighbours = []
         self.routes = []
+        self.nl = None
 
-    def add_route(self, route):
+    async def add_route(self, route):
         self.routes.append(route)
+        if self.nl:
+            await self.nl.notify_newroute(route)
 
-    def del_route(self, route):
+    async def del_route(self, route):
         route = self.lookup_route_exact(route.iface, route.start_eid,
                 route.end_eid)
         if not route:
             raise NetlinkError(errno.ENOENT)
 
         self.routes.remove(route)
+        if self.nl:
+            await self.nl.notify_delroute(route)
 
-    def add_interface(self, iface):
+    async def add_interface(self, iface):
         self.interfaces.append(iface)
+        if self.nl:
+            await self.nl.notify_newlink(iface)
 
-    def add_address(self, address):
+    async def add_address(self, address):
         self.addresses.append(address)
+        if self.nl:
+            await self.nl.notify_newaddr(address)
 
-    def add_neighbour(self, neigh):
+    async def add_neighbour(self, neigh):
         if self.lookup_neighbour(neigh.iface, neigh.eid):
             raise NetlinkError(errno.EEXIST)
         self.neighbours.append(neigh)
+        if self.nl:
+            await self.nl.notify_newneigh(neigh)
 
-    def del_neighbour(self, neigh):
+    async def del_neighbour(self, neigh):
         neigh = self.lookup_neighbour(neigh.iface, neigh.eid)
         if not neigh:
             raise NetlinkError(errno.EENOENT)
         self.neighbours.remove(neigh)
+        if self.nl:
+            await self.nl.notify_delneigh(neigh)
 
     def find_interface_by_ifindex(self, ifindex):
         for i in self.interfaces:
@@ -567,6 +580,7 @@ class NLSocket(BaseSocket):
         super().__init__(sock)
         self.addr_ext = False
         self.system = system
+        system.nl = self
 
     def _create_msg(self, cls, type, flags):
         resp = cls()
@@ -680,6 +694,15 @@ class NLSocket(BaseSocket):
         self._append_nlmsg_done(buf, msg)
         await self._send_msg(buf)
 
+    def _format_addr(self, msg, addr):
+        msg['index'] = addr.iface.ifindex
+        msg['family'] = AF_MCTP
+        msg['prefixlen'] = 0
+        msg['flags'] = 0
+        msg['attrs'] = [
+            ['IFA_LOCAL', addr.eid],
+        ]
+
     async def _handle_getaddr(self, msg):
         dump = bool(msg['header']['flags'] & netlink.NLM_F_DUMP)
         assert dump
@@ -694,19 +717,28 @@ class NLSocket(BaseSocket):
         for addr in addrs:
             resp = self._create_resp(ifaddrmsg_mctp, msg,
                     rtnl.RTM_NEWADDR, flags)
-            resp['index'] = addr.iface.ifindex
-            resp['family'] = AF_MCTP
-            resp['prefixlen'] = 0
-            resp['flags'] = 0
-            resp['attrs'] = [
-                ['IFA_LOCAL', addr.eid],
-            ]
+            self._format_addr(resp, addr)
             resp.encode()
             buf.extend(resp.data)
 
         self._append_nlmsg_done(buf, msg)
 
         await self._send_msg(buf)
+
+    async def notify_newaddr(self, addr):
+        msg = self._create_msg(ifaddrmsg_mctp, rtnl.RTM_NEWADDR, 0)
+        self._format_addr(msg, addr)
+        buf = bytearray()
+        msg.encode()
+        buf.extend(msg.data)
+        await self._send_msg(buf)
+
+    def _format_neigh(self, msg, neigh):
+        msg['ifindex'] = neigh.iface.ifindex
+        msg['attrs'] = [
+            ['NDA_DST', neigh.eid],
+            ['NDA_LLADDR', neigh.lladdr],
+        ]
 
     async def _handle_getneigh(self, msg):
         dump = bool(msg['header']['flags'] & netlink.NLM_F_DUMP)
@@ -720,11 +752,7 @@ class NLSocket(BaseSocket):
 
         for n in neighbours:
             resp = self._create_resp(ndmsg_mctp, msg, rtnl.RTM_NEWNEIGH, flags)
-            resp['ifindex'] = n.iface.ifindex
-            resp['attrs'] = [
-                ['NDA_DST', n.eid],
-                ['NDA_LLADDR', n.lladdr],
-            ]
+            self._format_neigh(resp, n)
             resp.encode()
             buf.extend(resp.data)
 
@@ -744,7 +772,7 @@ class NLSocket(BaseSocket):
         iface = self.system.find_interface_by_ifindex(ifindex)
         neighbour = System.Neighbour(iface, lladdr, dst)
         try:
-            self.system.add_neighbour(neighbour)
+            await self.system.add_neighbour(neighbour)
         except NetlinkError as nle:
             msg = nle.to_nlmsg()
             msg.encode()
@@ -765,7 +793,7 @@ class NLSocket(BaseSocket):
         iface = self.system.find_interface_by_ifindex(ifindex)
         neighbour = System.Neighbour(iface, lladdr, dst)
         try:
-            self.system.del_neighbour(neighbour)
+            await self.system.del_neighbour(neighbour)
         except NetlinkError as nle:
             msg = nle.to_nlmsg()
             msg.encode()
@@ -774,6 +802,32 @@ class NLSocket(BaseSocket):
 
         if msg['header']['flags'] & netlink.NLM_F_ACK:
             await self._nlmsg_ack(msg)
+
+    async def _notify_neigh(self, neigh, typ):
+        msg = self._create_msg(ifaddrmsg_mctp, typ, 0)
+        self._format_neigh(msg, neigh)
+        buf = bytearray()
+        msg.encode()
+        buf.extend(msg.data)
+        await self._send_msg(buf)
+
+    async def notify_delneigh(self, neigh):
+        await self._notify_neigh(neigh, rtnl.RTM_DELNEIGH)
+
+    async def notify_newneigh(self, neigh):
+        await self._notify_neigh(neigh, rtnl.RTM_NEWNEIGH)
+
+    def _format_route(self, msg, route):
+        msg['family'] = AF_MCTP
+        msg['dst_len'] = route.end_eid - route.start_eid
+        msg['src_len'] = 0
+        msg['attrs'] = [
+            ['RTA_DST', route.start_eid],
+            ['RTA_OIF', route.iface.ifindex],
+            ['RTA_METRICS', {
+                'attrs': [['RTAX_MTU', route.mtu]],
+            }],
+        ]
 
     async def _handle_getroute(self, msg):
         dump = bool(msg['header']['flags'] & netlink.NLM_F_DUMP)
@@ -787,16 +841,7 @@ class NLSocket(BaseSocket):
 
         for route in routes:
             resp = self._create_resp(rtmsg_mctp, msg, rtnl.RTM_NEWROUTE, flags)
-            resp['family'] = AF_MCTP
-            resp['dst_len'] = route.end_eid - route.start_eid
-            resp['src_len'] = 0
-            resp['attrs'] = [
-                ['RTA_DST', route.start_eid],
-                ['RTA_OIF', route.iface.ifindex],
-                ['RTA_METRICS', {
-                    'attrs': [['RTAX_MTU', route.mtu]],
-                }],
-            ]
+            self._format_route(self, resp, route)
             resp.encode()
             buf.extend(resp.data)
 
@@ -816,7 +861,7 @@ class NLSocket(BaseSocket):
 
         iface = self.system.find_interface_by_ifindex(ifindex)
         route = System.Route(iface, start_eid, extent_eid)
-        self.system.add_route(route)
+        await self.system.add_route(route)
 
         if msg['header']['flags'] & netlink.NLM_F_ACK:
             await self._nlmsg_ack(msg)
@@ -833,7 +878,7 @@ class NLSocket(BaseSocket):
         iface = self.system.find_interface_by_ifindex(ifindex)
         route = System.Route(iface, start_eid, extent_eid)
         try:
-            self.system.del_route(route)
+            await self.system.del_route(route)
         except NetlinkError as nle:
             msg = nle.to_nlmsg()
             msg.encode()
@@ -842,6 +887,21 @@ class NLSocket(BaseSocket):
 
         if msg['header']['flags'] & netlink.NLM_F_ACK:
             await self._nlmsg_ack(msg)
+
+    async def _notify_route(self, route, typ):
+        msg = self._create_msg(ifaddrmsg_mctp, typ, 0)
+        self._format_route(msg, route)
+        buf = bytearray()
+        msg.encode()
+        buf.extend(msg.data)
+        await self._send_msg(buf)
+
+    async def notify_newroute(self, route):
+        await self._notify_route(route, rtnl.RTM_NEWROUTE);
+
+    async def notify_delroute(self, route):
+        await self._notify_route(route, rtnl.RTM_DELROUTE);
+
 
 async def send_fd(sock, fd):
     fdarray = array.array("i", [fd])
@@ -953,8 +1013,8 @@ Contains one interface (lladdr 0x10, local EID 8), and one endpoint (lladdr
 async def sysnet():
     system = System()
     iface = System.Interface('mctp0', 1, 1, bytes([0x10]), 68, 254, True)
-    system.add_interface(iface)
-    system.add_address(System.Address(iface, 8))
+    await system.add_interface(iface)
+    await system.add_address(System.Address(iface, 8))
 
     network = Network()
     network.add_endpoint(Endpoint(iface, bytes([0x1d]), types = [0, 1]))
