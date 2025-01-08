@@ -568,12 +568,17 @@ class NLSocket(BaseSocket):
         self.addr_ext = False
         self.system = system
 
-    def _create_resp(self, cls, req, type, flags):
+    def _create_msg(self, cls, type, flags):
         resp = cls()
-        resp['header']['sequence_number'] = req['header']['sequence_number']
+        resp['header']['sequence_number'] = 0
         resp['header']['pid'] = 0
         resp['header']['type'] = type
         resp['header']['flags'] = flags
+        return resp
+
+    def _create_resp(self, cls, req, type, flags):
+        resp = self._create_msg(cls, type, flags)
+        resp['header']['sequence_number'] = req['header']['sequence_number']
         return resp
 
     def _append_nlmsg_done(self, buf, req):
