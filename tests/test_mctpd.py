@@ -5,6 +5,7 @@ import asyncdbus
 
 from mctp_test_utils import (
     mctpd_mctp_iface_obj,
+    mctpd_mctp_network_obj,
     mctpd_mctp_endpoint_common_obj,
     mctpd_mctp_endpoint_control_obj
 )
@@ -455,3 +456,30 @@ async def test_query_message_types(dbus, mctpd):
     query_types.sort()
 
     assert ep_types == query_types
+
+""" Network1.LocalEIDs should reflect locally-assigned EID state """
+async def test_network_local_eids_single(dbus, mctpd):
+    iface = mctpd.system.interfaces[0]
+
+    net = await mctpd_mctp_network_obj(dbus, iface.net)
+    eids = list(await net.get_local_eids())
+
+    assert eids == [8]
+
+async def test_network_local_eids_multiple(dbus, mctpd):
+    iface = mctpd.system.interfaces[0]
+    await mctpd.system.add_address(mctpd.system.Address(iface, 9))
+
+    net = await mctpd_mctp_network_obj(dbus, iface.net)
+    eids = list(await net.get_local_eids())
+
+    assert eids == [8, 9]
+
+async def test_network_local_eids_none(dbus, mctpd):
+    iface = mctpd.system.interfaces[0]
+    await mctpd.system.del_address(mctpd.system.Address(iface, 8))
+
+    net = await mctpd_mctp_network_obj(dbus, iface.net)
+    eids = list(await net.get_local_eids())
+
+    assert eids == []
