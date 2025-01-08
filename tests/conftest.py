@@ -591,7 +591,7 @@ class NLSocket(BaseSocket):
         resp['header']['type'] = netlink.NLMSG_ERROR
         resp['error'] = 0
         resp.encode()
-        await self._send_resp(resp.data)
+        await self._send_msg(resp.data)
 
     async def handle_send(self, addr, data):
         addr = addr[:struct.calcsize(self.addr_fmt)]
@@ -630,7 +630,7 @@ class NLSocket(BaseSocket):
     async def handle_setsockopt(self, level, optname, optval):
         pass
 
-    async def _send_resp(self, buf):
+    async def _send_msg(self, buf):
         addr = struct.pack(self.addr_fmt, AF_NETLINK, 0, 0, 0)
         await self.send(addr, buf)
 
@@ -673,7 +673,7 @@ class NLSocket(BaseSocket):
             buf.extend(resp.data)
 
         self._append_nlmsg_done(buf, msg)
-        await self._send_resp(buf)
+        await self._send_msg(buf)
 
     async def _handle_getaddr(self, msg):
         dump = bool(msg['header']['flags'] & netlink.NLM_F_DUMP)
@@ -701,7 +701,7 @@ class NLSocket(BaseSocket):
 
         self._append_nlmsg_done(buf, msg)
 
-        await self._send_resp(buf)
+        await self._send_msg(buf)
 
     async def _handle_getneigh(self, msg):
         dump = bool(msg['header']['flags'] & netlink.NLM_F_DUMP)
@@ -725,7 +725,7 @@ class NLSocket(BaseSocket):
 
         self._append_nlmsg_done(buf, msg)
 
-        await self._send_resp(buf)
+        await self._send_msg(buf)
 
     async def _handle_newneigh(self, msg):
         # reparse as ndmsg
@@ -743,7 +743,7 @@ class NLSocket(BaseSocket):
         except NetlinkError as nle:
             msg = nle.to_nlmsg()
             msg.encode()
-            await self._send_resp(msg.data)
+            await self._send_msg(msg.data)
             return
 
         if msg['header']['flags'] & netlink.NLM_F_ACK:
@@ -764,7 +764,7 @@ class NLSocket(BaseSocket):
         except NetlinkError as nle:
             msg = nle.to_nlmsg()
             msg.encode()
-            await self._send_resp(msg.data)
+            await self._send_msg(msg.data)
             return
 
         if msg['header']['flags'] & netlink.NLM_F_ACK:
@@ -797,7 +797,7 @@ class NLSocket(BaseSocket):
 
         self._append_nlmsg_done(buf, msg)
 
-        await self._send_resp(buf)
+        await self._send_msg(buf)
 
     async def _handle_newroute(self, msg):
         msg = rtmsg_mctp(msg.data)
@@ -832,7 +832,7 @@ class NLSocket(BaseSocket):
         except NetlinkError as nle:
             msg = nle.to_nlmsg()
             msg.encode()
-            await self._send_resp(msg.data)
+            await self._send_msg(msg.data)
             return
 
         if msg['header']['flags'] & netlink.NLM_F_ACK:
