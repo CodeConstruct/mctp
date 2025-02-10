@@ -2883,43 +2883,12 @@ static const sd_bus_vtable testing_vtable[] = {
 	SD_BUS_VTABLE_END
 };
 
-static bool is_endpoint_path(const char *path)
-{
-	char *netstr = NULL, *eidstr = NULL;
-	uint32_t tmp, net;
-	int rc;
-
-	rc = sd_bus_path_decode_many(path,
-				     MCTP_DBUS_PATH "/networks/%/endpoints/%",
-				     &netstr, &eidstr);
-
-	if (rc == 0)
-		return false;
-	if (rc < 0)
-		return false;
-
-	dfree(netstr);
-	dfree(eidstr);
-
-	if (parse_uint32(eidstr, &tmp) < 0 || tmp > 0xff)
-		return false;
-
-	if (parse_uint32(netstr, &net) < 0)
-		return false;
-
-	return true;
-}
-
 static int bus_endpoint_get_prop(sd_bus *bus,
 		const char *path, const char *interface, const char *property,
 		sd_bus_message *reply, void *userdata, sd_bus_error *berr)
 {
 	struct peer *peer = userdata;
 	int rc;
-
-	if (!is_endpoint_path(path)) {
-		return -ENOENT;
-	}
 
 	if (strcmp(property, "NetworkId") == 0) {
 		rc = sd_bus_message_append(reply, "u", peer->net);
@@ -3039,11 +3008,6 @@ static int bus_endpoint_set_prop(sd_bus *bus, const char *path,
 	const char *connectivity;
 	struct ctx *ctx = peer->ctx;
 	int rc;
-
-	if (!is_endpoint_path(path)) {
-		rc = -ENOENT;
-		goto out;
-	}
 
 	if (strcmp(property, "Connectivity") == 0) {
 		bool previously = peer->degraded;
