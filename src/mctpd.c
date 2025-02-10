@@ -76,12 +76,11 @@ struct dest_phys {
 typedef struct dest_phys dest_phys;
 
 /* Table of per-network details */
-struct net_det {
+struct net {
 	int net;
 	// EID mappings, an index into ctx->peers. Value -1 is unused.
 	ssize_t peeridx[256];
 };
-typedef struct net_det net_det;
 
 struct ctx;
 
@@ -199,7 +198,7 @@ struct ctx {
 	peer *peers;
 	size_t size_peers;
 
-	struct net_det *nets;
+	struct net *nets;
 	size_t num_nets;
 
 	// Timeout in usecs for a MCTP response
@@ -251,7 +250,7 @@ mctp_eid_t local_addr(const ctx *ctx, int ifindex) {
 
 static void* dfree(void* ptr);
 
-static net_det *lookup_net(ctx *ctx, int net)
+static struct net *lookup_net(ctx *ctx, int net)
 {
 	size_t i;
 	for (i = 0; i < ctx->num_nets; i++)
@@ -281,7 +280,7 @@ static peer * find_peer_by_phys(ctx *ctx, const dest_phys *dest)
 
 static peer * find_peer_by_addr(ctx *ctx, mctp_eid_t eid, int net)
 {
-	net_det *n = lookup_net(ctx, net);
+	struct net *n = lookup_net(ctx, net);
 
 	if (eid != 0 && n && n->peeridx[eid] >= 0)
 		return &ctx->peers[n->peeridx[eid]];
@@ -293,7 +292,7 @@ static int find_local_eids_by_net(ctx *ctx, uint32_t net,
                                   mctp_eid_t *ret_eids)
 {
 	size_t local_count = 0;
-	net_det *n = lookup_net(ctx, net);
+	struct net *n = lookup_net(ctx, net);
 	peer *peer;
 
 	*local_eid_cnt = 0;
@@ -1378,7 +1377,7 @@ static int add_peer(ctx *ctx, const dest_phys *dest, mctp_eid_t eid,
 {
 	ssize_t idx;
 	size_t new_size;
-	net_det *n;
+	struct net *n;
 	void *tmp = NULL;
 	peer *peer;
 
@@ -1440,7 +1439,7 @@ static int add_peer(ctx *ctx, const dest_phys *dest, mctp_eid_t eid,
 	return 0;
 }
 
-static int check_peer_struct(const peer *peer, const struct net_det *n)
+static int check_peer_struct(const peer *peer, const struct net *n)
 {
 	ssize_t idx;
 	ctx *ctx = peer->ctx;
@@ -1472,7 +1471,7 @@ static int check_peer_struct(const peer *peer, const struct net_det *n)
 
 static int remove_peer(peer *peer)
 {
-	net_det *n = NULL;
+	struct net *n = NULL;
 
 	if (peer->state == UNUSED) {
 		warnx("BUG: %s: unused peer", __func__);
@@ -1513,7 +1512,7 @@ static int remove_peer(peer *peer)
 
 /* Returns -EEXIST if the new_eid is already used */
 static int change_peer_eid(peer *peer, mctp_eid_t new_eid) {
-	net_det *n = NULL;
+	struct net *n = NULL;
 
 	n = lookup_net(peer->ctx, peer->net);
 	if (!n) {
@@ -1568,7 +1567,7 @@ static int endpoint_assign_eid(ctx *ctx, sd_bus_error *berr, const dest_phys *de
 	peer **ret_peer, mctp_eid_t static_eid)
 {
 	mctp_eid_t e, new_eid;
-	net_det *n = NULL;
+	struct net *n = NULL;
 	peer *peer = NULL;
 	int net;
 	int rc;
@@ -3311,7 +3310,7 @@ static int bus_mctp_network_find(sd_bus *bus, const char *path,
 		return 0;
 	}
 
-	net_det *n = lookup_net(ctx, netid);
+	struct net *n = lookup_net(ctx, netid);
 	if (n) {
 		*ret_found = ctx;
 		return 1;
@@ -3951,7 +3950,7 @@ static int del_interface(ctx *ctx, int old_ifindex)
 static int change_net_interface(ctx *ctx, int ifindex, int old_net)
 {
 	int rc;
-	net_det *old_n, *new_n;
+	struct net *old_n, *new_n;
 	int new_net = mctp_nl_net_byindex(ctx->nl, ifindex);
 
 	if (ctx->verbose) {
@@ -4125,12 +4124,12 @@ static int add_interface_local(ctx *ctx, int ifindex)
 
 static int add_net(ctx *ctx, int net)
 {
-	net_det *n, *tmp;
+	struct net *n, *tmp;
 	if (lookup_net(ctx, net) != NULL) {
 		warnx("BUG: add_net for existing net %d", net);
 		return -EEXIST;
 	}
-	tmp = realloc(ctx->nets, sizeof(net_det) * (ctx->num_nets+1));
+	tmp = realloc(ctx->nets, sizeof(struct net) * (ctx->num_nets+1));
 	if (!tmp) {
 		warnx("Out of memory");
 		return -ENOMEM;
@@ -4229,7 +4228,7 @@ static int setup_testing(ctx *ctx) {
 		warnx("Populating fake MCTP nets");
 
 		ctx->num_nets = 2;
-		ctx->nets = calloc(ctx->num_nets, sizeof(net_det));
+		ctx->nets = calloc(ctx->num_nets, sizeof(struct net));
 		if (!ctx->nets) {
 			warnx("calloc failed");
 			ctx->num_nets = 0;
