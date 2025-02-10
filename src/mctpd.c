@@ -176,7 +176,6 @@ struct peer {
 		uint8_t medium_spec;
 	} recovery;
 };
-typedef struct peer peer;
 
 struct ctx {
 	sd_event *event;
@@ -195,7 +194,7 @@ struct ctx {
 	enum endpoint_role default_role;
 
 	// An allocated array of peers, changes address (reallocated) during runtime
-	peer *peers;
+	struct peer *peers;
 	size_t size_peers;
 
 	struct net *nets;
@@ -215,19 +214,19 @@ struct ctx {
 };
 typedef struct ctx ctx;
 
-static int emit_endpoint_added(const peer *peer);
-static int emit_endpoint_removed(const peer *peer);
+static int emit_endpoint_added(const struct peer *peer);
+static int emit_endpoint_removed(const struct peer *peer);
 static int emit_interface_added(ctx *ctx, int ifindex);
 static int emit_interface_removed(ctx *ctx, int ifindex);
 static int emit_net_added(ctx *ctx, int net);
 static int emit_net_removed(ctx *ctx, int net);
-static int query_peer_properties(peer *peer);
-static int setup_added_peer(peer *peer);
-static void add_peer_route(peer *peer);
-static int publish_peer(peer *peer, bool add_route);
-static int unpublish_peer(peer *peer);
-static int peer_route_update(peer *peer, uint16_t type);
-static int peer_neigh_update(peer *peer, uint16_t type);
+static int query_peer_properties(struct peer *peer);
+static int setup_added_peer(struct peer *peer);
+static void add_peer_route(struct peer *peer);
+static int publish_peer(struct peer *peer, bool add_route);
+static int unpublish_peer(struct peer *peer);
+static int peer_route_update(struct peer *peer, uint16_t type);
+static int peer_neigh_update(struct peer *peer, uint16_t type);
 
 static int add_interface_local(ctx *ctx, int ifindex);
 static int del_interface(ctx *ctx, int old_ifindex);
@@ -266,10 +265,10 @@ static bool match_phys(const dest_phys *d1, const dest_phys *d2) {
 			|| !memcmp(d1->hwaddr, d2->hwaddr, d1->hwaddr_len));
 }
 
-static peer * find_peer_by_phys(ctx *ctx, const dest_phys *dest)
+static struct peer *find_peer_by_phys(ctx *ctx, const dest_phys *dest)
 {
 	for (size_t i = 0; i < ctx->size_peers; i++) {
-		peer *peer = &ctx->peers[i];
+		struct peer *peer = &ctx->peers[i];
 		if (peer->state != REMOTE)
 			continue;
 		if (match_phys(&peer->phys, dest))
@@ -278,7 +277,7 @@ static peer * find_peer_by_phys(ctx *ctx, const dest_phys *dest)
 	return NULL;
 }
 
-static peer * find_peer_by_addr(ctx *ctx, mctp_eid_t eid, int net)
+static struct peer *find_peer_by_addr(ctx *ctx, mctp_eid_t eid, int net)
 {
 	struct net *n = lookup_net(ctx, net);
 
@@ -293,7 +292,7 @@ static int find_local_eids_by_net(ctx *ctx, uint32_t net,
 {
 	size_t local_count = 0;
 	struct net *n = lookup_net(ctx, net);
-	peer *peer;
+	struct peer *peer;
 
 	*local_eid_cnt = 0;
 	if (!n)
@@ -347,7 +346,7 @@ static const char* ext_addr_tostr(const struct sockaddr_mctp_ext *addr)
 	return dfree(buf);
 }
 
-static const char* peer_tostr(const peer *peer)
+static const char* peer_tostr(const struct peer *peer)
 {
 	size_t l = 300;
 	char *str = NULL;
@@ -362,7 +361,7 @@ static const char* peer_tostr(const peer *peer)
 	return dfree(str);
 }
 
-static const char* peer_tostr_short(const peer *peer)
+static const char* peer_tostr_short(const struct peer *peer)
 {
 	size_t l = 30;
 	char *str = NULL;
@@ -449,7 +448,7 @@ out:
 	return rc;
 }
 
-static int peer_from_path(ctx *ctx, const char* path, peer **ret_peer)
+static int peer_from_path(ctx *ctx, const char* path, struct peer **ret_peer)
 {
 	char *netstr = NULL, *eidstr = NULL;
 	uint32_t tmp, net;
@@ -480,7 +479,7 @@ static int peer_from_path(ctx *ctx, const char* path, peer **ret_peer)
 	return 0;
 }
 
-static int path_from_peer(const peer *peer, char ** ret_path) {
+static int path_from_peer(const struct peer *peer, char ** ret_path) {
 	size_t l;
 	char* buf;
 
@@ -768,7 +767,7 @@ static int handle_control_resolve_endpoint_id(ctx *ctx,
 	struct mctp_ctrl_resp_resolve_endpoint_id *resp = NULL;
 	uint8_t resp_buf[sizeof(*resp) + MAX_ADDR_LEN];
 	size_t resp_len;
-	peer *peer = NULL;
+	struct peer *peer = NULL;
 
 	if (buf_size < sizeof(*req)) {
 		warnx("short Resolve Endpoint ID message");
@@ -1259,7 +1258,7 @@ out:
 
 /* Queries an endpoint peer. Addressing is standard eid/net.
  */
-static int endpoint_query_peer(const peer *peer,
+static int endpoint_query_peer(const struct peer *peer,
 	uint8_t req_type, const void* req, size_t req_len,
 	uint8_t **resp, size_t *resp_len, struct sockaddr_mctp_ext *resp_addr)
 {
@@ -1311,7 +1310,7 @@ static int endpoint_query_phys(ctx *ctx, const dest_phys *dest,
 }
 
 /* returns -ECONNREFUSED if the endpoint returns failure. */
-static int endpoint_send_set_endpoint_id(const peer *peer, mctp_eid_t *new_eid)
+static int endpoint_send_set_endpoint_id(const struct peer *peer, mctp_eid_t *new_eid)
 {
 	struct sockaddr_mctp_ext addr;
 	struct mctp_ctrl_cmd_set_eid req = {0};
@@ -1373,13 +1372,13 @@ out:
 /* Returns the newly added peer.
  * Error is -EEXISTS if it exists */
 static int add_peer(ctx *ctx, const dest_phys *dest, mctp_eid_t eid,
-	int net, peer **ret_peer)
+	int net, struct peer **ret_peer)
 {
 	ssize_t idx;
 	size_t new_size;
 	struct net *n;
 	void *tmp = NULL;
-	peer *peer;
+	struct peer *peer;
 
 	n = lookup_net(ctx, net);
 	if (!n) {
@@ -1445,7 +1444,7 @@ static int add_peer(ctx *ctx, const dest_phys *dest, mctp_eid_t eid,
 	return 0;
 }
 
-static int check_peer_struct(const peer *peer, const struct net *n)
+static int check_peer_struct(const struct peer *peer, const struct net *n)
 {
 	ssize_t idx;
 	ctx *ctx = peer->ctx;
@@ -1475,7 +1474,7 @@ static int check_peer_struct(const peer *peer, const struct net *n)
 	return 0;
 }
 
-static int remove_peer(peer *peer)
+static int remove_peer(struct peer *peer)
 {
 	struct net *n = NULL;
 
@@ -1517,7 +1516,7 @@ static int remove_peer(peer *peer)
 }
 
 /* Returns -EEXIST if the new_eid is already used */
-static int change_peer_eid(peer *peer, mctp_eid_t new_eid) {
+static int change_peer_eid(struct peer *peer, mctp_eid_t new_eid) {
 	struct net *n = NULL;
 
 	n = lookup_net(peer->ctx, peer->net);
@@ -1543,7 +1542,7 @@ static int change_peer_eid(peer *peer, mctp_eid_t new_eid) {
 	return 0;
 }
 
-static int peer_set_mtu(ctx *ctx, peer *peer, uint32_t mtu) {
+static int peer_set_mtu(ctx *ctx, struct peer *peer, uint32_t mtu) {
 	const char* ifname = NULL;
 	int rc;
 
@@ -1570,11 +1569,11 @@ static int peer_set_mtu(ctx *ctx, peer *peer, uint32_t mtu) {
 }
 
 static int endpoint_assign_eid(ctx *ctx, sd_bus_error *berr, const dest_phys *dest,
-	peer **ret_peer, mctp_eid_t static_eid)
+	struct peer **ret_peer, mctp_eid_t static_eid)
 {
 	mctp_eid_t e, new_eid;
 	struct net *n = NULL;
-	peer *peer = NULL;
+	struct peer *peer = NULL;
 	int net;
 	int rc;
 
@@ -1736,11 +1735,11 @@ out:
  * Returns negative error code on failure.
  */
 static int get_endpoint_peer(ctx *ctx, sd_bus_error *berr,
-	const dest_phys *dest, peer **ret_peer, mctp_eid_t *ret_cur_eid)
+	const dest_phys *dest, struct peer **ret_peer, mctp_eid_t *ret_cur_eid)
 {
 	mctp_eid_t eid;
 	uint8_t ep_type, medium_spec;
-	peer *peer = NULL;
+	struct peer *peer = NULL;
 	int net;
 	int rc;
 
@@ -1796,7 +1795,7 @@ static int get_endpoint_peer(ctx *ctx, sd_bus_error *berr,
 	return 0;
 }
 
-static int query_get_peer_msgtypes(peer *peer) {
+static int query_get_peer_msgtypes(struct peer *peer) {
 	struct sockaddr_mctp_ext addr;
 	struct mctp_ctrl_cmd_get_msg_type_support req;
 	struct mctp_ctrl_resp_get_msg_type_support *resp = NULL;
@@ -1847,7 +1846,7 @@ out:
 	return rc;
 }
 
-static int peer_set_uuid(peer *peer, const uint8_t uuid[16])
+static int peer_set_uuid(struct peer *peer, const uint8_t uuid[16])
 {
 	if (!peer->uuid) {
 		peer->uuid = malloc(16);
@@ -1892,7 +1891,7 @@ out:
 	return rc;
 }
 
-static int query_get_peer_uuid(peer *peer) {
+static int query_get_peer_uuid(struct peer *peer) {
 	struct sockaddr_mctp_ext addr;
 	struct mctp_ctrl_cmd_get_uuid req;
 	struct mctp_ctrl_resp_get_uuid *resp = NULL;
@@ -2002,7 +2001,7 @@ static int method_setup_endpoint(sd_bus_message *call, void *data, sd_bus_error 
 	dest_phys desti = {0}, *dest = &desti;
 	char *peer_path = NULL;
 	ctx *ctx = data;
-	peer *peer = NULL;
+	struct peer *peer = NULL;
 
 	dest->ifindex = interface_call_to_ifindex_busowner(ctx, call);
 	if (dest->ifindex <= 0)
@@ -2061,7 +2060,7 @@ static int method_assign_endpoint(sd_bus_message *call, void *data, sd_bus_error
 	dest_phys desti, *dest = &desti;
 	char *peer_path = NULL;
 	ctx *ctx = data;
-	peer *peer = NULL;
+	struct peer *peer = NULL;
 
 	dest->ifindex = interface_call_to_ifindex_busowner(ctx, call);
 	if (dest->ifindex <= 0)
@@ -2110,7 +2109,7 @@ static int method_assign_endpoint_static(sd_bus_message *call, void *data,
 {
 	dest_phys desti, *dest = &desti;
 	char *peer_path = NULL;
-	peer *peer = NULL;
+	struct peer *peer = NULL;
 	ctx *ctx = data;
 	uint8_t eid;
 	int rc;
@@ -2184,7 +2183,7 @@ static int method_learn_endpoint(sd_bus_message *call, void *data, sd_bus_error 
 	char *peer_path = NULL;
 	dest_phys desti, *dest = &desti;
 	ctx *ctx = data;
-	peer *peer = NULL;
+	struct peer *peer = NULL;
 	mctp_eid_t eid = 0;
 
 	dest->ifindex = interface_call_to_ifindex_busowner(ctx, call);
@@ -2228,7 +2227,7 @@ err:
 // Query various properties of a peer.
 // To be called when a new peer is discovered/assigned, once an EID is known
 // and routable.
-static int query_peer_properties(peer *peer)
+static int query_peer_properties(struct peer *peer)
 {
 	int rc;
 
@@ -2253,7 +2252,7 @@ static int query_peer_properties(peer *peer)
 	return rc;
 }
 
-static int peer_neigh_update(peer *peer, uint16_t type)
+static int peer_neigh_update(struct peer *peer, uint16_t type)
 {
 	struct {
 		struct nlmsghdr		nh;
@@ -2276,7 +2275,7 @@ static int peer_neigh_update(peer *peer, uint16_t type)
 }
 
 // type is RTM_NEWROUTE or RTM_DELROUTE
-static int peer_route_update(peer *peer, uint16_t type)
+static int peer_route_update(struct peer *peer, uint16_t type)
 {
 	const char * link;
 
@@ -2298,7 +2297,7 @@ static int peer_route_update(peer *peer, uint16_t type)
 }
 
 /* Called when a new peer is discovered. Queries properties and publishes */
-static int setup_added_peer(peer *peer)
+static int setup_added_peer(struct peer *peer)
 {
 	int rc;
 
@@ -2324,7 +2323,7 @@ out:
 /* Adds routes/neigh. This is separate from
    publish_peer() because we want a two stage setup of querying
    properties (routed packets) then emitting dbus once finished */
-static void add_peer_route(peer *peer)
+static void add_peer_route(struct peer *peer)
 {
 	int rc;
 
@@ -2355,7 +2354,7 @@ static void add_peer_route(peer *peer)
 }
 
 /* Sets up routes/neigh, emits dbus entry */
-static int publish_peer(peer *peer, bool add_route)
+static int publish_peer(struct peer *peer, bool add_route)
 {
 	int rc;
 
@@ -2372,7 +2371,7 @@ static int publish_peer(peer *peer, bool add_route)
 }
 
 /* removes route, neigh, dbus entry for the peer */
-static int unpublish_peer(peer *peer) {
+static int unpublish_peer(struct peer *peer) {
 	int rc;
 	if (peer->have_neigh) {
 		if (peer->ctx->verbose) {
@@ -2532,7 +2531,7 @@ err:
 static int method_endpoint_remove(sd_bus_message *call, void *data,
 	sd_bus_error *berr)
 {
-	peer *peer = data;
+	struct peer *peer = data;
 	int rc;
 	ctx *ctx = peer->ctx;
 
@@ -2568,7 +2567,7 @@ out:
 static int
 peer_endpoint_recover(sd_event_source *s, uint64_t usec, void *userdata)
 {
-	peer *peer = userdata;
+	struct peer *peer = userdata;
 	ctx *ctx = peer->ctx;
 	char *peer_path;
 	int rc;
@@ -2693,8 +2692,8 @@ reclaim:
 static int method_endpoint_recover(sd_bus_message *call, void *data,
 	sd_bus_error *berr)
 {
+	struct peer *peer;
 	bool previously;
-	peer *peer;
 	ctx *ctx;
 	int rc;
 
@@ -2748,7 +2747,7 @@ out:
 static int method_endpoint_set_mtu(sd_bus_message *call, void *data,
 	sd_bus_error *berr)
 {
-	peer *peer = data;
+	struct peer *peer = data;
 	ctx *ctx = peer->ctx;
 	int rc;
 	uint32_t mtu;
@@ -2988,7 +2987,7 @@ static int bus_endpoint_get_prop(sd_bus *bus,
 		const char *path, const char *interface, const char *property,
 		sd_bus_message *reply, void *userdata, sd_bus_error *berr)
 {
-	peer *peer = userdata;
+	struct peer *peer = userdata;
 	int rc;
 
 	if (!is_endpoint_path(path)) {
@@ -3160,8 +3159,8 @@ static int bus_endpoint_set_prop(sd_bus *bus, const char *path,
                                  void *userdata,
                                  sd_bus_error *ret_error)
 {
+	struct peer *peer = userdata;
 	const char *connectivity;
-	peer *peer = userdata;
 	ctx *ctx = peer->ctx;
 	int rc;
 
@@ -3289,8 +3288,8 @@ static int bus_endpoint_find(sd_bus *bus, const char *path,
 	const char *interface, void *userdata, void **ret_found,
 	sd_bus_error *ret_error)
 {
+	struct peer *peer = NULL;
 	ctx *ctx = userdata;
-	peer *peer = NULL;
 	int rc;
 	if (!is_endpoint_path(path)) {
 		return 0;
@@ -3329,8 +3328,8 @@ static int bus_endpoint_find_uuid(sd_bus *bus, const char *path,
 	const char *interface, void *userdata, void **ret_found,
 	sd_bus_error *ret_error)
 {
+	struct peer *peer = NULL;
 	ctx *ctx = userdata;
-	peer *peer = NULL;
 	int rc;
 	if (!is_endpoint_path(path)) {
 		return 0;
@@ -3446,7 +3445,7 @@ static char* interface_path(const char* link_name)
 	return buf;
 }
 
-static int emit_endpoint_added(const peer *peer) {
+static int emit_endpoint_added(const struct peer *peer) {
 	char *path = NULL;
 	int rc;
 
@@ -3461,7 +3460,7 @@ static int emit_endpoint_added(const peer *peer) {
 	return rc;
 }
 
-static int emit_endpoint_removed(const peer *peer) {
+static int emit_endpoint_removed(const struct peer *peer) {
 	char *path = NULL;
 	int rc;
 
@@ -3664,7 +3663,7 @@ static int mctpd_dbus_enumerate(sd_bus *bus, const char* path,
 
 	// Peers
 	for (i = 0; i < ctx->size_peers; i++) {
-		peer *peer = &ctx->peers[i];
+		struct peer *peer = &ctx->peers[i];
 
 		if (!peer->published)
 			continue;
@@ -3864,8 +3863,8 @@ int request_dbus(ctx *ctx)
 // Deletes one local EID.
 static int del_local_eid(ctx *ctx, int net, int eid)
 {
+	struct peer *peer = NULL;
 	int rc;
-	peer *peer = NULL;
 
 	peer = find_peer_by_addr(ctx, eid, net);
 	if (!peer) {
@@ -3938,7 +3937,7 @@ static int del_interface(ctx *ctx, int old_ifindex)
 		fprintf(stderr, "Deleting interface #%d\n", old_ifindex);
 	}
 	for (size_t i = 0; i < ctx->size_peers; i++) {
-		peer *p = &ctx->peers[i];
+		struct peer *p = &ctx->peers[i];
 		if (p->state == REMOTE && p->phys.ifindex == old_ifindex) {
 			remove_peer(p);
 		}
@@ -3989,7 +3988,7 @@ static int change_net_interface(ctx *ctx, int ifindex, int old_net)
 	}
 
 	for (size_t i = 0; i < ctx->size_peers; i++) {
-		peer *peer = &ctx->peers[i];
+		struct peer *peer = &ctx->peers[i];
 		if (!(peer->state == REMOTE && peer->phys.ifindex == ifindex)) {
 			// skip peers on other interfaces
 			continue;
@@ -4029,8 +4028,8 @@ static int change_net_interface(ctx *ctx, int ifindex, int old_net)
 // Adds one local EID
 static int add_local_eid(ctx *ctx, int net, int eid)
 {
+	struct peer *peer;
 	int rc;
-	peer *peer;
 
 	if (ctx->verbose) {
 		fprintf(stderr, "Adding local eid %d net %d\n", eid, net);
@@ -4217,10 +4216,10 @@ static int setup_nets(ctx *ctx)
 }
 
 static int setup_testing(ctx *ctx) {
-	int rc;
 	dest_phys dest = {};
-	peer *peer;
+	struct peer *peer;
 	size_t i, j;
+	int rc;
 
 	if (!ctx->testing)
 		return 0;
