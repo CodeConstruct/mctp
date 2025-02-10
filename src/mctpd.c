@@ -212,14 +212,13 @@ struct ctx {
 	bool verbose;
 	bool testing;
 };
-typedef struct ctx ctx;
 
 static int emit_endpoint_added(const struct peer *peer);
 static int emit_endpoint_removed(const struct peer *peer);
-static int emit_interface_added(ctx *ctx, int ifindex);
-static int emit_interface_removed(ctx *ctx, int ifindex);
-static int emit_net_added(ctx *ctx, int net);
-static int emit_net_removed(ctx *ctx, int net);
+static int emit_interface_added(struct ctx *ctx, int ifindex);
+static int emit_interface_removed(struct ctx *ctx, int ifindex);
+static int emit_net_added(struct ctx *ctx, int net);
+static int emit_net_removed(struct ctx *ctx, int net);
 static int query_peer_properties(struct peer *peer);
 static int setup_added_peer(struct peer *peer);
 static void add_peer_route(struct peer *peer);
@@ -228,15 +227,15 @@ static int unpublish_peer(struct peer *peer);
 static int peer_route_update(struct peer *peer, uint16_t type);
 static int peer_neigh_update(struct peer *peer, uint16_t type);
 
-static int add_interface_local(ctx *ctx, int ifindex);
-static int del_interface(ctx *ctx, int old_ifindex);
-static int change_net_interface(ctx *ctx, int ifindex, int old_net);
-static int add_local_eid(ctx *ctx, int net, int eid);
-static int del_local_eid(ctx *ctx, int net, int eid);
-static int add_net(ctx *ctx, int net);
-static int add_interface(ctx *ctx, int ifindex);
+static int add_interface_local(struct ctx *ctx, int ifindex);
+static int del_interface(struct ctx *ctx, int old_ifindex);
+static int change_net_interface(struct ctx *ctx, int ifindex, int old_net);
+static int add_local_eid(struct ctx *ctx, int net, int eid);
+static int del_local_eid(struct ctx *ctx, int net, int eid);
+static int add_net(struct ctx *ctx, int net);
+static int add_interface(struct ctx *ctx, int ifindex);
 
-mctp_eid_t local_addr(const ctx *ctx, int ifindex) {
+mctp_eid_t local_addr(const struct ctx *ctx, int ifindex) {
 	mctp_eid_t *eids, ret = 0;
 	size_t num;
 
@@ -249,7 +248,7 @@ mctp_eid_t local_addr(const ctx *ctx, int ifindex) {
 
 static void* dfree(void* ptr);
 
-static struct net *lookup_net(ctx *ctx, int net)
+static struct net *lookup_net(struct ctx *ctx, int net)
 {
 	size_t i;
 	for (i = 0; i < ctx->num_nets; i++)
@@ -265,7 +264,7 @@ static bool match_phys(const dest_phys *d1, const dest_phys *d2) {
 			|| !memcmp(d1->hwaddr, d2->hwaddr, d1->hwaddr_len));
 }
 
-static struct peer *find_peer_by_phys(ctx *ctx, const dest_phys *dest)
+static struct peer *find_peer_by_phys(struct ctx *ctx, const dest_phys *dest)
 {
 	for (size_t i = 0; i < ctx->size_peers; i++) {
 		struct peer *peer = &ctx->peers[i];
@@ -277,7 +276,7 @@ static struct peer *find_peer_by_phys(ctx *ctx, const dest_phys *dest)
 	return NULL;
 }
 
-static struct peer *find_peer_by_addr(ctx *ctx, mctp_eid_t eid, int net)
+static struct peer *find_peer_by_addr(struct ctx *ctx, mctp_eid_t eid, int net)
 {
 	struct net *n = lookup_net(ctx, net);
 
@@ -286,7 +285,7 @@ static struct peer *find_peer_by_addr(ctx *ctx, mctp_eid_t eid, int net)
 	return NULL;
 }
 
-static int find_local_eids_by_net(ctx *ctx, uint32_t net,
+static int find_local_eids_by_net(struct ctx *ctx, uint32_t net,
                                   size_t* local_eid_cnt,
                                   mctp_eid_t *ret_eids)
 {
@@ -448,7 +447,7 @@ out:
 	return rc;
 }
 
-static int peer_from_path(ctx *ctx, const char* path, struct peer **ret_peer)
+static int peer_from_path(struct ctx *ctx, const char* path, struct peer **ret_peer)
 {
 	char *netstr = NULL, *eidstr = NULL;
 	uint32_t tmp, net;
@@ -516,7 +515,7 @@ static int get_role(const char *mode, struct role *role)
 
 /* Returns the message from a socket.
    ret_buf is allocated, should be freed by the caller */
-static int read_message(ctx *ctx, int sd, uint8_t **ret_buf, size_t *ret_buf_size,
+static int read_message(struct ctx *ctx, int sd, uint8_t **ret_buf, size_t *ret_buf_size,
 		struct sockaddr_mctp_ext *ret_addr)
 {
 	int rc;
@@ -586,7 +585,7 @@ out:
 }
 
 /* Replies to a real EID, not physical addressing */
-static int reply_message(ctx *ctx, int sd, const void *resp, size_t resp_len,
+static int reply_message(struct ctx *ctx, int sd, const void *resp, size_t resp_len,
 	const struct sockaddr_mctp_ext *addr)
 {
 	ssize_t len;
@@ -617,7 +616,7 @@ static int reply_message(ctx *ctx, int sd, const void *resp, size_t resp_len,
 }
 
 // Handles new Incoming Set Endpoint ID request
-static int handle_control_set_endpoint_id(ctx *ctx,
+static int handle_control_set_endpoint_id(struct ctx *ctx,
 	int sd, struct sockaddr_mctp_ext *addr,
 	const uint8_t *buf, const size_t buf_size)
 {
@@ -644,7 +643,7 @@ static int handle_control_set_endpoint_id(ctx *ctx,
 	return reply_message(ctx, sd, resp, resp_len, addr);
 }
 
-static int handle_control_get_version_support(ctx *ctx,
+static int handle_control_get_version_support(struct ctx *ctx,
 	int sd, const struct sockaddr_mctp_ext *addr,
 	const uint8_t *buf, const size_t buf_size)
 {
@@ -686,7 +685,7 @@ static int handle_control_get_version_support(ctx *ctx,
 	return reply_message(ctx, sd, resp, resp_len, addr);
 }
 
-static int handle_control_get_endpoint_id(ctx *ctx,
+static int handle_control_get_endpoint_id(struct ctx *ctx,
 	int sd, const struct sockaddr_mctp_ext *addr,
 	const uint8_t *buf, const size_t buf_size)
 {
@@ -712,7 +711,7 @@ static int handle_control_get_endpoint_id(ctx *ctx,
 	return reply_message(ctx, sd, resp, sizeof(*resp), addr);
 }
 
-static int handle_control_get_endpoint_uuid(ctx *ctx,
+static int handle_control_get_endpoint_uuid(struct ctx *ctx,
 	int sd, const struct sockaddr_mctp_ext *addr,
 	const uint8_t *buf, const size_t buf_size)
 {
@@ -732,7 +731,7 @@ static int handle_control_get_endpoint_uuid(ctx *ctx,
 }
 
 
-static int handle_control_get_message_type_support(ctx *ctx,
+static int handle_control_get_message_type_support(struct ctx *ctx,
 	int sd, const struct sockaddr_mctp_ext *addr,
 	const uint8_t *buf, const size_t buf_size)
 {
@@ -759,7 +758,7 @@ static int handle_control_get_message_type_support(ctx *ctx,
 	return reply_message(ctx, sd, resp, resp_len, addr);
 }
 
-static int handle_control_resolve_endpoint_id(ctx *ctx,
+static int handle_control_resolve_endpoint_id(struct ctx *ctx,
 	int sd, const struct sockaddr_mctp_ext *addr,
 	const uint8_t *buf, const size_t buf_size)
 {
@@ -799,7 +798,7 @@ static int handle_control_resolve_endpoint_id(ctx *ctx,
 	return reply_message(ctx, sd, resp, resp_len, addr);
 }
 
-static int handle_control_unsupported(ctx *ctx,
+static int handle_control_unsupported(struct ctx *ctx,
 	int sd, const struct sockaddr_mctp_ext *addr,
 	const uint8_t *buf, const size_t buf_size)
 {
@@ -826,7 +825,7 @@ static int cb_listen_control_msg(sd_event_source *s, int sd, uint32_t revents,
 	void *userdata)
 {
 	struct sockaddr_mctp_ext addr = {0};
-	ctx *ctx = userdata;
+	struct ctx *ctx = userdata;
 	uint8_t *buf = NULL;
 	size_t buf_size;
 	struct mctp_ctrl_msg_hdr *ctrl_msg = NULL;
@@ -903,7 +902,7 @@ out:
 	return 0;
 }
 
-static int listen_control_msg(ctx *ctx, int net)
+static int listen_control_msg(struct ctx *ctx, int net)
 {
 	struct sockaddr_mctp addr = { 0 };
 	int rc, sd = -1, val;
@@ -950,7 +949,7 @@ out:
 static int cb_listen_monitor(sd_event_source *s, int sd, uint32_t revents,
 	void *userdata)
 {
-	ctx *ctx = userdata;
+	struct ctx *ctx = userdata;
 	mctp_nl_change *changes = NULL;
 	size_t num_changes;
 	int rc;
@@ -1028,7 +1027,7 @@ static int cb_listen_monitor(sd_event_source *s, int sd, uint32_t revents,
 	return 0;
 }
 
-static int listen_monitor(ctx *ctx)
+static int listen_monitor(struct ctx *ctx)
 {
 	int rc, sd;
 
@@ -1042,7 +1041,7 @@ static int listen_monitor(ctx *ctx)
 	return rc;
 }
 
-static uint8_t mctp_next_iid(ctx *ctx)
+static uint8_t mctp_next_iid(struct ctx *ctx)
 {
 	uint8_t iid = ctx->iid;
 
@@ -1161,7 +1160,7 @@ static int mctp_ctrl_validate_response(uint8_t *buf, size_t rsp_size, size_t
  *
  * resp buffer is allocated, caller to free.
  * Extended addressing is used optionally, depending on ext_addr arg. */
-static int endpoint_query_addr(ctx *ctx,
+static int endpoint_query_addr(struct ctx *ctx,
 	const struct sockaddr_mctp_ext *req_addr, bool ext_addr,
 	const void* req, size_t req_len,
 	uint8_t **resp, size_t *resp_len, struct sockaddr_mctp_ext *resp_addr)
@@ -1282,7 +1281,7 @@ static int endpoint_query_peer(const struct peer *peer,
 
 /* Queries an endpoint using physical addressing, null EID.
  */
-static int endpoint_query_phys(ctx *ctx, const dest_phys *dest,
+static int endpoint_query_phys(struct ctx *ctx, const dest_phys *dest,
 	uint8_t req_type, const void* req, size_t req_len,
 	uint8_t **resp, size_t *resp_len, struct sockaddr_mctp_ext *resp_addr)
 {
@@ -1371,7 +1370,7 @@ out:
 
 /* Returns the newly added peer.
  * Error is -EEXISTS if it exists */
-static int add_peer(ctx *ctx, const dest_phys *dest, mctp_eid_t eid,
+static int add_peer(struct ctx *ctx, const dest_phys *dest, mctp_eid_t eid,
 	int net, struct peer **ret_peer)
 {
 	ssize_t idx;
@@ -1447,7 +1446,7 @@ static int add_peer(ctx *ctx, const dest_phys *dest, mctp_eid_t eid,
 static int check_peer_struct(const struct peer *peer, const struct net *n)
 {
 	ssize_t idx;
-	ctx *ctx = peer->ctx;
+	struct ctx *ctx = peer->ctx;
 
 	if (n->net != peer->net) {
 		warnx("BUG: Mismatching net %d vs peer net %d", n->net, peer->net);
@@ -1542,7 +1541,7 @@ static int change_peer_eid(struct peer *peer, mctp_eid_t new_eid) {
 	return 0;
 }
 
-static int peer_set_mtu(ctx *ctx, struct peer *peer, uint32_t mtu) {
+static int peer_set_mtu(struct ctx *ctx, struct peer *peer, uint32_t mtu) {
 	const char* ifname = NULL;
 	int rc;
 
@@ -1568,7 +1567,7 @@ static int peer_set_mtu(ctx *ctx, struct peer *peer, uint32_t mtu) {
 	return rc;
 }
 
-static int endpoint_assign_eid(ctx *ctx, sd_bus_error *berr, const dest_phys *dest,
+static int endpoint_assign_eid(struct ctx *ctx, sd_bus_error *berr, const dest_phys *dest,
 	struct peer **ret_peer, mctp_eid_t static_eid)
 {
 	mctp_eid_t e, new_eid;
@@ -1646,7 +1645,7 @@ static int endpoint_assign_eid(ctx *ctx, sd_bus_error *berr, const dest_phys *de
 /* Populates a sd_bus_error based on mctpd's convention for error codes.
  * Does nothing if berr is already set.
  */
-static void set_berr(ctx *ctx, int errcode, sd_bus_error *berr) {
+static void set_berr(struct ctx *ctx, int errcode, sd_bus_error *berr) {
 	bool existing = false;
 
 	if (sd_bus_error_is_set(berr)) {
@@ -1694,7 +1693,7 @@ static void set_berr(ctx *ctx, int errcode, sd_bus_error *berr) {
 	}
 }
 
-static int query_get_endpoint_id(ctx *ctx, const dest_phys *dest,
+static int query_get_endpoint_id(struct ctx *ctx, const dest_phys *dest,
 	mctp_eid_t *ret_eid, uint8_t *ret_ep_type, uint8_t *ret_media_spec)
 {
 	struct sockaddr_mctp_ext addr;
@@ -1734,7 +1733,7 @@ out:
  * Returns 0, ret_peer=NULL if the endpoint successfully replies "not yet assigned".
  * Returns negative error code on failure.
  */
-static int get_endpoint_peer(ctx *ctx, sd_bus_error *berr,
+static int get_endpoint_peer(struct ctx *ctx, sd_bus_error *berr,
 	const dest_phys *dest, struct peer **ret_peer, mctp_eid_t *ret_cur_eid)
 {
 	mctp_eid_t eid;
@@ -1858,7 +1857,7 @@ static int peer_set_uuid(struct peer *peer, const uint8_t uuid[16])
 }
 
 static int
-query_get_peer_uuid_by_phys(ctx *ctx, const dest_phys *dest, uint8_t uuid[16])
+query_get_peer_uuid_by_phys(struct ctx *ctx, const dest_phys *dest, uint8_t uuid[16])
 {
 	struct sockaddr_mctp_ext addr;
 	struct mctp_ctrl_cmd_get_uuid req;
@@ -1932,7 +1931,7 @@ out:
 	return rc;
 }
 
-static int interface_call_to_ifindex_busowner(ctx *ctx, sd_bus_message *msg)
+static int interface_call_to_ifindex_busowner(struct ctx *ctx, sd_bus_message *msg)
 {
 	const char *iface, *path;
 	struct link *link;
@@ -1957,7 +1956,7 @@ static int interface_call_to_ifindex_busowner(ctx *ctx, sd_bus_message *msg)
 	return ifindex;
 }
 
-static int validate_dest_phys(ctx *ctx, const dest_phys *dest)
+static int validate_dest_phys(struct ctx *ctx, const dest_phys *dest)
 {
 	if (dest->hwaddr_len > MAX_ADDR_LEN) {
 		warnx("bad hwaddr_len %zu", dest->hwaddr_len);
@@ -2000,7 +1999,7 @@ static int method_setup_endpoint(sd_bus_message *call, void *data, sd_bus_error 
 	int rc;
 	dest_phys desti = {0}, *dest = &desti;
 	char *peer_path = NULL;
-	ctx *ctx = data;
+	struct ctx *ctx = data;
 	struct peer *peer = NULL;
 
 	dest->ifindex = interface_call_to_ifindex_busowner(ctx, call);
@@ -2059,7 +2058,7 @@ static int method_assign_endpoint(sd_bus_message *call, void *data, sd_bus_error
 	int rc;
 	dest_phys desti, *dest = &desti;
 	char *peer_path = NULL;
-	ctx *ctx = data;
+	struct ctx *ctx = data;
 	struct peer *peer = NULL;
 
 	dest->ifindex = interface_call_to_ifindex_busowner(ctx, call);
@@ -2110,7 +2109,7 @@ static int method_assign_endpoint_static(sd_bus_message *call, void *data,
 	dest_phys desti, *dest = &desti;
 	char *peer_path = NULL;
 	struct peer *peer = NULL;
-	ctx *ctx = data;
+	struct ctx *ctx = data;
 	uint8_t eid;
 	int rc;
 
@@ -2182,7 +2181,7 @@ static int method_learn_endpoint(sd_bus_message *call, void *data, sd_bus_error 
 	int rc;
 	char *peer_path = NULL;
 	dest_phys desti, *dest = &desti;
-	ctx *ctx = data;
+	struct ctx *ctx = data;
 	struct peer *peer = NULL;
 	mctp_eid_t eid = 0;
 
@@ -2414,7 +2413,7 @@ static int method_sendto_phys(sd_bus_message *call, void *data, sd_bus_error *be
 	const char *ifname = NULL;
 	struct sockaddr_mctp_ext addr;
 	dest_phys desti, *dest = &desti;
-	ctx *ctx = data;
+	struct ctx *ctx = data;
 	uint8_t type;
 	uint8_t *resp = NULL;
 	const uint8_t *req = NULL;
@@ -2481,7 +2480,7 @@ static int method_sendto_addr(sd_bus_message *call, void *data, sd_bus_error *be
 	int rc;
 	struct sockaddr_mctp_ext req_addr = {0};
 	struct sockaddr_mctp_ext addr;
-	ctx *ctx = data;
+	struct ctx *ctx = data;
 	uint8_t *req = NULL, *resp = NULL;
 	size_t req_len, resp_len;
 	sd_bus_message *m = NULL;
@@ -2533,7 +2532,7 @@ static int method_endpoint_remove(sd_bus_message *call, void *data,
 {
 	struct peer *peer = data;
 	int rc;
-	ctx *ctx = peer->ctx;
+	struct ctx *ctx = peer->ctx;
 
 	if (peer->state == LOCAL)
 		return sd_bus_error_setf(berr, SD_BUS_ERROR_FAILED,
@@ -2568,7 +2567,7 @@ static int
 peer_endpoint_recover(sd_event_source *s, uint64_t usec, void *userdata)
 {
 	struct peer *peer = userdata;
-	ctx *ctx = peer->ctx;
+	struct ctx *ctx = peer->ctx;
 	char *peer_path;
 	int rc;
 
@@ -2694,7 +2693,7 @@ static int method_endpoint_recover(sd_bus_message *call, void *data,
 {
 	struct peer *peer;
 	bool previously;
-	ctx *ctx;
+	struct ctx *ctx;
 	int rc;
 
 	peer = data;
@@ -2748,7 +2747,7 @@ static int method_endpoint_set_mtu(sd_bus_message *call, void *data,
 	sd_bus_error *berr)
 {
 	struct peer *peer = data;
-	ctx *ctx = peer->ctx;
+	struct ctx *ctx = peer->ctx;
 	int rc;
 	uint32_t mtu;
 
@@ -2788,7 +2787,7 @@ static int method_test_timer_async(sd_bus_message *call, void *data, sd_bus_erro
 {
 	int rc;
 	int seconds;
-	ctx *ctx = data;
+	struct ctx *ctx = data;
 
 	rc = sd_bus_message_read(call, "i", &seconds);
 	if (rc < 0)
@@ -2811,7 +2810,7 @@ static int method_test_timer(sd_bus_message *call, void *data, sd_bus_error *sde
 {
 	int rc;
 	int seconds;
-	// struct ctx *ctx = data;
+	// struct struct ctx *ctx = data;
 
 	rc = sd_bus_message_read(call, "i", &seconds);
 	if (rc < 0)
@@ -3018,7 +3017,7 @@ static int bus_network_get_prop(sd_bus *bus,
 		const char *path, const char *interface, const char *property,
 		sd_bus_message *reply, void *userdata, sd_bus_error *berr)
 {
-	ctx *ctx = userdata;
+	struct ctx *ctx = userdata;
 	int rc = 0;
 	uint32_t netid;
 	mctp_eid_t *eids = (mctp_eid_t *)malloc(256);
@@ -3045,7 +3044,7 @@ static int bus_link_get_prop(sd_bus *bus,
 		const char *path, const char *interface, const char *property,
 		sd_bus_message *reply, void *userdata, sd_bus_error *berr)
 {
-	ctx *ctx = userdata;
+	struct ctx *ctx = userdata;
 	char *tmpstr = NULL;
 	char *link_name = NULL;
 	struct link *link = NULL;
@@ -3089,7 +3088,7 @@ static int bus_link_set_prop(sd_bus *bus,
 		const char *path, const char *interface, const char *property,
 		sd_bus_message *value, void *userdata, sd_bus_error *berr)
 {
-	ctx *ctx = userdata;
+	struct ctx *ctx = userdata;
 	const char *state;
 	char *tmpstr = NULL;
 	char *link_name = NULL;
@@ -3161,7 +3160,7 @@ static int bus_endpoint_set_prop(sd_bus *bus, const char *path,
 {
 	struct peer *peer = userdata;
 	const char *connectivity;
-	ctx *ctx = peer->ctx;
+	struct ctx *ctx = peer->ctx;
 	int rc;
 
 	if (!is_endpoint_path(path)) {
@@ -3289,7 +3288,7 @@ static int bus_endpoint_find(sd_bus *bus, const char *path,
 	sd_bus_error *ret_error)
 {
 	struct peer *peer = NULL;
-	ctx *ctx = userdata;
+	struct ctx *ctx = userdata;
 	int rc;
 	if (!is_endpoint_path(path)) {
 		return 0;
@@ -3307,7 +3306,7 @@ static int bus_mctp_network_find(sd_bus *bus, const char *path,
 	const char *interface, void *userdata, void **ret_found,
 	sd_bus_error *ret_error)
 {
-	ctx *ctx = userdata;
+	struct ctx *ctx = userdata;
 	uint32_t netid;
 
 	if (!get_networkid_from_path(path, &netid)) {
@@ -3329,7 +3328,7 @@ static int bus_endpoint_find_uuid(sd_bus *bus, const char *path,
 	sd_bus_error *ret_error)
 {
 	struct peer *peer = NULL;
-	ctx *ctx = userdata;
+	struct ctx *ctx = userdata;
 	int rc;
 	if (!is_endpoint_path(path)) {
 		return 0;
@@ -3364,7 +3363,7 @@ static int __bus_mctp_link_find(sd_bus *bus, const char *path,
 	const char *interface, void *userdata, bool owner_only,
 	void **ret_found, sd_bus_error *ret_error)
 {
-	ctx *ctx = userdata;
+	struct ctx *ctx = userdata;
 	char *tmpstr = NULL;
 	char *link_name = NULL;
 	struct link *link = NULL;
@@ -3475,7 +3474,7 @@ static int emit_endpoint_removed(const struct peer *peer) {
 	return rc;
 }
 
-static int emit_net_added(ctx *ctx, int net) {
+static int emit_net_added(struct ctx *ctx, int net) {
 	char *path = NULL;
 	int rc;
 
@@ -3490,7 +3489,7 @@ static int emit_net_added(ctx *ctx, int net) {
 	return rc;
 }
 
-static int emit_interface_added(ctx *ctx, int ifindex) {
+static int emit_interface_added(struct ctx *ctx, int ifindex) {
 	const char* ifname = NULL;
 	char *path = NULL;
 	int rc;
@@ -3513,7 +3512,7 @@ static int emit_interface_added(ctx *ctx, int ifindex) {
 	return rc;
 }
 
-static int emit_net_removed(ctx *ctx, int net) {
+static int emit_net_removed(struct ctx *ctx, int net) {
 	char *path = NULL;
 	int rc;
 
@@ -3528,7 +3527,7 @@ static int emit_net_removed(ctx *ctx, int net) {
 	return rc;
 }
 
-static int emit_interface_removed(ctx *ctx, int ifindex) {
+static int emit_interface_removed(struct ctx *ctx, int ifindex) {
 	const char* ifname = NULL;
 	char *path = NULL;
 	int rc;
@@ -3567,7 +3566,7 @@ static int bus_mctpd_find(sd_bus *bus, const char *path,
 static int mctpd_dbus_enumerate(sd_bus *bus, const char* path,
 	void *data, char ***out, sd_bus_error *err)
 {
-	ctx *ctx = data;
+	struct ctx *ctx = data;
 	struct link *link = NULL;
 	size_t num_nodes, i, j;
 	char **nodes = NULL;
@@ -3715,7 +3714,7 @@ out:
 	return rc;
 }
 
-static int setup_bus(ctx *ctx)
+static int setup_bus(struct ctx *ctx)
 {
 	sigset_t sigset;
 	int rc;
@@ -3846,7 +3845,7 @@ out:
 }
 
 
-int request_dbus(ctx *ctx)
+int request_dbus(struct ctx *ctx)
 {
 	int rc;
 
@@ -3861,7 +3860,7 @@ int request_dbus(ctx *ctx)
 
 
 // Deletes one local EID.
-static int del_local_eid(ctx *ctx, int net, int eid)
+static int del_local_eid(struct ctx *ctx, int net, int eid)
 {
 	struct peer *peer = NULL;
 	int rc;
@@ -3895,7 +3894,7 @@ static int del_local_eid(ctx *ctx, int net, int eid)
 }
 
 // Remove nets that have no interfaces
-static int prune_old_nets(ctx *ctx)
+static int prune_old_nets(struct ctx *ctx)
 {
 	int *net_list;
 	size_t i, j, num_list;
@@ -3931,7 +3930,7 @@ static int prune_old_nets(ctx *ctx)
 
 // Removes remote peers associated with an old interface.
 // Note that this old_ifindex has already been removed from ctx->nl */
-static int del_interface(ctx *ctx, int old_ifindex)
+static int del_interface(struct ctx *ctx, int old_ifindex)
 {
 	if (ctx->verbose) {
 		fprintf(stderr, "Deleting interface #%d\n", old_ifindex);
@@ -3951,7 +3950,7 @@ static int del_interface(ctx *ctx, int old_ifindex)
 }
 
 // Moves remote peers from old->new net.
-static int change_net_interface(ctx *ctx, int ifindex, int old_net)
+static int change_net_interface(struct ctx *ctx, int ifindex, int old_net)
 {
 	int rc;
 	struct net *old_n, *new_n;
@@ -4026,7 +4025,7 @@ static int change_net_interface(ctx *ctx, int ifindex, int old_net)
 }
 
 // Adds one local EID
-static int add_local_eid(ctx *ctx, int net, int eid)
+static int add_local_eid(struct ctx *ctx, int net, int eid)
 {
 	struct peer *peer;
 	int rc;
@@ -4080,7 +4079,7 @@ static int add_local_eid(ctx *ctx, int net, int eid)
 }
 
 // Adds peers for local EIDs on an interface
-static int add_interface_local(ctx *ctx, int ifindex)
+static int add_interface_local(struct ctx *ctx, int ifindex)
 {
 	mctp_eid_t *eids = NULL;
 	struct link *link = NULL;
@@ -4126,7 +4125,7 @@ static int add_interface_local(ctx *ctx, int ifindex)
 	return 0;
 }
 
-static int add_net(ctx *ctx, int net)
+static int add_net(struct ctx *ctx, int net)
 {
 	struct net *n, *tmp;
 	if (lookup_net(ctx, net) != NULL) {
@@ -4152,7 +4151,7 @@ static int add_net(ctx *ctx, int net)
 	return 0;
 }
 
-static int add_interface(ctx *ctx, int ifindex)
+static int add_interface(struct ctx *ctx, int ifindex)
 {
 	struct link *link = malloc(sizeof(*link));
 	int rc;
@@ -4187,7 +4186,7 @@ static int add_interface(ctx *ctx, int ifindex)
 	return rc;
 }
 
-static int setup_nets(ctx *ctx)
+static int setup_nets(struct ctx *ctx)
 {
 	size_t num_ifs;
 	int *ifs;
@@ -4215,7 +4214,7 @@ static int setup_nets(ctx *ctx)
 	return 0;
 }
 
-static int setup_testing(ctx *ctx) {
+static int setup_testing(struct ctx *ctx) {
 	dest_phys dest = {};
 	struct peer *peer;
 	size_t i, j;
@@ -4295,7 +4294,7 @@ static int setup_testing(ctx *ctx) {
 	return 0;
 }
 
-static void print_usage(ctx *ctx)
+static void print_usage(struct ctx *ctx)
 {
 	fprintf(stderr, "mctpd [-v] [-N] [-c FILE]\n");
 	fprintf(stderr, "      -v verbose\n");
@@ -4303,7 +4302,7 @@ static void print_usage(ctx *ctx)
 	fprintf(stderr, "      -c FILE read config from FILE\n");
 }
 
-static int parse_args(ctx *ctx, int argc, char **argv)
+static int parse_args(struct ctx *ctx, int argc, char **argv)
 {
 	struct option options[] = {
 		{ .name = "help", .has_arg = no_argument, .val = 'h' },
@@ -4338,7 +4337,7 @@ static int parse_args(ctx *ctx, int argc, char **argv)
 	return 0;
 }
 
-static int parse_config_mode(ctx *ctx, const char *mode)
+static int parse_config_mode(struct ctx *ctx, const char *mode)
 {
 	unsigned int i;
 
@@ -4356,7 +4355,7 @@ static int parse_config_mode(ctx *ctx, const char *mode)
 	return -1;
 }
 
-static int fill_uuid(ctx *ctx)
+static int fill_uuid(struct ctx *ctx)
 {
 	int rc;
 	sd_id128_t appid;
@@ -4380,7 +4379,7 @@ static int fill_uuid(ctx *ctx)
 	return rc;
 }
 
-static int parse_config_mctp(ctx *ctx, toml_table_t *mctp_tab)
+static int parse_config_mctp(struct ctx *ctx, toml_table_t *mctp_tab)
 {
 	toml_datum_t val;
 	int rc;
@@ -4412,7 +4411,7 @@ static int parse_config_mctp(ctx *ctx, toml_table_t *mctp_tab)
 	return 0;
 }
 
-static int parse_config(ctx *ctx)
+static int parse_config(struct ctx *ctx)
 {
 	toml_table_t *conf_root, *mctp_tab;
 	bool conf_file_specified;
@@ -4468,7 +4467,7 @@ out_close:
 	return rc;
 }
 
-static void setup_config_defaults(ctx *ctx)
+static void setup_config_defaults(struct ctx *ctx)
 {
 	ctx->mctp_timeout = 250000; // 250ms
 	ctx->default_role = ENDPOINT_ROLE_BUS_OWNER;
@@ -4476,8 +4475,8 @@ static void setup_config_defaults(ctx *ctx)
 
 int main(int argc, char **argv)
 {
+	struct ctx ctxi = {0}, *ctx = &ctxi;
 	int rc;
-	ctx ctxi = {0}, *ctx = &ctxi;
 
 	setlinebuf(stdout);
 
