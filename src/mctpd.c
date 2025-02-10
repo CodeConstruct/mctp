@@ -3132,37 +3132,6 @@ static char* root_endpoints_path(int net)
 	return buf;
 }
 
-static char* net_path(int net)
-{
-	size_t l;
-	char *buf = NULL;
-
-	l = strlen(MCTP_DBUS_PATH) + 30;
-	buf = malloc(l);
-	if (!buf) {
-		return NULL;
-	}
-	/* can't use sd_bus_path_encode_many() since it escapes
-	   leading digits */
-	snprintf(buf, l, "%s/networks/%d", MCTP_DBUS_PATH, net);
-	return buf;
-}
-
-static char* interface_path(const char* link_name)
-{
-	size_t l;
-	char *buf = NULL;
-
-	l = strlen(MCTP_DBUS_PATH) + 30;
-	buf = malloc(l);
-	if (!buf) {
-		return NULL;
-	}
-
-	snprintf(buf, l, "%s/interfaces/%s", MCTP_DBUS_PATH, link_name);
-	return buf;
-}
-
 static int emit_endpoint_added(const struct peer *peer) {
 	const char *path = NULL;
 	int rc;
@@ -3264,7 +3233,6 @@ static int mctpd_dbus_enumerate(sd_bus *bus, const char* path,
 	struct link *link = NULL;
 	size_t num_nodes, i, j;
 	char **nodes = NULL;
-	const char* ifname = NULL;
 	int rc;
 	size_t num_ifs;
 	int *ifs;
@@ -3332,11 +3300,7 @@ static int mctpd_dbus_enumerate(sd_bus *bus, const char* path,
 
 	for (i = 0; i < ctx->num_nets; i++) {
 		// .../mctp1/networks/<NetId>
-		nodes[j] = net_path(ctx->nets[i].net);
-		if (nodes[j] == NULL) {
-			rc = -ENOMEM;
-			goto out;
-		}
+		nodes[j] = strdup(ctx->nets[i].path);
 		j++;
 
 		for (size_t t = 0; t < 256; t++) {
@@ -3357,17 +3321,11 @@ static int mctpd_dbus_enumerate(sd_bus *bus, const char* path,
 	// Peers
 	for (i = 0; i < ctx->size_peers; i++) {
 		struct peer *peer = &ctx->peers[i];
-		const char *tmp;
 
 		if (!peer->published)
 			continue;
 
-		tmp = path_from_peer(peer);
-		if (!tmp) {
-			rc = -1;
-			goto out;
-		}
-		nodes[j] = strdup(tmp);
+		nodes[j] = strdup(peer->path);
 		j++;
 	}
 
@@ -3383,15 +3341,7 @@ static int mctpd_dbus_enumerate(sd_bus *bus, const char* path,
 		link = mctp_nl_get_link_userdata(ctx->nl, ifs[i]);
 		if (!link || !link->published)
 			continue;
-		ifname = mctp_nl_if_byindex(ctx->nl, ifs[i]);
-		if (!ifname) {
-			continue;
-		}
-		nodes[j] = interface_path(ifname);
-		if (nodes[j] == NULL) {
-			rc = -ENOMEM;
-			goto out;
-		}
+		nodes[j] = strdup(link->path);
 		j++;
 	}
 
