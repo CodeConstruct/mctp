@@ -6,13 +6,12 @@
  * Copyright (c) 2021 Google
  */
 
+#define _GNU_SOURCE
 #include "config.h"
 
 #include <assert.h>
 #include <systemd/sd-bus-vtable.h>
 #include <time.h>
-
-#define _GNU_SOURCE
 
 #include <sys/socket.h>
 #include <arpa/inet.h>
@@ -143,6 +142,7 @@ struct peer {
 
 	// visible to dbus, set by publish/unpublish_peer()
 	bool published;
+	char *path;
 
 	bool have_neigh;
 	bool have_route;
@@ -478,25 +478,14 @@ static int peer_from_path(struct ctx *ctx, const char* path, struct peer **ret_p
 	return 0;
 }
 
-static int path_from_peer(const struct peer *peer, char ** ret_path) {
-	size_t l;
-	char* buf;
+static const char *path_from_peer(const struct peer *peer)
+{
 
 	if (!peer->published) {
 		warnx("BUG: %s on peer %s", __func__, peer_tostr(peer));
-		return -EPROTO;
+		return NULL;
 	}
-
-	l = strlen(MCTP_DBUS_PATH) + 60;
-	buf = malloc(l);
-	if (!buf)
-		return -ENOMEM;
-	/* can't use sd_bus_path_encode_many() since it escapes
-	   leading digits */
-	snprintf(buf, l, "%s/networks/%d/endpoints/%d", MCTP_DBUS_PATH,
-		peer->net, peer->eid);
-	*ret_path = buf;
-	return 0;
+	return peer->path;
 }
 
 static int get_role(const char *mode, struct role *role)
@@ -1526,6 +1515,7 @@ static int change_peer_eid(struct peer *peer, mctp_eid_t new_eid) {
 	if (n->peeridx[new_eid] != -1)
 		return -EEXIST;
 
+	/* publish & unpublish will update peer->path */
 	unpublish_peer(peer);
 	n->peeridx[new_eid] = n->peeridx[peer->eid];
 	n->peeridx[peer->eid] = -1;
@@ -1992,7 +1982,7 @@ static int method_setup_endpoint(sd_bus_message *call, void *data, sd_bus_error 
 {
 	int rc;
 	dest_phys desti = {0}, *dest = &desti;
-	char *peer_path = NULL;
+	const char *peer_path = NULL;
 	struct ctx *ctx = data;
 	struct peer *peer = NULL;
 
@@ -2016,11 +2006,11 @@ static int method_setup_endpoint(sd_bus_message *call, void *data, sd_bus_error 
 		if (ctx->verbose)
 			fprintf(stderr, "%s returning from get_endpoint_peer %s",
 				__func__, peer_tostr(peer));
-		rc = path_from_peer(peer, &peer_path);
-		if (rc < 0)
+		peer_path = path_from_peer(peer);
+		if (!peer_path)
 			goto err;
 		return sd_bus_reply_method_return(call, "yisb",
-			peer->eid, peer->net, dfree(peer_path), 0);
+			peer->eid, peer->net, peer_path, 0);
 	} else if (rc == -EEXIST) {
 		// EEXISTS is OK, we will assign a new eid instead.
 	} else if (rc < 0) {
@@ -2033,14 +2023,14 @@ static int method_setup_endpoint(sd_bus_message *call, void *data, sd_bus_error 
 	if (rc < 0)
 		goto err;
 
-	rc = path_from_peer(peer, &peer_path);
-	if (rc < 0)
+	peer_path = path_from_peer(peer);
+	if (!peer_path)
 		goto err;
 	if (ctx->verbose)
 		fprintf(stderr, "%s returning from endpoint_assign_eid %s",
 			__func__, peer_tostr(peer));
 	return sd_bus_reply_method_return(call, "yisb",
-		peer->eid, peer->net, dfree(peer_path), 1);
+		peer->eid, peer->net, peer_path, 1);
 
 err:
 	set_berr(ctx, rc, berr);
@@ -2051,7 +2041,7 @@ static int method_assign_endpoint(sd_bus_message *call, void *data, sd_bus_error
 {
 	int rc;
 	dest_phys desti, *dest = &desti;
-	char *peer_path = NULL;
+	const char *peer_path = NULL;
 	struct ctx *ctx = data;
 	struct peer *peer = NULL;
 
@@ -2072,10 +2062,9 @@ static int method_assign_endpoint(sd_bus_message *call, void *data, sd_bus_error
 	peer = find_peer_by_phys(ctx, dest);
 	if (peer) {
 		// Return existing record.
-		rc = path_from_peer(peer, &peer_path);
+		peer_path = path_from_peer(peer);
 		if (rc < 0)
 			goto err;
-		dfree(peer_path);
 
 		return sd_bus_reply_method_return(call, "yisb",
 			peer->eid, peer->net, peer_path, 0);
@@ -2085,10 +2074,9 @@ static int method_assign_endpoint(sd_bus_message *call, void *data, sd_bus_error
 	if (rc < 0)
 		goto err;
 
-	rc = path_from_peer(peer, &peer_path);
+	peer_path = path_from_peer(peer);
 	if (rc < 0)
 		goto err;
-	dfree(peer_path);
 
 	return sd_bus_reply_method_return(call, "yisb",
 		peer->eid, peer->net, peer_path, 1);
@@ -2101,7 +2089,7 @@ static int method_assign_endpoint_static(sd_bus_message *call, void *data,
 					 sd_bus_error *berr)
 {
 	dest_phys desti, *dest = &desti;
-	char *peer_path = NULL;
+	const char *peer_path = NULL;
 	struct peer *peer = NULL;
 	struct ctx *ctx = data;
 	uint8_t eid;
@@ -2133,10 +2121,9 @@ static int method_assign_endpoint_static(sd_bus_message *call, void *data,
 		}
 
 		// Return existing record.
-		rc = path_from_peer(peer, &peer_path);
-		if (rc < 0)
+		peer_path = path_from_peer(peer);
+		if (!peer_path)
 			goto err;
-		dfree(peer_path);
 
 		return sd_bus_reply_method_return(call, "yisb",
 			peer->eid, peer->net, peer_path, 0);
@@ -2157,11 +2144,9 @@ static int method_assign_endpoint_static(sd_bus_message *call, void *data,
 		goto err;
 	}
 
-	rc = path_from_peer(peer, &peer_path);
-	if (rc < 0) {
+	peer_path = path_from_peer(peer);
+	if (!peer_path)
 		goto err;
-	}
-	dfree(peer_path);
 
 	return sd_bus_reply_method_return(call, "yisb",
 		peer->eid, peer->net, peer_path, 1);
@@ -2173,7 +2158,7 @@ err:
 static int method_learn_endpoint(sd_bus_message *call, void *data, sd_bus_error *berr)
 {
 	int rc;
-	char *peer_path = NULL;
+	const char *peer_path = NULL;
 	dest_phys desti, *dest = &desti;
 	struct ctx *ctx = data;
 	struct peer *peer = NULL;
@@ -2206,10 +2191,9 @@ static int method_learn_endpoint(sd_bus_message *call, void *data, sd_bus_error 
 	if (!peer)
 		return sd_bus_reply_method_return(call, "yisb", 0, 0, "", 0);
 
-	rc = path_from_peer(peer, &peer_path);
-	if (rc < 0)
+	peer_path = path_from_peer(peer);
+	if (!peer_path)
 		goto err;
-	dfree(peer_path);
 	return sd_bus_reply_method_return(call, "yisb", peer->eid, peer->net,
 		peer_path, 1);
 err:
@@ -2349,18 +2333,18 @@ static void add_peer_route(struct peer *peer)
 /* Sets up routes/neigh, emits dbus entry */
 static int publish_peer(struct peer *peer, bool add_route)
 {
-	int rc;
-
 	if (add_route && peer->state == REMOTE) {
 		add_peer_route(peer);
 	}
-	rc = 0;
-	if (!peer->published) {
-		peer->published = true;
-		rc = emit_endpoint_added(peer);
-	}
 
-	return rc;
+	if (peer->published)
+		return 0;
+
+	asprintf(&peer->path, "%s/networks/%d/endpoints/%d",
+		 MCTP_DBUS_PATH, peer->net, peer->eid);
+
+	peer->published = true;
+	return emit_endpoint_added(peer);
 }
 
 /* removes route, neigh, dbus entry for the peer */
@@ -2394,6 +2378,7 @@ static int unpublish_peer(struct peer *peer) {
 	if (peer->published) {
 		emit_endpoint_removed(peer);
 		peer->published = false;
+		free(peer->path);
 	}
 
 	return 0;
@@ -2563,7 +2548,7 @@ peer_endpoint_recover(sd_event_source *s, uint64_t usec, void *userdata)
 	int ev_state __attribute__((unused));
 	struct peer *peer = userdata;
 	struct ctx *ctx = peer->ctx;
-	char *peer_path;
+	const char *peer_path;
 	int rc;
 
 	/*
@@ -2646,14 +2631,12 @@ peer_endpoint_recover(sd_event_source *s, uint64_t usec, void *userdata)
 
 	peer->degraded = false;
 
-	rc = path_from_peer(peer, &peer_path);
-	if (rc < 0) {
+	peer_path = path_from_peer(peer);
+	if (!peer_path)
 		goto reschedule;
-	}
 
 	rc = sd_bus_emit_properties_changed(ctx->bus, peer_path,
 		CC_MCTP_DBUS_IFACE_ENDPOINT, "Connectivity", NULL);
-	free(peer_path);
 	if (rc < 0) {
 		goto reschedule;
 	}
@@ -3440,30 +3423,30 @@ static char* interface_path(const char* link_name)
 }
 
 static int emit_endpoint_added(const struct peer *peer) {
-	char *path = NULL;
+	const char *path = NULL;
 	int rc;
 
-	rc = path_from_peer(peer, &path);
-	if (rc < 0)
-		return rc;
+	path = path_from_peer(peer);
+	if (!path)
+		return -1;
 	if (peer->ctx->verbose)
 		warnx("%s: %s", __func__, path);
-	rc = sd_bus_emit_object_added(peer->ctx->bus, dfree(path));
+	rc = sd_bus_emit_object_added(peer->ctx->bus, path);
 	if (rc < 0)
 		warnx("%s: error emitting, %s", __func__, strerror(-rc));
 	return rc;
 }
 
 static int emit_endpoint_removed(const struct peer *peer) {
-	char *path = NULL;
+	const char *path = NULL;
 	int rc;
 
-	rc = path_from_peer(peer, &path);
-	if (rc < 0)
-		return rc;
+	path = path_from_peer(peer);
+	if (!path)
+		return -1;
 	if (peer->ctx->verbose)
 		warnx("%s: %s", __func__, path);
-	rc = sd_bus_emit_object_removed(peer->ctx->bus, dfree(path));
+	rc = sd_bus_emit_object_removed(peer->ctx->bus, path);
 	if (rc < 0)
 		warnx("%s: error emitting, %s", __func__, strerror(-rc));
 	return rc;
@@ -3658,13 +3641,17 @@ static int mctpd_dbus_enumerate(sd_bus *bus, const char* path,
 	// Peers
 	for (i = 0; i < ctx->size_peers; i++) {
 		struct peer *peer = &ctx->peers[i];
+		const char *tmp;
 
 		if (!peer->published)
 			continue;
 
-		rc = path_from_peer(peer, &nodes[j]);
-		if (rc < 0)
+		tmp = path_from_peer(peer);
+		if (!tmp) {
+			rc = -1;
 			goto out;
+		}
+		nodes[j] = strdup(tmp);
 		j++;
 	}
 
