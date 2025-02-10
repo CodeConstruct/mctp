@@ -142,6 +142,9 @@ struct peer {
 
 	// visible to dbus, set by publish/unpublish_peer()
 	bool published;
+	sd_bus_slot *slot_obmc_endpoint;
+	sd_bus_slot *slot_cc_endpoint;
+	sd_bus_slot *slot_uuid;
 	char *path;
 
 	bool have_neigh;
@@ -234,6 +237,10 @@ static int add_local_eid(struct ctx *ctx, int net, int eid);
 static int del_local_eid(struct ctx *ctx, int net, int eid);
 static int add_net(struct ctx *ctx, int net);
 static int add_interface(struct ctx *ctx, int ifindex);
+
+static const sd_bus_vtable bus_endpoint_obmc_vtable[];
+static const sd_bus_vtable bus_endpoint_cc_vtable[];
+static const sd_bus_vtable bus_endpoint_uuid_vtable[];
 
 mctp_eid_t local_addr(const struct ctx *ctx, int ifindex) {
 	mctp_eid_t *eids, ret = 0;
@@ -445,37 +452,6 @@ out:
 	if (ev)
 		sd_event_unref(ev);
 	return rc;
-}
-
-static int peer_from_path(struct ctx *ctx, const char* path, struct peer **ret_peer)
-{
-	char *netstr = NULL, *eidstr = NULL;
-	uint32_t tmp, net;
-	mctp_eid_t eid;
-	int rc;
-
-	*ret_peer = NULL;
-	rc = sd_bus_path_decode_many(path,
-				     MCTP_DBUS_PATH "/networks/%/endpoints/%",
-				     &netstr, &eidstr);
-	if (rc == 0)
-		return -ENOENT;
-	if (rc < 0)
-		return rc;
-	dfree(netstr);
-	dfree(eidstr);
-
-	if (parse_uint32(eidstr, &tmp) < 0 || tmp > 0xff)
-		return -EINVAL;
-	eid = tmp & 0xff;
-
-	if (parse_uint32(netstr, &net) < 0)
-		return -EINVAL;
-
-	*ret_peer = find_peer_by_addr(ctx, eid, net);
-	if (!*ret_peer)
-		return -ENOENT;
-	return 0;
 }
 
 static const char *path_from_peer(const struct peer *peer)
@@ -2330,7 +2306,7 @@ static void add_peer_route(struct peer *peer)
 	}
 }
 
-/* Sets up routes/neigh, emits dbus entry */
+/* Sets up routes/neigh, creates dbus object and emits added signal */
 static int publish_peer(struct peer *peer, bool add_route)
 {
 	if (add_route && peer->state == REMOTE) {
@@ -2344,6 +2320,21 @@ static int publish_peer(struct peer *peer, bool add_route)
 		 MCTP_DBUS_PATH, peer->net, peer->eid);
 
 	peer->published = true;
+
+	sd_bus_add_object_vtable(peer->ctx->bus, &peer->slot_obmc_endpoint,
+				 peer->path, MCTP_DBUS_IFACE_ENDPOINT,
+				 bus_endpoint_obmc_vtable, peer);
+
+	sd_bus_add_object_vtable(peer->ctx->bus, &peer->slot_cc_endpoint,
+				 peer->path, CC_MCTP_DBUS_IFACE_ENDPOINT,
+				 bus_endpoint_cc_vtable, peer);
+
+	if (peer->uuid) {
+		sd_bus_add_object_vtable(peer->ctx->bus, &peer->slot_uuid,
+					 peer->path, OPENBMC_IFACE_COMMON_UUID,
+					 bus_endpoint_uuid_vtable, peer);
+	}
+
 	return emit_endpoint_added(peer);
 }
 
@@ -2377,6 +2368,12 @@ static int unpublish_peer(struct peer *peer) {
 	}
 	if (peer->published) {
 		emit_endpoint_removed(peer);
+		sd_bus_slot_unref(peer->slot_obmc_endpoint);
+		peer->slot_obmc_endpoint = NULL;
+		sd_bus_slot_unref(peer->slot_cc_endpoint);
+		peer->slot_cc_endpoint = NULL;
+		sd_bus_slot_unref(peer->slot_uuid);
+		peer->slot_uuid = NULL;
 		peer->published = false;
 		free(peer->path);
 	}
@@ -3176,7 +3173,7 @@ out:
 	return rc;
 }
 
-static const sd_bus_vtable bus_endpoint_vtable[] = {
+static const sd_bus_vtable bus_endpoint_obmc_vtable[] = {
 	SD_BUS_VTABLE_START(0),
 	SD_BUS_PROPERTY("NetworkId",
 			"u",
@@ -3261,31 +3258,14 @@ static const sd_bus_vtable bus_endpoint_cc_vtable[] = {
 	SD_BUS_VTABLE_END
 };
 
-static int bus_endpoint_find(sd_bus *bus, const char *path,
-	const char *interface, void *userdata, void **ret_found,
-	sd_bus_error *ret_error)
-{
-	struct peer *peer = NULL;
-	struct ctx *ctx = userdata;
-	int rc;
-	if (!is_endpoint_path(path)) {
-		return 0;
-	}
-
-	rc = peer_from_path(ctx, path, &peer);
-	if (rc >= 0 && peer->published) {
-		*ret_found = peer;
-		return 1;
-	}
-	return 0;
-}
-
 static int bus_mctp_network_find(sd_bus *bus, const char *path,
 	const char *interface, void *userdata, void **ret_found,
 	sd_bus_error *ret_error)
 {
 	struct ctx *ctx = userdata;
 	uint32_t netid;
+
+	printf("%s: find %s\n", __func__, path);
 
 	if (!get_networkid_from_path(path, &netid)) {
 		return 0;
@@ -3297,28 +3277,6 @@ static int bus_mctp_network_find(sd_bus *bus, const char *path,
 		return 1;
 	}
 
-	return 0;
-}
-
-/* Common.UUID interface is only added for peers that have a UUID. */
-static int bus_endpoint_find_uuid(sd_bus *bus, const char *path,
-	const char *interface, void *userdata, void **ret_found,
-	sd_bus_error *ret_error)
-{
-	struct peer *peer = NULL;
-	struct ctx *ctx = userdata;
-	int rc;
-	if (!is_endpoint_path(path)) {
-		return 0;
-	}
-
-	rc = peer_from_path(ctx, path, &peer);
-	if (rc >= 0 && peer->published) {
-		if (peer->uuid) {
-			*ret_found = peer;
-			return 1;
-		}
-	}
 	return 0;
 }
 
@@ -3740,40 +3698,6 @@ static int setup_bus(struct ctx *ctx)
 
 	/* mctp object needs to use _fallback_vtable() since we can't
 	   mix non-fallback and fallback vtables on MCTP_DBUS_PATH */
-
-	rc = sd_bus_add_fallback_vtable(ctx->bus, NULL,
-					MCTP_DBUS_PATH,
-					MCTP_DBUS_IFACE_ENDPOINT,
-					bus_endpoint_vtable,
-					bus_endpoint_find,
-					ctx);
-	if (rc < 0) {
-		warnx("Failed adding D-Bus interface: %s", strerror(-rc));
-		goto out;
-	}
-
-	rc = sd_bus_add_fallback_vtable(ctx->bus, NULL,
-					MCTP_DBUS_PATH,
-					CC_MCTP_DBUS_IFACE_ENDPOINT,
-					bus_endpoint_cc_vtable,
-					bus_endpoint_find,
-					ctx);
-	if (rc < 0) {
-		warnx("Failed adding extra D-Bus interface: %s", strerror(-rc));
-		goto out;
-	}
-
-
-	rc = sd_bus_add_fallback_vtable(ctx->bus, NULL,
-					MCTP_DBUS_PATH,
-					OPENBMC_IFACE_COMMON_UUID,
-					bus_endpoint_uuid_vtable,
-					bus_endpoint_find_uuid,
-					ctx);
-	if (rc < 0) {
-		warnx("Failed adding uuid D-Bus interface: %s", strerror(-rc));
-		goto out;
-	}
 
 	rc = sd_bus_add_fallback_vtable(ctx->bus, NULL,
 					MCTP_DBUS_PATH,
