@@ -94,12 +94,6 @@ enum endpoint_role {
 	ENDPOINT_ROLE_ENDPOINT,
 };
 
-struct link_userdata {
-    bool published;
-    enum endpoint_role role;
-};
-typedef struct link_userdata link_userdata;
-
 struct role {
 	enum endpoint_role role;
 	const char *conf_val;
@@ -122,6 +116,11 @@ static const struct role roles[] = {
 		.conf_val = "endpoint",
 		.dbus_val = "Endpoint",
 	},
+};
+
+struct link {
+	bool published;
+	enum endpoint_role role;
 };
 
 struct peer {
@@ -1938,7 +1937,7 @@ out:
 static int interface_call_to_ifindex_busowner(ctx *ctx, sd_bus_message *msg)
 {
 	const char *iface, *path;
-	link_userdata *link;
+	struct link *link;
 	int rc, ifindex;
 
 	path = sd_bus_message_get_path(msg);
@@ -3051,7 +3050,7 @@ static int bus_link_get_prop(sd_bus *bus,
 	ctx *ctx = userdata;
 	char *tmpstr = NULL;
 	char *link_name = NULL;
-	link_userdata *lmUserData = NULL;
+	struct link *link = NULL;
 	int rc = 0;
 
 	if (!is_interfaces_path(path)) {
@@ -3068,14 +3067,14 @@ static int bus_link_get_prop(sd_bus *bus,
 		goto out;
 	}
 
-	lmUserData = mctp_nl_get_link_userdata_byname(ctx->nl, link_name);
-	if (!lmUserData) {
+	link = mctp_nl_get_link_userdata_byname(ctx->nl, link_name);
+	if (!link) {
 		rc = -ENOENT;
 		goto out;
 	}
 
-	if (lmUserData->published && strcmp(property, "Role") == 0) {
-		rc = sd_bus_message_append(reply, "s", roles[lmUserData->role].dbus_val);
+	if (link->published && strcmp(property, "Role") == 0) {
+		rc = sd_bus_message_append(reply, "s", roles[link->role].dbus_val);
 	} else {
 		sd_bus_error_setf(berr, SD_BUS_ERROR_INVALID_ARGS,
 				"Unknown property.");
@@ -3096,7 +3095,7 @@ static int bus_link_set_prop(sd_bus *bus,
 	const char *state;
 	char *tmpstr = NULL;
 	char *link_name = NULL;
-	link_userdata *lmUserData;
+	struct link *link;
 	int rc = -1;
 	struct role role;
 
@@ -3114,8 +3113,8 @@ static int bus_link_set_prop(sd_bus *bus,
 		goto out;
 	}
 
-	lmUserData = mctp_nl_get_link_userdata_byname(ctx->nl, link_name);
-	if (!lmUserData) {
+	link = mctp_nl_get_link_userdata_byname(ctx->nl, link_name);
+	if (!link) {
 		rc = -ENOENT;
 		goto out;
 	}
@@ -3126,7 +3125,7 @@ static int bus_link_set_prop(sd_bus *bus,
 		goto out;
 	}
 
-	if (lmUserData->role != ENDPOINT_ROLE_UNKNOWN) {
+	if (link->role != ENDPOINT_ROLE_UNKNOWN) {
 		sd_bus_error_setf(berr, SD_BUS_ERROR_INVALID_ARGS,
 					"Role is already set.");
 		rc = -ENOENT;
@@ -3147,7 +3146,7 @@ static int bus_link_set_prop(sd_bus *bus,
 		rc = -EINVAL;
 		goto out;
 	}
-	lmUserData->role = role.role;
+	link->role = role.role;
 
 out:
 	set_berr(ctx, rc, berr);
@@ -3370,7 +3369,7 @@ static int __bus_mctp_link_find(sd_bus *bus, const char *path,
 	ctx *ctx = userdata;
 	char *tmpstr = NULL;
 	char *link_name = NULL;
-	link_userdata *lmUserData = NULL;
+	struct link *link = NULL;
 	int rc = 0;
 
 	if (!is_interfaces_path(path)) {
@@ -3384,16 +3383,16 @@ static int __bus_mctp_link_find(sd_bus *bus, const char *path,
 	if (rc < 0)
 		return rc;
 
-	lmUserData = mctp_nl_get_link_userdata_byname(ctx->nl, link_name);
-	if (!lmUserData) {
+	link = mctp_nl_get_link_userdata_byname(ctx->nl, link_name);
+	if (!link) {
 		warnx("No linkmap entry for link %s\n", link_name);
 		return -ENOENT;
 	}
 
-	if (owner_only && lmUserData->role != ENDPOINT_ROLE_BUS_OWNER)
+	if (owner_only && link->role != ENDPOINT_ROLE_BUS_OWNER)
 		return 0;
 
-	if (lmUserData->published) {
+	if (link->published) {
 		*ret_found = ctx;
 		return 1;
 	}
@@ -3571,7 +3570,7 @@ static int mctpd_dbus_enumerate(sd_bus *bus, const char* path,
 	void *data, char ***out, sd_bus_error *err)
 {
 	ctx *ctx = data;
-	link_userdata* lmUserData = NULL;
+	struct link *link = NULL;
 	size_t num_nodes, i, j;
 	char **nodes = NULL;
 	const char* ifname = NULL;
@@ -3611,8 +3610,8 @@ static int mctpd_dbus_enumerate(sd_bus *bus, const char* path,
 
 	// .../mctp1/interface/<name>
 	for (size_t i = 0; i < num_ifs; i++) {
-		lmUserData = mctp_nl_get_link_userdata(ctx->nl, ifs[i]);
-		if (lmUserData && lmUserData->published) {
+		link = mctp_nl_get_link_userdata(ctx->nl, ifs[i]);
+		if (link && link->published) {
 			num_nodes++;
 		}
 	}
@@ -3686,8 +3685,8 @@ static int mctpd_dbus_enumerate(sd_bus *bus, const char* path,
 	j++;
 
 	for (size_t i = 0; i < num_ifs; i++) {
-		lmUserData = mctp_nl_get_link_userdata(ctx->nl, ifs[i]);
-		if (!lmUserData || !lmUserData->published)
+		link = mctp_nl_get_link_userdata(ctx->nl, ifs[i]);
+		if (!link || !link->published)
 			continue;
 		ifname = mctp_nl_if_byindex(ctx->nl, ifs[i]);
 		if (!ifname) {
@@ -4086,7 +4085,7 @@ static int add_local_eid(ctx *ctx, int net, int eid)
 static int add_interface_local(ctx *ctx, int ifindex)
 {
 	mctp_eid_t *eids = NULL;
-	link_userdata *lmUserData = NULL;
+	struct link *link = NULL;
 	size_t num;
 	int net;
 	int rc;
@@ -4118,8 +4117,8 @@ static int add_interface_local(ctx *ctx, int ifindex)
 	}
 
 	// Add new link if required
-	lmUserData = mctp_nl_get_link_userdata(ctx->nl, ifindex);
-	if (!lmUserData || !lmUserData->published) {
+	link = mctp_nl_get_link_userdata(ctx->nl, ifindex);
+	if (!link || !link->published) {
 		rc = add_interface(ctx, ifindex);
 		if (rc < 0)
 			return rc;
@@ -4157,7 +4156,7 @@ static int add_net(ctx *ctx, int net)
 
 static int add_interface(ctx *ctx, int ifindex)
 {
-	link_userdata *lmUserData = malloc(sizeof(link_userdata));
+	struct link *link = malloc(sizeof(*link));
 	int rc;
 
 	int net = mctp_nl_net_byindex(ctx->nl, ifindex);
@@ -4167,10 +4166,10 @@ static int add_interface(ctx *ctx, int ifindex)
 	}
 
 	/* Use the `mode` setting in conf/mctp.conf */
-	lmUserData->role = ctx->default_role;
-	lmUserData->published = true;
+	link->role = ctx->default_role;
+	link->published = true;
 
-	rc = mctp_nl_set_link_userdata(ctx->nl, ifindex, lmUserData);
+	rc = mctp_nl_set_link_userdata(ctx->nl, ifindex, link);
 	if (rc < 0) {
 		warnx("Failed to set UserData for link index %d", ifindex);
 		return -ENOMEM;
@@ -4178,8 +4177,8 @@ static int add_interface(ctx *ctx, int ifindex)
 
 	rc = emit_interface_added(ctx, ifindex);
 	if (rc < 0) {
-		lmUserData->published = false;
-		rc = mctp_nl_set_link_userdata(ctx->nl, ifindex, lmUserData);
+		link->published = false;
+		rc = mctp_nl_set_link_userdata(ctx->nl, ifindex, link);
 		if (rc < 0) {
 			warnx("Failed to set UserData for link index %d\n", ifindex);
 			return -ENOMEM;
