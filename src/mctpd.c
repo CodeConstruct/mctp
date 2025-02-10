@@ -76,9 +76,13 @@ typedef struct dest_phys dest_phys;
 
 /* Table of per-network details */
 struct net {
+	struct ctx *ctx;
 	int net;
 	// EID mappings, an index into ctx->peers. Value -1 is unused.
 	ssize_t peeridx[256];
+
+	sd_bus_slot *slot;
+	char *path;
 };
 
 struct ctx;
@@ -227,8 +231,8 @@ static int emit_endpoint_added(const struct peer *peer);
 static int emit_endpoint_removed(const struct peer *peer);
 static int emit_interface_added(struct link *link);
 static int emit_interface_removed(struct link *link);
-static int emit_net_added(struct ctx *ctx, int net);
-static int emit_net_removed(struct ctx *ctx, int net);
+static int emit_net_added(struct ctx *ctx, struct net *net);
+static int emit_net_removed(struct ctx *ctx, struct net *net);
 static int query_peer_properties(struct peer *peer);
 static int setup_added_peer(struct peer *peer);
 static void add_peer_route(struct peer *peer);
@@ -243,6 +247,7 @@ static int change_net_interface(struct ctx *ctx, int ifindex, int old_net);
 static int add_local_eid(struct ctx *ctx, int net, int eid);
 static int del_local_eid(struct ctx *ctx, int net, int eid);
 static int add_net(struct ctx *ctx, int net);
+static void del_net(struct net *net);
 static int add_interface(struct ctx *ctx, int ifindex);
 
 static const sd_bus_vtable bus_endpoint_obmc_vtable[];
@@ -299,23 +304,20 @@ static struct peer *find_peer_by_addr(struct ctx *ctx, mctp_eid_t eid, int net)
 	return NULL;
 }
 
-static int find_local_eids_by_net(struct ctx *ctx, uint32_t net,
+static int find_local_eids_by_net(struct net *net,
                                   size_t* local_eid_cnt,
                                   mctp_eid_t *ret_eids)
 {
 	size_t local_count = 0;
-	struct net *n = lookup_net(ctx, net);
 	struct peer *peer;
 
 	*local_eid_cnt = 0;
-	if (!n)
-		return -EINVAL;
 
 	for (size_t t = 0; t < 256; t++) {
-		if (n->peeridx[t] < 0)
+		if (net->peeridx[t] < 0)
 			continue;
 
-		peer = &ctx->peers[n->peeridx[t]];
+		peer = &net->ctx->peers[net->peeridx[t]];
 		if (peer && (peer->state == LOCAL))
 			ret_eids[local_count++] = t;
 	}
@@ -2902,26 +2904,6 @@ static bool is_endpoint_path(const char *path)
 	return true;
 }
 
-static bool get_networkid_from_path(const char *path, uint32_t* netid)
-{
-	char *netstr = NULL;
-	int rc;
-
-	rc = sd_bus_path_decode_many(path,
-				     MCTP_DBUS_PATH "/networks/%",
-				     &netstr);
-
-	if (rc <= 0)
-		return false;
-
-	dfree(netstr);
-
-	if (parse_uint32(netstr, netid) < 0)
-		return false;
-
-	return true;
-}
-
 static int bus_endpoint_get_prop(sd_bus *bus,
 		const char *path, const char *interface, const char *property,
 		sd_bus_message *reply, void *userdata, sd_bus_error *berr)
@@ -2957,18 +2939,14 @@ static int bus_network_get_prop(sd_bus *bus,
 		const char *path, const char *interface, const char *property,
 		sd_bus_message *reply, void *userdata, sd_bus_error *berr)
 {
-	struct ctx *ctx = userdata;
+	struct net *net = userdata;
 	int rc = 0;
-	uint32_t netid;
 	mctp_eid_t *eids = (mctp_eid_t *)malloc(256);
 	size_t num;
 
-	if (!get_networkid_from_path(path, &netid)) {
-		return -ENOENT;
-	}
 
 	if (strcmp(property, "LocalEIDs") == 0) {
-		rc = find_local_eids_by_net(ctx, netid, &num, eids);
+		rc = find_local_eids_by_net(net, &num, eids);
 		if (rc < 0) {
 			return -ENOENT;
 		}
@@ -3176,28 +3154,6 @@ static const sd_bus_vtable bus_network_vtable[] = {
 	SD_BUS_VTABLE_END
 };
 
-static int bus_mctp_network_find(sd_bus *bus, const char *path,
-	const char *interface, void *userdata, void **ret_found,
-	sd_bus_error *ret_error)
-{
-	struct ctx *ctx = userdata;
-	uint32_t netid;
-
-	printf("%s: find %s\n", __func__, path);
-
-	if (!get_networkid_from_path(path, &netid)) {
-		return 0;
-	}
-
-	struct net *n = lookup_net(ctx, netid);
-	if (n) {
-		*ret_found = ctx;
-		return 1;
-	}
-
-	return 0;
-}
-
 static char* root_endpoints_path(int net)
 {
 	size_t l;
@@ -3273,16 +3229,11 @@ static int emit_endpoint_removed(const struct peer *peer) {
 	return rc;
 }
 
-static int emit_net_added(struct ctx *ctx, int net) {
-	char *path = NULL;
+static int emit_net_added(struct ctx *ctx, struct net *net)
+{
 	int rc;
 
-	path = net_path(net);
-	if (path == NULL) {
-		warnx("%s: out of memory", __func__);
-		return -ENOMEM;
-	}
-	rc = sd_bus_emit_object_added(ctx->bus, dfree(path));
+	rc = sd_bus_emit_object_added(ctx->bus, net->path);
 	if (rc < 0)
 		warnx("%s: error emitting, %s", __func__, strerror(-rc));
 	return rc;
@@ -3299,16 +3250,11 @@ static int emit_interface_added(struct link *link)
 	return rc;
 }
 
-static int emit_net_removed(struct ctx *ctx, int net) {
-	char *path = NULL;
+static int emit_net_removed(struct ctx *ctx, struct net *net)
+{
 	int rc;
 
-	path = net_path(net);
-	if (path == NULL) {
-		warnx("%s: out of memory", __func__);
-		return -ENOMEM;
-	}
-	rc = sd_bus_emit_object_removed(ctx->bus, dfree(path));
+	rc = sd_bus_emit_object_removed(ctx->bus, net->path);
 	if (rc < 0)
 		warnx("%s: error emitting, %s", __func__, strerror(-rc));
 	return rc;
@@ -3319,7 +3265,6 @@ static int emit_interface_removed(struct link *link)
 	int ifindex = link->ifindex;
 	struct ctx *ctx = link->ctx;
 	const char* ifname = NULL;
-	char *path = NULL;
 	int rc;
 
 	ifname = mctp_nl_if_byindex(ctx->nl_query, ifindex);
@@ -3328,12 +3273,7 @@ static int emit_interface_removed(struct link *link)
 		return -EPROTO;
 	}
 
-	path = interface_path(ifname);
-	if (path == NULL) {
-		warnx("%s: out of memory", __func__);
-		return -ENOMEM;
-	}
-	rc = sd_bus_emit_object_removed(ctx->bus, dfree(path));
+	rc = sd_bus_emit_object_removed(ctx->bus, link->path);
 	if (rc < 0) {
 		errno = -rc;
 		warn("%s: error emitting", __func__);
@@ -3550,20 +3490,6 @@ static int setup_bus(struct ctx *ctx)
 		goto out;
 	}
 
-	/* mctp object needs to use _fallback_vtable() since we can't
-	   mix non-fallback and fallback vtables on MCTP_DBUS_PATH */
-
-	rc = sd_bus_add_fallback_vtable(ctx->bus, NULL,
-					MCTP_DBUS_PATH,
-					CC_MCTP_DBUS_NETWORK_INTERFACE,
-					bus_network_vtable,
-					bus_mctp_network_find,
-					ctx);
-	if (rc < 0) {
-		warnx("Failed adding Network D-Bus interface: %s", strerror(-rc));
-		goto out;
-	}
-
 	rc = sd_bus_add_object_manager(ctx->bus, NULL, MCTP_DBUS_PATH);
 	if (rc < 0) {
 		warnx("Adding object manager failed: %s", strerror(-rc));
@@ -3641,25 +3567,27 @@ static int prune_old_nets(struct ctx *ctx)
 
 	// iterate and discard unused nets
 	for (i = 0, j = 0; i < ctx->num_nets; i++) {
+		struct net *net = &ctx->nets[i];
 		bool found = false;
 		for (size_t n = 0; n < num_list && !found; n++)
-			if (net_list[n] == ctx->nets[i].net)
+			if (net_list[n] == net->net)
 				found = true;
 
 		if (found) {
 			// isn't stale
-			memmove(&ctx->nets[j], &ctx->nets[i], sizeof(*ctx->nets));
+			memmove(&ctx->nets[j], net, sizeof(*ctx->nets));
 			j++;
 		} else {
 			// stale, don't keep
 			for (size_t p = 0; p < 256; p++) {
 				// Sanity check that no peers are used
-				if (ctx->nets[i].peeridx[p] != -1) {
+				if (net->peeridx[p] != -1) {
 					warnx("BUG: stale entry for eid %zd in deleted net %d",
-						p, ctx->nets[i].net);
+						p, net->net);
 				}
 			}
-			emit_net_removed(ctx, ctx->nets[i].net);
+			del_net(net);
+			emit_net_removed(ctx, net);
 		}
 	}
 	ctx->num_nets = j;
@@ -3688,6 +3616,12 @@ static int del_interface(struct link *link)
 		      link->ifindex);
 	prune_old_nets(ctx);
 
+	sd_bus_slot_unref(link->slot_iface);
+	link->slot_iface = NULL;
+	sd_bus_slot_unref(link->slot_busowner);
+	link->slot_busowner = NULL;
+
+	free(link->path);
 	free(link);
 	return 0;
 }
@@ -3886,12 +3820,32 @@ static int add_net(struct ctx *ctx, int net)
 	// Initialise the new entry
 	n = &ctx->nets[ctx->num_nets-1];
 	memset(n, 0x0, sizeof(*n));
+	n->ctx = ctx;
 	n->net = net;
+	asprintf(&n->path, "%s/%d", MCTP_DBUS_PATH_NETWORKS, net);
+
 	for (size_t j = 0; j < 256; j++) {
 		n->peeridx[j] = -1;
 	}
-	emit_net_added(ctx, net);
+
+	if (ctx->verbose) {
+		fprintf(stderr, "net %d added, path %s\n", n->net, n->path);
+	}
+
+	sd_bus_add_object_vtable(ctx->bus, &n->slot, n->path,
+				 CC_MCTP_DBUS_NETWORK_INTERFACE,
+				 bus_network_vtable, n);
+
+	emit_net_added(ctx, n);
 	return 0;
+}
+
+static void del_net(struct net *net)
+{
+	sd_bus_slot_unref(net->slot);
+	net->slot = NULL;
+	net->net = 0;
+	free(net->path);
 }
 
 static int add_interface(struct ctx *ctx, int ifindex)
@@ -3995,15 +3949,8 @@ static int setup_testing(struct ctx *ctx) {
 	} else {
 		warnx("Populating fake MCTP nets");
 
-		ctx->num_nets = 2;
-		ctx->nets = calloc(ctx->num_nets, sizeof(struct net));
-		if (!ctx->nets) {
-			warnx("calloc failed");
-			ctx->num_nets = 0;
-			return -ENOMEM;
-		}
-		ctx->nets[0].net = 10;
-		ctx->nets[1].net = 12;
+		add_net(ctx, 10);
+		add_net(ctx, 12);
 		for (j = 0; j < ctx->num_nets; j++)
 			for (i = 0; i < 256; i++)
 				ctx->nets[j].peeridx[i] = -1;
