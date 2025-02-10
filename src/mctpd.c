@@ -3208,27 +3208,6 @@ static const sd_bus_vtable bus_endpoint_uuid_vtable[] = {
 	SD_BUS_VTABLE_END
 };
 
-static const sd_bus_vtable bus_endpoint_link_vtable[] = {
-	SD_BUS_VTABLE_START(0),
-	SD_BUS_WRITABLE_PROPERTY("Role",
-			"s",
-			bus_link_get_prop,
-			bus_link_set_prop,
-			0,
-			SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
-	SD_BUS_VTABLE_END
-};
-
-static const sd_bus_vtable bus_network_vtable[] = {
-	SD_BUS_VTABLE_START(0),
-	SD_BUS_PROPERTY("LocalEIDs",
-			"ay",
-			bus_network_get_prop,
-			0,
-			SD_BUS_VTABLE_PROPERTY_CONST),
-	SD_BUS_VTABLE_END
-};
-
 static const sd_bus_vtable bus_endpoint_cc_vtable[] = {
 	SD_BUS_VTABLE_START(0),
 	SD_BUS_METHOD_WITH_ARGS("SetMTU",
@@ -3260,6 +3239,27 @@ static const sd_bus_vtable bus_endpoint_cc_vtable[] = {
 		0,
 		SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
 #endif
+	SD_BUS_VTABLE_END
+};
+
+static const sd_bus_vtable bus_link_vtable[] = {
+	SD_BUS_VTABLE_START(0),
+	SD_BUS_WRITABLE_PROPERTY("Role",
+			"s",
+			bus_link_get_prop,
+			bus_link_set_prop,
+			0,
+			SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
+	SD_BUS_VTABLE_END
+};
+
+static const sd_bus_vtable bus_network_vtable[] = {
+	SD_BUS_VTABLE_START(0),
+	SD_BUS_PROPERTY("LocalEIDs",
+			"ay",
+			bus_network_get_prop,
+			0,
+			SD_BUS_VTABLE_PROPERTY_CONST),
 	SD_BUS_VTABLE_END
 };
 
@@ -3705,7 +3705,7 @@ static int setup_bus(struct ctx *ctx)
 	rc = sd_bus_add_fallback_vtable(ctx->bus, NULL,
 					MCTP_DBUS_PATH,
 					CC_MCTP_DBUS_IFACE_INTERFACE,
-					bus_endpoint_link_vtable,
+					bus_link_vtable,
 					bus_mctp_link_find,
 					ctx);
 	if (rc < 0) {
