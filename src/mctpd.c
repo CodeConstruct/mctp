@@ -3226,134 +3226,120 @@ static int bus_mctpd_find(sd_bus *bus, const char *path,
 	return 0;
 }
 
-static int mctpd_dbus_enumerate(sd_bus *bus, const char* path,
-	void *data, char ***out, sd_bus_error *err)
+/* helper for enumerate_objects */
+static int count_and_alloc_node(unsigned int *pos, char *nodes[],
+				const char *str)
 {
-	struct ctx *ctx = data;
-	struct link *link = NULL;
-	size_t num_nodes, i, j;
-	char **nodes = NULL;
-	int rc;
-	size_t num_ifs;
-	int *ifs;
+	unsigned int tmp = *pos;
 
-	/* Set up local addresses */
-	ifs = mctp_nl_if_list(ctx->nl, &num_ifs);
+	if (nodes) {
+		nodes[tmp] = strdup(str);
+		if (!nodes[tmp])
+			return -1;
+	}
+	*pos = tmp + 1;
+	return 0;
+}
 
-	// NULL terminator
-	num_nodes = 1;
-	// .../mctp1 object
-	num_nodes++;
-	// .../mctp1/networks object
-	num_nodes++;
+/* Returns count of objects, or -1 on failure. If nodes is non-NULL, it will be
+ * populated with allocated strings, which the caller must free.
+ *
+ * Typical usage is to call once with nodes == NULL to count, allocate
+ * that number of nodes, then call with a valid nodes pointer.
+ */
+static int enumerate_objects(struct ctx *ctx, const int *ifs,
+			     size_t n_ifs, char *nodes[])
+{
+	unsigned int i, n = 0;
+
+	/* /mctp1, /mctp1/networks, /mctp1/interfaces */
+	if (count_and_alloc_node(&n, nodes, MCTP_DBUS_PATH) ||
+	    count_and_alloc_node(&n, nodes, MCTP_DBUS_PATH_NETWORKS) ||
+	    count_and_alloc_node(&n, nodes, MCTP_DBUS_PATH_LINKS))
+		goto err;
 
 	// .../mctp1/networks/<NetID>
 	for (i = 0; i < ctx->num_nets; i++) {
-		num_nodes++;
+		struct net *net = &ctx->nets[i];
+		if (count_and_alloc_node(&n, nodes, net->path))
+			goto err;
+
+		/* if we have any peers, we will need an /endpoint/ object
+		 * container */
 		for (size_t t = 0; t < 256; t++) {
 			if (ctx->nets[i].peeridx[t] != -1) {
-				// .../mctp1/networks/<NetID>/endpoints object
-				num_nodes++;
+				/* root_endpoints_path does its own allocation,
+				 * so do count_and_alloc manually here */
+				if (nodes) {
+					nodes[n] = root_endpoints_path(net->net);
+					if (!nodes[n])
+						goto err;
+				}
+				n++;
 				break;
 			}
 		}
 	}
 
 	// .../mctp1/networks/<NetID>/endpoints/<EID> object
-	for (i = 0; i < ctx->size_peers; i++)
-		if (ctx->peers[i].published)
-			num_nodes++;
-
-	// .../mctp1/interfaces object
-	num_nodes++;
-
-	// .../mctp1/interface/<name>
-	for (size_t i = 0; i < num_ifs; i++) {
-		link = mctp_nl_get_link_userdata(ctx->nl, ifs[i]);
-		if (link && link->published) {
-			num_nodes++;
-		}
-	}
-
-	nodes = malloc(sizeof(*nodes) * num_nodes);
-	if (!nodes) {
-		rc = -ENOMEM;
-		goto out;
-	}
-
-	j = 0;
-	// .../mctp1
-	nodes[j] = strdup(MCTP_DBUS_PATH);
-	if (!nodes[j]) {
-		rc = -ENOMEM;
-		goto out;
-	}
-	j++;
-
-	// .../mctp1/networks
-	nodes[j] = strdup(MCTP_DBUS_PATH_NETWORKS);
-	if (!nodes[j]) {
-		rc = -ENOMEM;
-		goto out;
-	}
-	j++;
-
-	for (i = 0; i < ctx->num_nets; i++) {
-		// .../mctp1/networks/<NetId>
-		nodes[j] = strdup(ctx->nets[i].path);
-		j++;
-
-		for (size_t t = 0; t < 256; t++) {
-			if (ctx->nets[i].peeridx[t] == -1) {
-				continue;
-			}
-			// .../mctp1/networks/<NetID>/endpoints object
-			nodes[j] = root_endpoints_path(ctx->nets[i].net);
-			if (nodes[j] == NULL) {
-				rc = -ENOMEM;
-				goto out;
-			}
-			j++;
-			break;
-		}
-	}
-
-	// Peers
 	for (i = 0; i < ctx->size_peers; i++) {
 		struct peer *peer = &ctx->peers[i];
-
-		if (!peer->published)
-			continue;
-
-		nodes[j] = strdup(peer->path);
-		j++;
+		if (peer->published) {
+			if (count_and_alloc_node(&n, nodes, peer->path))
+				goto err;
+		}
 	}
 
-	// .../mctp1/interfaces object
-	nodes[j] = strdup(MCTP_DBUS_PATH_LINKS);
-	if (!nodes[j]) {
-		rc = -ENOMEM;
+	// .../mctp1/interface/<name>
+	for (size_t i = 0; i < n_ifs; i++) {
+		struct link *link = mctp_nl_get_link_userdata(ctx->nl, ifs[i]);
+		if (link && link->published) {
+			if (count_and_alloc_node(&n, nodes, link->path))
+				goto err;
+		}
+	}
+
+	/* we need a NULL terminator */
+	if (nodes)
+		nodes[n] = NULL;
+	n++;
+
+	return n;
+
+err:
+	for (i = n; nodes && i > 0; i--)
+		free(nodes[i-1]);
+	return -1;
+}
+
+static int mctpd_dbus_enumerate(sd_bus *bus, const char* path, void *data,
+				char ***out, sd_bus_error *err)
+{
+	struct ctx *ctx = data;
+	char **nodes = NULL;
+	ssize_t num_nodes;
+	size_t num_ifs;
+	int rc = -1;
+	size_t i;
+	int *ifs;
+
+	/* Set up local addresses */
+	ifs = mctp_nl_if_list(ctx->nl, &num_ifs);
+
+	num_nodes = enumerate_objects(ctx, ifs, num_ifs, NULL);
+	if (num_nodes < 0)
 		goto out;
-	}
-	j++;
+	nodes = calloc(num_nodes, sizeof(*nodes));
+	num_nodes = enumerate_objects(ctx, ifs, num_ifs, nodes);
+	if (num_nodes < 0)
+		goto out;
 
-	for (size_t i = 0; i < num_ifs; i++) {
-		link = mctp_nl_get_link_userdata(ctx->nl, ifs[i]);
-		if (!link || !link->published)
-			continue;
-		nodes[j] = strdup(link->path);
-		j++;
-	}
-
-	free(ifs);
-	// NULL terminator
-	nodes[j] = NULL;
-	j++;
 	rc = 0;
 	*out = nodes;
 out:
+	free(ifs);
 	if (rc < 0) {
-		for (i = 0; nodes && i < j; i++) {
+		for (i = 0; num_nodes > 0 && i < (size_t)num_nodes; i++) {
 			free(nodes[i]);
 		}
 		free(nodes);
