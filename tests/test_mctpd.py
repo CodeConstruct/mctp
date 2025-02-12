@@ -9,7 +9,7 @@ from mctp_test_utils import (
     mctpd_mctp_endpoint_common_obj,
     mctpd_mctp_endpoint_control_obj
 )
-from conftest import Endpoint, MCTPSockAddr
+from mctpd import Endpoint, MCTPSockAddr
 
 # DBus constant symbol suffixes:
 #
