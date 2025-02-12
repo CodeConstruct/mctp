@@ -17,6 +17,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 2. mctpd: Add `au.com.codeconstruct.MCTP.Network1` interface
 
+3. tests: the fake mctp environment can now be run standalone, allowing
+   experimentation with different system and network configurations
+
 ## [2.1] - 2024-12-16
 
 ### Fixed
