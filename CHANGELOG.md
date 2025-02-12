@@ -15,7 +15,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 1. New debug tool, `mctp-bench`, for sending and receiving a stream of MCTP
    messages between two processes.
 
-2. mctpd: Add `au.com.codeconstruct.MCTP.Network1` interface
+2. mctpd: Add `au.com.codeconstruct.MCTP.Network1` interface, including
+    - a `LocalEIDs` property, representing the local EIDs assigned on this
+      network
+    - a `LearnEndpoint` method, for enumerating endpoints that already have an
+      address assigned, and are routable
 
 3. tests: the fake mctp environment can now be run standalone, allowing
    experimentation with different system and network configurations

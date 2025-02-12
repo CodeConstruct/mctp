@@ -2737,6 +2737,46 @@ out:
 	return rc;
 }
 
+static int method_net_learn_endpoint(sd_bus_message *call, void *data,
+				     sd_bus_error *berr)
+{
+	const char *peer_path = NULL;
+	struct net *net = data;
+	struct ctx *ctx = net->ctx;
+	dest_phys dest = { 0 };
+	mctp_eid_t eid = 0;
+	struct peer *peer;
+	int rc;
+
+	rc = sd_bus_message_read(call, "y", &eid);
+	if (rc < 0)
+		goto err;
+
+	peer = find_peer_by_addr(ctx, eid, net->net);
+	/* already known? */
+	if (peer)
+		return sd_bus_reply_method_return(call, "sb",
+						  path_from_peer(peer), false);
+
+	rc = add_peer(ctx, &dest, eid, net->net, &peer);
+	if (rc) {
+		warnx("can't add peer: %s", strerror(-rc));
+		goto err;
+	}
+
+	query_peer_properties(peer);
+
+	publish_peer(peer, false);
+
+	peer_path = path_from_peer(peer);
+	if (!peer_path)
+		goto err;
+	return sd_bus_reply_method_return(call, "sb", peer_path, 1);
+err:
+	set_berr(ctx, rc, berr);
+	return rc;
+}
+
 // Testing code
 static int cb_test_timer(sd_event_source *s, uint64_t t, void* data)
 {
@@ -3116,6 +3156,14 @@ static const sd_bus_vtable bus_link_vtable[] = {
 
 static const sd_bus_vtable bus_network_vtable[] = {
 	SD_BUS_VTABLE_START(0),
+	SD_BUS_METHOD_WITH_NAMES("LearnEndpoint",
+		"y",
+		SD_BUS_PARAM(physaddr),
+		"sb",
+		SD_BUS_PARAM(path)
+		SD_BUS_PARAM(found),
+		method_net_learn_endpoint,
+		0),
 	SD_BUS_PROPERTY("LocalEIDs",
 			"ay",
 			bus_network_get_prop,

@@ -548,3 +548,21 @@ async def test_concurrent_recovery_setup(dbus, mctpd):
     with trio.move_on_after(2 * MCTPD_TRECLAIM) as expected:
         await removed.acquire()
     assert not expected.cancelled_caught
+
+""" Bridged EP can be discovered via Network1.LearnEndpoint """
+async def test_bridged_learn_endpoint(dbus, mctpd):
+    iface = mctpd.system.interfaces[0]
+    ep = mctpd.network.endpoints[0]
+    br_ep = Endpoint(iface, bytes(), eid = 10, types = [0, 2])
+    ep.add_bridged_ep(br_ep)
+    mctpd.network.add_endpoint(br_ep)
+
+    await mctpd.system.add_route(mctpd.system.Route(iface, br_ep.eid, 1))
+    # static neighbour; no gateway route support at present
+    await mctpd.system.add_neighbour(mctpd.system.Neighbour(iface, ep.lladdr, br_ep.eid))
+
+    net = await mctpd_mctp_network_obj(dbus, iface.net)
+    (path, new) = await net.call_learn_endpoint(br_ep.eid)
+
+    assert path == f'/au/com/codeconstruct/mctp1/networks/1/endpoints/{br_ep.eid}'
+    assert new
