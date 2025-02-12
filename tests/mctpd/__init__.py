@@ -251,6 +251,7 @@ class Endpoint:
         self.uuid = ep_uuid or uuid.uuid1()
         self.eid = eid
         self.types = types or [0]
+        self.bridged_eps = []
         # keyed by (type, type-specific-instance)
         self.commands = {}
 
@@ -260,11 +261,20 @@ class Endpoint:
     def reset(self):
         self.eid = 0
 
+    def add_bridged_ep(self, ep):
+        self.bridged_eps.append(ep)
+
     async def handle_mctp_message(self, sock, addr, data):
-        if addr.type == 0:
-            await self.handle_mctp_control(sock, addr, data)
+        # for us?
+        if addr.eid == 0 or addr.eid == self.eid:
+            if addr.type == 0:
+                await self.handle_mctp_control(sock, addr, data)
+            else:
+                print(f"unknown MCTP message type {a.type}")
         else:
-            print(f"unknown MCTP message type {a.type}")
+            for br_ep in self.bridged_eps:
+                if addr.eid == br_ep.eid:
+                    return await br_ep.handle_mctp_message(sock, addr, data)
 
     async def handle_mctp_control(self, sock, addr, data):
         flags, opcode = data[0:2]
