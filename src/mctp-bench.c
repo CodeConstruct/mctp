@@ -1,5 +1,5 @@
 #define _XOPEN_SOURCE 700
-#include <bits/time.h>
+#include <time.h>
 #include <err.h>
 #include <errno.h>
 #include <poll.h>
@@ -9,7 +9,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
-#include <sys/poll.h>
 #include <sys/socket.h>
 #include <time.h>
 #include <unistd.h>
