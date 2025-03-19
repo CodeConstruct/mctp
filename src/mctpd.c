@@ -3187,8 +3187,10 @@ static int emit_endpoint_added(const struct peer *peer) {
 	path = path_from_peer(peer);
 	if (!path)
 		return -1;
+
 	if (peer->ctx->verbose)
-		warnx("%s: %s", __func__, path);
+		warnx("emitting endpoint add: %s", path);
+
 	rc = sd_bus_emit_object_added(peer->ctx->bus, path);
 	if (rc < 0)
 		warnx("%s: error emitting, %s", __func__, strerror(-rc));
@@ -3202,8 +3204,10 @@ static int emit_endpoint_removed(const struct peer *peer) {
 	path = path_from_peer(peer);
 	if (!path)
 		return -1;
+
 	if (peer->ctx->verbose)
-		warnx("%s: %s", __func__, path);
+		warnx("emitting endpoint remove: %s", path);
+
 	rc = sd_bus_emit_object_removed(peer->ctx->bus, path);
 	if (rc < 0)
 		warnx("%s: error emitting, %s", __func__, strerror(-rc));
@@ -3213,6 +3217,9 @@ static int emit_endpoint_removed(const struct peer *peer) {
 static int emit_net_added(struct ctx *ctx, struct net *net)
 {
 	int rc;
+
+	if (ctx->verbose)
+		warnx("emitting net add: %s",  net->path);
 
 	rc = sd_bus_emit_object_added(ctx->bus, net->path);
 	if (rc < 0)
@@ -3224,6 +3231,9 @@ static int emit_interface_added(struct link *link)
 {
 	int rc;
 
+	if (link->ctx->verbose)
+		warnx("emitting interface add: %s", link->path);
+
 	rc = sd_bus_emit_object_added(link->ctx->bus, link->path);
 	if (rc < 0)
 		warnx("%s: error emitting, %s", __func__, strerror(-rc));
@@ -3234,6 +3244,9 @@ static int emit_interface_added(struct link *link)
 static int emit_net_removed(struct ctx *ctx, struct net *net)
 {
 	int rc;
+
+	if (ctx->verbose)
+		warnx("emitting net remove: %s",  net->path);
 
 	rc = sd_bus_emit_object_removed(ctx->bus, net->path);
 	if (rc < 0)
@@ -3253,6 +3266,9 @@ static int emit_interface_removed(struct link *link)
 		warnx("BUG %s: no interface for ifindex %d", __func__, ifindex);
 		return -EPROTO;
 	}
+
+	if (link->ctx->verbose)
+		warnx("emitting interface remove: %s", link->path);
 
 	rc = sd_bus_emit_object_removed(ctx->bus, link->path);
 	if (rc < 0) {
