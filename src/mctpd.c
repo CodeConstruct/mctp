@@ -570,6 +570,29 @@ out:
 	return rc;
 }
 
+/* Replies to a physical address */
+static int reply_message_phys(struct ctx *ctx, int sd, const void *resp, size_t resp_len,
+	const struct sockaddr_mctp_ext *addr)
+{
+	ssize_t len;
+	struct sockaddr_mctp_ext reply_addr = *addr;
+
+	reply_addr.smctp_base.smctp_tag &= ~MCTP_TAG_OWNER;
+
+	len = mctp_ops.mctp.sendto(sd, resp, resp_len, 0,
+				   (struct sockaddr *)&reply_addr,
+				   sizeof(reply_addr));
+	if (len < 0) {
+		return -errno;
+	}
+
+	if ((size_t)len != resp_len) {
+		bug_warn("short sendto %zd, expected %zu", len, resp_len);
+		return -EPROTO;
+	}
+	return 0;
+}
+
 /* Replies to a real EID, not physical addressing */
 static int reply_message(struct ctx *ctx, int sd, const void *resp, size_t resp_len,
 	const struct sockaddr_mctp_ext *addr)
@@ -694,7 +717,8 @@ static int handle_control_get_endpoint_id(struct ctx *ctx,
 	SET_ENDPOINT_ID_TYPE(resp->eid_type, 2);
 	// TODO: medium specific information
 
-	return reply_message(ctx, sd, resp, sizeof(*resp), addr);
+	// Get Endpoint ID is typically send and reply using physical addressing.
+	return reply_message_phys(ctx, sd, resp, sizeof(*resp), addr);
 }
 
 static int handle_control_get_endpoint_uuid(struct ctx *ctx,
