@@ -206,6 +206,10 @@ struct peer {
 	// Pool size
 	uint8_t pool_size;
 	uint8_t pool_start;
+
+	struct {
+		sd_event_source *source;
+	} routing_table_polling;
 };
 
 struct msg_type_support {
@@ -240,6 +244,9 @@ struct ctx {
 
 	// Timeout in usecs for a MCTP response
 	uint64_t mctp_timeout;
+
+	// Interval in usecs between routing table requests
+	uint64_t routing_table_polling_interval;
 
 	// Next IID to use
 	uint8_t iid;
@@ -276,6 +283,7 @@ static int publish_peer(struct peer *peer);
 static int unpublish_peer(struct peer *peer);
 static int peer_route_update(struct peer *peer, uint16_t type);
 static int peer_neigh_update(struct peer *peer, uint16_t type);
+static int peer_routing_table_polling_enable(struct peer *peer);
 
 static int add_interface_local(struct ctx *ctx, int ifindex);
 static int del_interface(struct link *link);
@@ -814,6 +822,10 @@ static int handle_control_set_endpoint_id(struct ctx *ctx, int sd,
 
 		if (link_data->discovery.flag != DISCOVERY_UNSUPPORTED) {
 			link_data->discovery.flag = DISCOVERY_DISCOVERED;
+		}
+		rc = peer_routing_table_polling_enable(peer);
+		if (rc) {
+			warnx("failed to setup routing table polling for bus owner");
 		}
 		resp->status =
 			SET_MCTP_EID_ASSIGNMENT_STATUS(MCTP_SET_EID_ACCEPTED) |
@@ -1909,6 +1921,8 @@ static int remove_peer(struct peer *peer)
 		sd_event_source_unref(peer->recovery.source);
 	}
 
+	sd_event_source_disable_unref(peer->routing_table_polling.source);
+
 	n->peers[peer->eid] = NULL;
 	free(peer->message_types);
 	free(peer->uuid);
@@ -2286,6 +2300,62 @@ static int query_get_endpoint_id(struct ctx *ctx, const dest_phys *dest,
 	*ret_eid = resp->eid;
 	*ret_ep_type = resp->eid_type;
 	*ret_media_spec = resp->medium_data;
+out:
+	free(buf);
+	return rc;
+}
+
+static int query_get_routing_table(struct ctx *ctx, struct peer *peer,
+				   uint8_t handle,
+				   struct get_routing_table_entry **entries,
+				   size_t *entries_count, uint8_t *next_handle)
+{
+	struct sockaddr_mctp_ext addr;
+	struct mctp_ctrl_cmd_get_routing_table req = { 0 };
+	struct mctp_ctrl_resp_get_routing_table *resp = NULL;
+	uint8_t *buf = NULL;
+	size_t buf_size;
+	uint8_t iid;
+	int rc;
+
+	iid = mctp_next_iid(ctx);
+
+	req.ctrl_hdr.rq_dgram_inst = RQDI_REQ | iid;
+	req.ctrl_hdr.command_code = MCTP_CTRL_CMD_GET_ROUTING_TABLE_ENTRIES;
+
+	req.entry_handle = handle;
+
+	rc = endpoint_query_peer(peer, MCTP_CTRL_HDR_MSG_TYPE, &req,
+				 sizeof(req), &buf, &buf_size, &addr);
+	if (rc < 0)
+		goto out;
+
+	rc = mctp_ctrl_validate_response(
+		buf, buf_size, sizeof(*resp), peer_tostr_short(peer), iid,
+		MCTP_CTRL_CMD_GET_ROUTING_TABLE_ENTRIES);
+	if (rc)
+		goto out;
+
+	resp = (void *)buf;
+
+	*next_handle = resp->next_entry_handle;
+	*entries_count = resp->number_of_entries;
+	if (*entries_count == 0) {
+		*entries = NULL;
+		goto out;
+	}
+
+	*entries = malloc(resp->number_of_entries *
+				  sizeof(struct get_routing_table_entry) +
+			  1024);
+	if (*entries == NULL) {
+		rc = -ENOMEM;
+		goto out;
+	}
+
+	memcpy(*entries, resp + 1,
+	       resp->number_of_entries *
+		       sizeof(struct get_routing_table_entry));
 out:
 	free(buf);
 	return rc;
@@ -3344,6 +3414,107 @@ static int method_endpoint_set_mtu(sd_bus_message *call, void *data,
 	rc = sd_bus_reply_method_return(call, "");
 out:
 	set_berr(ctx, rc, berr);
+	return rc;
+}
+
+static int peer_routing_table_polling_callback(sd_event_source *source,
+					       uint64_t time, void *userdata)
+{
+	struct peer *peer = userdata;
+	struct peer *remote_peer = NULL;
+	struct get_routing_table_entry *entry = NULL;
+	size_t entries_count = 0;
+	uint8_t handle = 0x00;
+	size_t i;
+	int rc;
+
+	assert(peer->routing_table_polling.source == source);
+
+	while (handle != 0xFF) {
+		rc = query_get_routing_table(peer->ctx, peer, handle, &entry,
+					     &entries_count, &handle);
+		if (rc < 0) {
+			warnx("failed to fetch routing table from peer %s",
+			      peer_tostr(peer));
+			return 0;
+		}
+		dfree(entry);
+
+		for (i = 0; i < entries_count;
+		     i++, entry = MCTP_GET_ROUTING_TABLE_MSG_NEXT(entry)) {
+			// Add Bridge/Endpoint to routing table
+
+			switch (GET_ROUTING_ENTRY_TYPE(entry->entry_type)) {
+			case MCTP_ROUTING_ENTRY_ENDPOINT:
+			case MCTP_ROUTING_ENTRY_BRIDGE:
+			case MCTP_ROUTING_ENTRY_BRIDGE_AND_ENDPOINTS:
+				rc = add_peer(peer->ctx, &peer->phys,
+					      entry->starting_eid, peer->net,
+					      &remote_peer, true);
+				if (rc == -EEXIST) {
+					continue;
+				} else if (rc < 0) {
+					warnx("failed to add new peer: %s",
+					      strerror(-rc));
+					continue;
+				}
+
+				rc = setup_added_peer(remote_peer);
+				if (rc < 0) {
+					warnx("failed to set up new peer: %s",
+					      strerror(-rc));
+					continue;
+				}
+
+				// TODO: port?
+
+				break;
+			};
+
+			// For bridge, enable routing table polling recursively
+
+			switch (GET_ROUTING_ENTRY_TYPE(entry->entry_type)) {
+			case MCTP_ROUTING_ENTRY_BRIDGE:
+			case MCTP_ROUTING_ENTRY_BRIDGE_AND_ENDPOINTS:
+				rc = peer_routing_table_polling_enable(
+					remote_peer);
+				if (rc < 0) {
+					warnx("failed to enable routing table polling on bridge: %s",
+					      strerror(-rc));
+					continue;
+				}
+
+				break;
+			}
+		}
+	}
+
+	// rearm timer
+	rc = mctp_ops.sd_event.source_set_time_relative(
+		source, peer->ctx->routing_table_polling_interval);
+	if (rc) {
+		warn("failed to rearm timer");
+	}
+
+	return 0;
+}
+
+static int peer_routing_table_polling_enable(struct peer *peer)
+{
+	int rc = 0;
+
+	if (peer->routing_table_polling.source != NULL) {
+		return 0;
+	}
+
+	rc = mctp_ops.sd_event.add_time_relative(
+		peer->ctx->event, &peer->routing_table_polling.source,
+		CLOCK_MONOTONIC, peer->ctx->routing_table_polling_interval, 0,
+		peer_routing_table_polling_callback, peer);
+
+	rc = sd_event_source_set_enabled(peer->routing_table_polling.source,
+					 SD_EVENT_ON);
+
 	return rc;
 }
 
@@ -4798,6 +4969,16 @@ static int parse_config_mctp(struct ctx *ctx, toml_table_t *mctp_tab)
 		ctx->mctp_timeout = i * 1000;
 	}
 
+	val = toml_int_in(mctp_tab, "routing_table_polling_interval_ms");
+	if (val.ok) {
+		int64_t i = val.u.i;
+		if (i <= 0 || i > 100 * 1000) {
+			warnx("invalid routing_table_polling_interval_ms value");
+			return -1;
+		}
+		ctx->routing_table_polling_interval = i * 1000;
+	}
+
 	val = toml_string_in(mctp_tab, "uuid");
 	if (val.ok) {
 		rc = sd_id128_from_string(val.u.s, (void *)&ctx->uuid);
@@ -4974,6 +5155,7 @@ static void setup_config_defaults(struct ctx *ctx)
 {
 	ctx->mctp_timeout = 250000; // 250ms
 	ctx->default_role = ENDPOINT_ROLE_BUS_OWNER;
+	ctx->routing_table_polling_interval = 1000000; // 1s
 	ctx->max_pool_size = 15;
 	ctx->dyn_eid_min = eid_alloc_min;
 	ctx->dyn_eid_max = eid_alloc_max;

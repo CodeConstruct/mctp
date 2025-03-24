@@ -246,3 +246,288 @@ class TestUnsupportedDiscovery:
         # BMC response ERROR_UNSUPPORTED_CMD to Prepare for Discovery
         rsp = await bo.send_control(mctpd.network.mctp_socket, MCTPControlCommand(True, 0, 0x0B))
         assert rsp.hex(' ') == '00 0b 05'
+
+
+class TestGetEmptyRoutingTable:
+    @pytest.fixture
+    async def bo(self, iface):
+        return TestGetEmptyRoutingTable.BusOwnerEndpoint(iface, bytes([0x00]), eid=8)
+
+
+    class BusOwnerEndpoint(Endpoint):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.sem = trio.Semaphore(initial_value=0)
+
+        async def handle_mctp_control(self, sock, addr, data):
+            flags, opcode = data[0:2]
+            if opcode != 0x0A:
+                return await super().handle_mctp_control(sock, addr, data)
+            assert len(data) == 3
+            dst_addr = MCTPSockAddr.for_ep_resp(self, addr, sock.addr_ext)
+            await sock.send(dst_addr, bytes([flags & 0x1F, opcode, 0x00, 0xFF,
+                                            0x02, # len
+                                            0x01, 8, 0b10_0_00000, 0x00, 0x00, 0x01, 0x10,
+                                            0x01, 9, 0b00_0_00000, 0x00, 0x00, 0x01, 0x11]))
+            self.sem.release()
+
+    async def test(self, dbus, mctpd, autojump_clock):
+        bo = mctpd.network.endpoints[0]
+
+        # trigger get routing table via set eid
+        await bo.send_control(mctpd.network.mctp_socket, MCTPControlCommand(True, 0, 0x01, bytes([0x00, 0x09])))
+
+        with trio.move_on_after(5) as expected:
+            await bo.sem.acquire()
+
+        assert not expected.cancelled_caught
+
+
+class TestGetThreeEntriesRoutingTable:
+    @pytest.fixture
+    async def bo(self, iface):
+        return TestGetThreeEntriesRoutingTable.BusOwnerEndpoint(iface, bytes([0x00]), eid=8)
+
+
+    class BusOwnerEndpoint(Endpoint):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.sem = trio.Semaphore(initial_value=0)
+
+        async def handle_mctp_control(self, sock, addr, data):
+            flags, opcode = data[0:2]
+            if opcode != 0x0A:
+                return await super().handle_mctp_control(sock, addr, data)
+            assert len(data) == 3
+            dst_addr = MCTPSockAddr.for_ep_resp(self, addr, sock.addr_ext)
+            await sock.send(dst_addr, bytes([flags & 0x1F, opcode, 0x00, 0xFF,
+                                            0x03, # len
+                                            0x01, 8, 0b10_0_00000, 0x00, 0x00, 0x01, 0x10,
+                                            0x01, 9, 0b00_0_00000, 0x00, 0x00, 0x01, 0x11,
+                                            0x01, 66, 0b00_0_00000, 0x00, 0x00, 0x01, 0x12]))
+            self.sem.release()
+
+    async def test(self, dbus, mctpd, autojump_clock):
+        bo = mctpd.network.endpoints[0]
+
+        # trigger get routing table via set eid
+        await bo.send_control(mctpd.network.mctp_socket, MCTPControlCommand(True, 0, 0x01, bytes([0x00, 0x09])))
+
+        with trio.move_on_after(5) as expected:
+            await bo.sem.acquire()
+
+        assert not expected.cancelled_caught
+
+        assert await mctpd_mctp_endpoint_control_obj(dbus, "/au/com/codeconstruct/mctp1/networks/1/endpoints/66")
+
+
+
+
+class TestGetNestedRoutingTables:
+    """
+    Test sending nested routing table.
+
+    This is the topology (we are eid=9):
+
+    ┌───────┐  ┌───────┐
+    │       ┼──► EID 9 │
+    │       │  └───────┘
+    │       │
+    │       │
+    │ EID 8 │
+    │       │  ┌────────┐  ┌──────┐
+    │       │  │        ┼──►EID 11│
+    │       │  │        │  └──────┘
+    │       ┼──► EID 10 │
+    │       │  │        │  ┌──────┐
+    │       │  │        ├──►EID 12│
+    └───────┘  └────────┘  └──────┘
+    """
+
+    # Stub for Bus Owner with eid=8
+    class FirstBusOwnerEndpoint(Endpoint):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.sem = trio.Semaphore(initial_value=0)
+
+        async def handle_mctp_control(self, sock, addr, data):
+            flags, opcode = data[0:2]
+            if opcode != 0x0A:
+                return await super().handle_mctp_control(sock, addr, data)
+            assert len(data) == 3
+            dst_addr = MCTPSockAddr.for_ep_resp(self, addr, sock.addr_ext)
+            await sock.send(dst_addr, bytes([flags & 0x1F, opcode, 0x00, 0xFF,
+                                            0x03, # len
+                                            0x01, 8, 0b10_0_00000, 0x00, 0x00, 0x01, 0x10,
+                                            0x01, 9, 0b00_0_00000, 0x00, 0x00, 0x01, 0x11,
+                                            0x03, 10, 0b01_0_00000, 0x00, 0x00, 0x01, 0x12]))
+            self.sem.release()
+
+    # Stub for Bus Owner with eid=10
+    class SecondBusOwnerEndpoint(Endpoint):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.sem = trio.Semaphore(initial_value=0)
+
+        async def handle_mctp_control(self, sock, addr, data):
+            flags, opcode = data[0:2]
+            if opcode != 0x0A:
+                return await super().handle_mctp_control(sock, addr, data)
+            assert len(data) == 3
+            dst_addr = MCTPSockAddr.for_ep_resp(self, addr, sock.addr_ext)
+            await sock.send(dst_addr, bytes([flags & 0x1F, opcode, 0x00, 0xFF,
+                                            0x05, # len
+                                            0x10, 10, 0b10_0_00000, 0x00, 0x00, 0x01, 0x12,
+                                            0x10, 9, 0b00_0_00000, 0x00, 0x00, 0x01, 0x11,
+                                            0x10, 8, 0b10_0_00000, 0x00, 0x00, 0x01, 0x10,
+                                            0x01, 11, 0b00_0_00001, 0x00, 0x00, 0x01, 0x13,
+                                            0x01, 12, 0b00_0_00001, 0x00, 0x00, 0x01, 0x14]))
+            self.sem.release()
+
+    @pytest.fixture
+    async def bo(self, iface):
+        return TestGetNestedRoutingTables.FirstBusOwnerEndpoint(iface, bytes([0x00]), eid=8)
+
+    async def test(self, dbus, mctpd, autojump_clock):
+        bo1 = mctpd.network.endpoints[0]
+        bo2 = TestGetNestedRoutingTables.SecondBusOwnerEndpoint(mctpd.system.interfaces[0], bytes([0x12]), eid=10)
+        mctpd.network.add_endpoint(bo2)
+
+        ep1 = Endpoint(iface, bytes([0x13]), eid=11)
+        ep2 = Endpoint(iface, bytes([0x14]), eid=12)
+
+        bo1.add_bridged_ep(bo2)
+        bo2.add_bridged_ep(ep1)
+        bo2.add_bridged_ep(ep2)
+
+
+        # trigger get routing table via set eid
+        await bo1.send_control(mctpd.network.mctp_socket, MCTPControlCommand(True, 0, 0x01, bytes([0x00, 0x09])))
+
+        with trio.move_on_after(5) as expected:
+            await bo1.sem.acquire()
+            await bo2.sem.acquire()
+
+        assert not expected.cancelled_caught
+
+        await trio.sleep(1)
+
+        assert await mctpd_mctp_endpoint_control_obj(dbus, "/au/com/codeconstruct/mctp1/networks/1/endpoints/8")
+        assert await mctpd_mctp_endpoint_control_obj(dbus, "/au/com/codeconstruct/mctp1/networks/1/endpoints/9")
+        assert await mctpd_mctp_endpoint_control_obj(dbus, "/au/com/codeconstruct/mctp1/networks/1/endpoints/10")
+        assert await mctpd_mctp_endpoint_control_obj(dbus, "/au/com/codeconstruct/mctp1/networks/1/endpoints/11")
+        assert await mctpd_mctp_endpoint_control_obj(dbus, "/au/com/codeconstruct/mctp1/networks/1/endpoints/12")
+
+
+class TestGetMultipleRoutingTableHandles:
+    @pytest.fixture
+    async def bo(self, iface):
+        return TestGetMultipleRoutingTableHandles.BusOwnerEndpoint(iface, bytes([0x00]), eid=8)
+
+
+    class BusOwnerEndpoint(Endpoint):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.sem = trio.Semaphore(initial_value=0)
+
+        async def handle_mctp_control(self, sock, addr, data):
+            flags, opcode = data[0:2]
+            if opcode != 0x0A:
+                return await super().handle_mctp_control(sock, addr, data)
+            assert len(data) == 3
+            dst_addr = MCTPSockAddr.for_ep_resp(self, addr, sock.addr_ext)
+
+            if data[2] == 0x00:
+                await sock.send(dst_addr, bytes([flags & 0x1F, opcode, 0x00, 0x01,
+                                                0x02, # len
+                                                0x01, 8, 0b10_0_00000, 0x00, 0x00, 0x01, 0x10,
+                                                0x01, 9, 0b00_0_00000, 0x00, 0x00, 0x01, 0x11]))
+                return
+
+            if data[2] == 0x01:
+                await sock.send(dst_addr, bytes([flags & 0x1F, opcode, 0x00, 0xFF,
+                                                0x01, # len
+                                                0x01, 66, 0b00_0_00000, 0x00, 0x00, 0x01, 0x12]))
+                self.sem.release()
+                return
+
+            assert False
+
+    async def test(self, dbus, mctpd, autojump_clock):
+        bo = mctpd.network.endpoints[0]
+
+        # trigger get routing table via set eid
+        await bo.send_control(mctpd.network.mctp_socket, MCTPControlCommand(True, 0, 0x01, bytes([0x00, 0x09])))
+
+        await trio.sleep(10)
+
+        assert await mctpd_mctp_endpoint_control_obj(dbus, "/au/com/codeconstruct/mctp1/networks/1/endpoints/66")
+
+
+class TestResetRoutingTableOnSetEid:
+    @pytest.fixture
+    async def bo(self, iface):
+        return TestGetMultipleRoutingTableHandles.BusOwnerEndpoint(iface, bytes([0x00]), eid=8)
+
+
+    class BusOwnerEndpoint(Endpoint):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.sem = trio.Semaphore(initial_value=0)
+            self.network_is_down = False
+
+        async def handle_mctp_control(self, sock, addr, data):
+            flags, opcode = data[0:2]
+            if opcode != 0x0A:
+                return await super().handle_mctp_control(sock, addr, data)
+            assert len(data) == 3
+            dst_addr = MCTPSockAddr.for_ep_resp(self, addr, sock.addr_ext)
+
+            if self.network_is_down:
+                await sock.send(dst_addr, bytes([flags & 0x1F, opcode, 0x00, 0x01,
+                                                0x02, # len
+                                                0x01, 8, 0b10_0_00000, 0x00, 0x00, 0x01, 0x10,
+                                                0x01, 9, 0b00_0_00000, 0x00, 0x00, 0x01, 0x11]))
+            else:
+                await sock.send(dst_addr, bytes([flags & 0x1F, opcode, 0x00, 0xFF,
+                                                0x03, # len
+                                                0x01, 8, 0b10_0_00000, 0x00, 0x00, 0x01, 0x10,
+                                                0x01, 9, 0b00_0_00000, 0x00, 0x00, 0x01, 0x11,
+                                                0x01, 66, 0b00_0_00000, 0x00, 0x00, 0x01, 0x12]))
+            self.sem.release()
+
+    async def test(self, dbus, mctpd, autojump_clock):
+        bo = mctpd.network.endpoints[0]
+
+        # set our eid=09
+        await bo.send_control(mctpd.network.mctp_socket, MCTPControlCommand(True, 0, 0x01, bytes([0x00, 0x09])))
+
+        with trio.move_on_after(5) as expected:
+            await bo.sem.acquire()
+
+        assert not expected.cancelled_caught
+
+        await trio.sleep(5)
+
+        assert await mctpd_mctp_endpoint_control_obj(dbus, "/au/com/codeconstruct/mctp1/networks/1/endpoints/66")
+
+        # here, assume network is reset and bus owner reset our EID
+        bo.network_is_down = True
+
+        # force set our EID, expect EID 66 is gone
+        await bo.send_control(mctpd.network.mctp_socket, MCTPControlCommand(True, 0, 0x01, bytes([0x01, 0x09])))
+
+        with pytest.raises(asyncdbus.errors.DBusError) as ex:
+            await mctpd_mctp_endpoint_control_obj(dbus, "/au/com/codeconstruct/mctp1/networks/1/endpoints/66")
+
+        assert str(ex.value) == "Unknown object '/au/com/codeconstruct/mctp1/networks/1/endpoints/66'."
+
+        # bus owner finished assigning all EIDs, network is up and routing table is ok again
+        # expect EID 66 is live
+        bo.network_is_down = False
+        with trio.move_on_after(5) as expected:
+            await bo.sem.acquire()
+
+        await trio.sleep(5)
+
+        assert await mctpd_mctp_endpoint_control_obj(dbus, "/au/com/codeconstruct/mctp1/networks/1/endpoints/66")
