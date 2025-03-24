@@ -874,6 +874,7 @@ static int cmd_route_add(struct ctx *ctx, int argc, const char **argv)
 {
 	const char *eidstr = NULL, *linkstr = NULL, *mtustr = NULL;
 	uint32_t mtu = 0, eid = 0;
+	int ifindex = 0;
 	int rc = 0;
 
 	if (!(argc == 4 || argc == 6)) {
@@ -906,18 +907,24 @@ static int cmd_route_add(struct ctx *ctx, int argc, const char **argv)
 		warnx("Bad eid");
 		rc = -EINVAL;
 	}
+	ifindex = mctp_nl_ifindex_byname(ctx->nl, linkstr);
+	if (!ifindex) {
+		warnx("add: invalid device %s", linkstr);
+		rc = -EINVAL;
+	}
 	if (rc) {
 		warnx("add: invalid command line arguments");
 		return -1;
 	}
 
-	return mctp_nl_route_add(ctx->nl, eid, linkstr, mtu);
+	return mctp_nl_route_add(ctx->nl, eid, ifindex, mtu);
 }
 
 static int cmd_route_del(struct ctx *ctx, int argc, const char **argv)
 {
-	const char *linkstr = NULL, *eidstr = NULL;
+	const char *eidstr = NULL;
 	uint32_t tmp = 0;
+	int ifindex = 0;
 	uint8_t eid;
 	int rc = 0;
 
@@ -936,14 +943,18 @@ static int cmd_route_del(struct ctx *ctx, int argc, const char **argv)
 		warnx("Bad eid");
 		rc = -EINVAL;
 	}
+	ifindex = mctp_nl_ifindex_byname(ctx->nl, argv[3]);
+	if (!ifindex) {
+		warnx("del: invalid device %s", argv[3]);
+		rc = -EINVAL;
+	}
 	if (rc) {
 		warnx("del: invalid command line arguments");
 		return -1;
 	}
 	eid = tmp & 0xff;
-	linkstr = argv[3];
 
-	return mctp_nl_route_del(ctx->nl, eid, linkstr);
+	return mctp_nl_route_del(ctx->nl, eid, ifindex);
 }
 
 static int cmd_route(struct ctx *ctx, int argc, const char **argv)
