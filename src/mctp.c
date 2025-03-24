@@ -748,12 +748,6 @@ static int cmd_addr_addremove(struct ctx *ctx,
 	const char* cmdname, int rtm_command,
 	int argc, const char **argv)
 {
-	struct {
-		struct nlmsghdr		nh;
-		struct ifaddrmsg	ifmsg;
-		struct rtattr		rta;
-		uint8_t			data[4];
-	} msg = {0};
 	const char *eidstr, *linkstr;
 	uint32_t tmp;
 	uint8_t eid;
@@ -786,21 +780,9 @@ static int cmd_addr_addremove(struct ctx *ctx,
 	}
 	eid = tmp & 0xff;
 
-	msg.nh.nlmsg_type = rtm_command;
-	// request an error status since there's no other reply
-	msg.nh.nlmsg_flags = NLM_F_REQUEST | NLM_F_ACK;
-
-	msg.ifmsg.ifa_index = ifindex;
-	msg.ifmsg.ifa_family = AF_MCTP;
-
-	msg.rta.rta_type = IFA_LOCAL;
-	msg.rta.rta_len = RTA_LENGTH(sizeof(eid));
-	memcpy(RTA_DATA(&msg.rta), &eid, sizeof(eid));
-
-	msg.nh.nlmsg_len = NLMSG_LENGTH(sizeof(msg.ifmsg)) +
-			RTA_SPACE(sizeof(eid));
-
-	return mctp_nl_send(ctx->nl, &msg.nh);
+	return rtm_command == RTM_NEWADDR ?
+		       mctp_nl_addr_add(ctx->nl, eid, ifindex) :
+		       mctp_nl_addr_del(ctx->nl, eid, ifindex);
 }
 
 static int cmd_addr_add(struct ctx *ctx, int argc, const char **argv)
