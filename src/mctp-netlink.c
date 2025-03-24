@@ -1145,6 +1145,64 @@ static int linkmap_add_entry(mctp_nl *nl, struct ifinfomsg *info,
 	return 0;
 }
 
+/* Common parts of RTM_NEWADDR and RTM_DELADDR */
+struct mctp_addralter_msg {
+	struct nlmsghdr nh;
+	struct ifaddrmsg ifmsg;
+	struct rtattr rta;
+	uint8_t data[4];
+};
+static int fill_addralter_args(struct mctp_nl *nl,
+			       struct mctp_addralter_msg *msg,
+			       struct rtattr **prta, size_t *prta_len,
+			       mctp_eid_t eid, int ifindex)
+{
+	memset(msg, 0x0, sizeof(*msg));
+
+	msg->nh.nlmsg_flags = NLM_F_REQUEST | NLM_F_ACK;
+
+	msg->ifmsg.ifa_index = ifindex;
+	msg->ifmsg.ifa_family = AF_MCTP;
+
+	msg->rta.rta_type = IFA_LOCAL;
+	msg->rta.rta_len = RTA_LENGTH(sizeof(eid));
+	memcpy(RTA_DATA(&msg->rta), &eid, sizeof(eid));
+
+	msg->nh.nlmsg_len =
+		NLMSG_LENGTH(sizeof(msg->ifmsg)) + RTA_SPACE(sizeof(eid));
+
+	if (prta)
+		*prta = &msg->rta;
+	if (prta_len)
+		*prta_len = msg->rta.rta_len;
+
+	return 0;
+}
+
+int mctp_nl_addr(struct mctp_nl *nl, mctp_eid_t eid, int ifindex, int rtm_command)
+{
+	struct mctp_addralter_msg msg;
+	int rc;
+
+	rc = fill_addralter_args(nl, &msg, NULL, NULL, eid, ifindex);
+	if (rc)
+		return -1;
+
+	msg.nh.nlmsg_type = rtm_command;
+
+	return mctp_nl_send(nl, &msg.nh);
+}
+
+int mctp_nl_addr_add(struct mctp_nl *nl, mctp_eid_t eid, int ifindex)
+{
+	return mctp_nl_addr(nl, eid, ifindex, RTM_NEWADDR);
+}
+
+int mctp_nl_addr_del(struct mctp_nl *nl, mctp_eid_t eid, int ifindex)
+{
+	return mctp_nl_addr(nl, eid, ifindex, RTM_DELADDR);
+}
+
 /* Common parts of RTM_NEWROUTE and RTM_DELROUTE */
 struct mctp_rtalter_msg {
 	struct nlmsghdr		nh;

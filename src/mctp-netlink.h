@@ -94,6 +94,11 @@ void *mctp_nl_get_link_userdata(const mctp_nl *nl, int ifindex);
 /* Returns NULL if the link does not exist */
 void *mctp_nl_get_link_userdata_byname(const mctp_nl *nl, const char *ifname);
 
+/* MCTP addr helper */
+int mctp_nl_addr(struct mctp_nl *nl, uint8_t eid, int ifindex, int rtm_command);
+int mctp_nl_addr_add(struct mctp_nl *nl, uint8_t eid, int ifindex);
+int mctp_nl_addr_del(struct mctp_nl *nl, uint8_t eid, int ifindex);
+
 /* MCTP route helper */
 int mctp_nl_route_add(struct mctp_nl *nl, uint8_t eid, int ifindex,
 		      uint32_t mtu);
