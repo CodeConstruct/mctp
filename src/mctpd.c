@@ -570,20 +570,18 @@ out:
 	return rc;
 }
 
-/* Replies to a real EID, not physical addressing */
 static int reply_message(struct ctx *ctx, int sd, const void *resp, size_t resp_len,
 	const struct sockaddr_mctp_ext *addr)
 {
 	ssize_t len;
-	struct sockaddr_mctp reply_addr;
+	struct sockaddr_mctp_ext reply_addr = *addr;
 
-	memcpy(&reply_addr, &addr->smctp_base, sizeof(reply_addr));
-	reply_addr.smctp_tag &= ~MCTP_TAG_OWNER;
+	reply_addr.smctp_base.smctp_tag &= ~MCTP_TAG_OWNER;
 
-	if (reply_addr.smctp_addr.s_addr == 0 ||
-		 reply_addr.smctp_addr.s_addr == 0xff) {
+	if (reply_addr.smctp_base.smctp_addr.s_addr == 0 ||
+	    reply_addr.smctp_base.smctp_addr.s_addr == 0xff) {
 		bug_warn("reply_message can't take EID %d",
-			reply_addr.smctp_addr.s_addr);
+			 reply_addr.smctp_base.smctp_addr.s_addr);
 		return -EPROTO;
 	}
 
