@@ -232,9 +232,22 @@ struct mctp_ctrl_resp_resolve_endpoint_id {
 
 #define MCTP_CTRL_CC_GET_MCTP_VER_SUPPORT_UNSUPPORTED_TYPE 0x80
 
-/* MCTP Set Endpoint ID response fields
+/* MCTP Set Endpoint ID request and response fields
  * See DSP0236 v1.3.0 Table 14.
  */
+
+#define MCTP_SET_EID_OPERATION_SHIFT 0x0
+#define MCTP_SET_EID_OPERATION_MASK 0x3
+#define GET_MCTP_SET_EID_OPERATION(field)            \
+	(((field) >> MCTP_SET_EID_OPERATION_SHIFT) & \
+	 MCTP_SET_EID_OPERATION_MASK)
+#define SET_MCTP_SET_EID_OPERATION(status)        \
+	(((status) & MCTP_SET_EID_OPERATION_MASK) \
+	 << MCTP_SET_EID_OPERATION_SHIFT)
+#define MCTP_SET_EID_SET 0x0
+#define MCTP_SET_EID_FORCE 0x1
+#define MCTP_SET_EID_RESET 0x2
+#define MCTP_SET_EID_DISCOVERED 0x3
 
 #define MCTP_EID_ASSIGNMENT_STATUS_SHIFT 0x4
 #define MCTP_EID_ASSIGNMENT_STATUS_MASK 0x3
@@ -243,6 +256,15 @@ struct mctp_ctrl_resp_resolve_endpoint_id {
 	 << MCTP_EID_ASSIGNMENT_STATUS_SHIFT)
 #define MCTP_SET_EID_ACCEPTED 0x0
 #define MCTP_SET_EID_REJECTED 0x1
+
+#define MCTP_EID_ALLOCATION_STATUS_SHIFT 0x0
+#define MCTP_EID_ALLOCATION_STATUS_MASK 0x3
+#define SET_MCTP_EID_ALLOCATION_STATUS(status)        \
+	(((status) & MCTP_EID_ALLOCATION_STATUS_MASK) \
+	 << MCTP_EID_ALLOCATION_STATUS_SHIFT)
+#define MCTP_SET_EID_POOL_NONE 0x0
+#define MCTP_SET_EID_POOL_REQUIRED 0x1
+#define MCTP_SET_EID_POOL_RECEIVED 0x2
 
 /* MCTP Physical Transport Binding identifiers
  * See DSP0239 v1.7.0 Table 3.
