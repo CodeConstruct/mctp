@@ -1423,6 +1423,12 @@ static int add_peer(ctx *ctx, const dest_phys *dest, mctp_eid_t eid,
 		memset(&ctx->peers[ctx->size_peers], 0x0,
 			sizeof(*ctx->peers) * (new_size - ctx->size_peers));
 		ctx->size_peers = new_size;
+		// Update user data for recovery tasks
+		for (size_t ridx = 0; ridx < ctx->size_peers; ridx++) {
+			peer = &ctx->peers[ridx];
+			if (sd_event_source_get_enabled(peer->recovery.source, NULL) > 0)
+				sd_event_source_set_userdata(peer->recovery.source, peer);
+		}
 	}
 
 	// Populate it

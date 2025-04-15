@@ -483,3 +483,68 @@ async def test_network_local_eids_none(dbus, mctpd):
     eids = list(await net.get_local_eids())
 
     assert eids == []
+
+async def test_concurrent_recovery_setup(dbus, mctpd):
+    iface = mctpd.system.interfaces[0]
+    mctp_i = await mctpd_mctp_iface_obj(dbus, iface)
+
+    # mctpd context tracks 20 peer objects by default, add and set up 19 so we
+    # reach the allocation boundary.
+    split = 19
+    for i in range(split):
+        pep = Endpoint(iface, bytes([0x1e + i]))
+        mctpd.network.add_endpoint(pep)
+        (_, _, path, _) = await mctp_i.call_setup_endpoint(pep.lladdr)
+
+    # Grab the DBus path for an endpoint that we will cause to be removed from
+    # the network through the recovery path. Arbitrarily use the most recent
+    # one added
+    ep = await dbus.get_proxy_object(MCTPD_C, path)
+    ep_props = await ep.get_interface(DBUS_PROPERTIES_I)
+
+    # Set up a match for Connectivity transitioning to Degraded on the endpoint
+    # for which we request recovery
+    degraded = trio.Semaphore(initial_value = 0)
+    def ep_connectivity_changed(iface, changed, invalidated):
+        if iface == MCTPD_ENDPOINT_I and 'Connectivity' in changed:
+            if 'Degraded' == changed['Connectivity'].value:
+                degraded.release()
+    await ep_props.on_properties_changed(ep_connectivity_changed)
+
+    # Set up a match for the recovery endpoint object being removed from DBus
+    mctp_p = await dbus.get_proxy_object(MCTPD_C, MCTPD_MCTP_P)
+    mctp_objmgr = await mctp_p.get_interface(DBUS_OBJECT_MANAGER_I)
+    removed = trio.Semaphore(initial_value = 0)
+    def ep_removed(ep_path, interfaces):
+        if ep_path == path and MCTPD_ENDPOINT_I in interfaces:
+            removed.release()
+
+    await mctp_objmgr.on_interfaces_removed(ep_removed)
+
+    # Delete the endpoint from the network so its recovery will fail after
+    # timeout. Note we delete at the split index as the network was already
+    # populated with the default endpoint
+    del mctpd.network.endpoints[split]
+
+    # Begin recovery for the endpoint ...
+    ep_ep = await ep.get_interface(MCTPD_ENDPOINT_I)
+    await ep_ep.call_recover()
+
+    # ... and wait until we're notified the recovery process has begun
+    with trio.move_on_after(1) as expected:
+        await degraded.acquire()
+    assert not expected.cancelled_caught
+
+    # Now that we're asynchronously waiting for the endpoint recovery process
+    # to complete, force a realloc() of the peer object array by adding a new
+    # peer, which will invalidate the recovering peer's pointer
+    pep = Endpoint(iface, bytes([0x1e + split]))
+    mctpd.network.add_endpoint(pep)
+    (_, _, _, new) = await mctp_i.call_setup_endpoint(pep.lladdr)
+    assert new
+
+    # Verify the recovery process completed gracefully with removal of the
+    # endpoint's DBus object
+    with trio.move_on_after(2 * MCTPD_TRECLAIM) as expected:
+        await removed.acquire()
+    assert not expected.cancelled_caught
