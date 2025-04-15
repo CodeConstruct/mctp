@@ -2564,7 +2564,6 @@ out:
 static int
 peer_endpoint_recover(sd_event_source *s, uint64_t usec, void *userdata)
 {
-	int ev_state __attribute__((unused));
 	peer *peer = userdata;
 	ctx *ctx = peer->ctx;
 	char *peer_path;
@@ -2624,7 +2623,7 @@ peer_endpoint_recover(sd_event_source *s, uint64_t usec, void *userdata)
 			/* It's not known to be the same device, allocate a new EID */
 			dest_phys phys = peer->phys;
 
-			assert(sd_event_source_get_enabled(peer->recovery.source, &ev_state) == 0);
+			assert(sd_event_source_get_enabled(peer->recovery.source, NULL) == 0);
 			remove_peer(peer);
 			/*
 			 * The representation of the old peer is now gone. Set up the new peer,
@@ -2662,7 +2661,7 @@ peer_endpoint_recover(sd_event_source *s, uint64_t usec, void *userdata)
 		goto reschedule;
 	}
 
-	assert(sd_event_source_get_enabled(peer->recovery.source, &ev_state) == 0);
+	assert(sd_event_source_get_enabled(peer->recovery.source, NULL) == 0);
 	sd_event_source_unref(peer->recovery.source);
 	peer->recovery.delay = 0;
 	peer->recovery.source = NULL;
@@ -2681,7 +2680,7 @@ reschedule:
 	if (rc < 0) {
 reclaim:
 		/* Recovery unsuccessful, clean up the peer */
-		assert(sd_event_source_get_enabled(peer->recovery.source, &ev_state) == 0);
+		assert(sd_event_source_get_enabled(peer->recovery.source, NULL) == 0);
 		remove_peer(peer);
 	}
 	return rc < 0 ? rc : 0;
