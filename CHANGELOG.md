@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## Fixed
+
+1. Fixed an issue where peer pointers are kept over a potential realloc()
+
 ### Added
 
 1. New debug tool, `mctp-bench`, for sending and receiving a stream of MCTP
