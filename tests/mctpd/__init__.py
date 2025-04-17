@@ -108,6 +108,9 @@ class System:
 
     async def add_interface(self, iface):
         self.interfaces.append(iface)
+        await self.notify_interface(iface)
+
+    async def notify_interface(self, iface):
         if self.nl:
             await self.nl.notify_newlink(iface)
 
@@ -674,6 +677,29 @@ class NLSocket(BaseSocket):
         addr = struct.pack(self.addr_fmt, AF_NETLINK, 0, 0, 0)
         await self.send(addr, buf)
 
+    def _format_link(self, msg, iface):
+            msg['index'] = iface.ifindex
+            msg['family'] = 0
+            msg['type'] = ARPHRD_MCTP
+            msg['flags'] = (
+                rtnl.ifinfmsg.IFF_RUNNING |
+                (rtnl.ifinfmsg.IFF_UP | rtnl.ifinfmsg.IFF_LOWER_UP
+                    if iface.up else 0)
+            )
+
+            msg['attrs'] = [
+                ['IFLA_IFNAME', iface.name],
+                ['IFLA_ADDRESS', iface.lladdr],
+                ['IFLA_MTU', iface.mtu],
+                ['IFLA_MIN_MTU', iface.min_mtu],
+                ['IFLA_MAX_MTU', iface.max_mtu],
+                ['IFLA_AF_SPEC', {
+                    'attrs': [['AF_MCTP', {
+                        'attrs': [['IFLA_MCTP_NET', iface.net]],
+                    }]],
+                }],
+            ]
+
     async def _handle_getlink(self, msg):
         dump = bool(msg['header']['flags'] & netlink.NLM_F_DUMP)
         assert dump
@@ -687,33 +713,23 @@ class NLSocket(BaseSocket):
 
         for iface in ifaces:
             resp = self._create_resp(ifinfmsg_mctp, msg, rtnl.RTM_NEWLINK, flags)
-            resp['index'] = iface.ifindex
-            resp['family'] = 0
-            resp['type'] = ARPHRD_MCTP
-            resp['flags'] = (
-                rtnl.ifinfmsg.IFF_RUNNING |
-                (rtnl.ifinfmsg.IFF_UP | rtnl.ifinfmsg.IFF_LOWER_UP
-                    if iface.up else 0)
-            )
-
-            resp['attrs'] = [
-                ['IFLA_IFNAME', iface.name],
-                ['IFLA_ADDRESS', iface.lladdr],
-                ['IFLA_MTU', iface.mtu],
-                ['IFLA_MIN_MTU', iface.min_mtu],
-                ['IFLA_MAX_MTU', iface.max_mtu],
-                ['IFLA_AF_SPEC', {
-                    'attrs': [['AF_MCTP', {
-                        'attrs': [['IFLA_MCTP_NET', iface.net]],
-                    }]],
-                }],
-            ]
-
+            self._format_link(resp, iface)
             resp.encode()
             buf.extend(resp.data)
 
         self._append_nlmsg_done(buf, msg)
         await self._send_msg(buf)
+
+    async def _notify_link(self, link, typ):
+        msg = self._create_msg(ifinfmsg_mctp, typ, 0)
+        self._format_link(msg, link)
+        buf = bytearray()
+        msg.encode()
+        buf.extend(msg.data)
+        await self._send_msg(buf)
+
+    async def notify_newlink(self, link):
+        await self._notify_link(link, rtnl.RTM_NEWLINK)
 
     def _format_addr(self, msg, addr):
         msg['index'] = addr.iface.ifindex
