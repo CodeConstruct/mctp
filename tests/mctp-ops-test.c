@@ -85,7 +85,7 @@ static int mctp_op_netlink_socket(void)
 static int mctp_op_bind(int sd, struct sockaddr *addr, socklen_t addrlen)
 {
 	struct msghdr msg = { 0 };
-	struct sock_msg sock_msg;
+	struct sock_msg sock_msg = { 0 };
 	struct iovec iov;
 	ssize_t rc;
 
@@ -115,7 +115,7 @@ static int mctp_op_setsockopt(int sd, int level, int optname, void *optval,
 			       socklen_t optlen)
 {
 	struct msghdr msg = { 0 };
-	struct sock_msg sock_msg;
+	struct sock_msg sock_msg = { 0 };
 	struct iovec iov[2];
 	ssize_t rc;
 
@@ -148,7 +148,7 @@ static ssize_t mctp_op_sendto(int sd, const void *buf, size_t len, int flags,
 			       const struct sockaddr *dest, socklen_t addrlen)
 {
 	struct msghdr msg = { 0 };
-	struct sock_msg sock_msg;
+	struct sock_msg sock_msg = { 0 };
 	struct iovec iov[2];
 	ssize_t rc;
 
@@ -180,7 +180,7 @@ static ssize_t mctp_op_recvfrom(int sd, void *buf, size_t len, int flags,
 				 struct sockaddr *src, socklen_t *addrlenp)
 {
 	struct msghdr msg = { 0 };
-	struct sock_msg sock_msg;
+	struct sock_msg sock_msg = { 0 };
 	struct iovec iov[2];
 	ssize_t rc;
 
