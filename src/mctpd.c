@@ -77,8 +77,8 @@ typedef struct dest_phys dest_phys;
 /* Table of per-network details */
 struct net {
 	int net;
-	// EID mappings, an index into ctx->peers. Value -1 is unused.
-	ssize_t peeridx[256];
+	// EID mappings, NULL is unused.
+	struct peer *peers[256];
 };
 
 struct ctx;
@@ -133,7 +133,6 @@ struct peer {
 	dest_phys phys;
 
 	enum {
-		UNUSED = 0,
 		REMOTE,
 		// Local address. Note that multiple interfaces
 		// in a network may have the same local address.
@@ -194,8 +193,8 @@ struct ctx {
 	enum endpoint_role default_role;
 
 	// An allocated array of peers, changes address (reallocated) during runtime
-	struct peer *peers;
-	size_t size_peers;
+	struct peer **peers;
+	size_t num_peers;
 
 	struct net *nets;
 	size_t num_nets;
@@ -266,8 +265,8 @@ static bool match_phys(const dest_phys *d1, const dest_phys *d2) {
 
 static struct peer *find_peer_by_phys(struct ctx *ctx, const dest_phys *dest)
 {
-	for (size_t i = 0; i < ctx->size_peers; i++) {
-		struct peer *peer = &ctx->peers[i];
+	for (size_t i = 0; i < ctx->num_peers; i++) {
+		struct peer *peer = ctx->peers[i];
 		if (peer->state != REMOTE)
 			continue;
 		if (match_phys(&peer->phys, dest))
@@ -280,8 +279,8 @@ static struct peer *find_peer_by_addr(struct ctx *ctx, mctp_eid_t eid, int net)
 {
 	struct net *n = lookup_net(ctx, net);
 
-	if (eid != 0 && n && n->peeridx[eid] >= 0)
-		return &ctx->peers[n->peeridx[eid]];
+	if (eid != 0 && n && n->peers[eid])
+		return n->peers[eid];
 	return NULL;
 }
 
@@ -298,10 +297,10 @@ static int find_local_eids_by_net(struct ctx *ctx, uint32_t net,
 		return -EINVAL;
 
 	for (size_t t = 0; t < 256; t++) {
-		if (n->peeridx[t] < 0)
+		if (!(n->peers[t]))
 			continue;
 
-		peer = &ctx->peers[n->peeridx[t]];
+		peer = n->peers[t];
 		if (peer && (peer->state == LOCAL))
 			ret_eids[local_count++] = t;
 	}
@@ -1362,11 +1361,8 @@ out:
 static int add_peer(struct ctx *ctx, const dest_phys *dest, mctp_eid_t eid,
 	int net, struct peer **ret_peer)
 {
-	ssize_t idx;
-	size_t new_size;
+	struct peer *peer, **tmp;
 	struct net *n;
-	void *tmp = NULL;
-	struct peer *peer;
 
 	n = lookup_net(ctx, net);
 	if (!n) {
@@ -1374,13 +1370,8 @@ static int add_peer(struct ctx *ctx, const dest_phys *dest, mctp_eid_t eid,
 		return -EPROTO;
 	}
 
-	idx = n->peeridx[eid];
-	if (n->peeridx[eid] >= 0) {
-		if (idx >= (ssize_t)ctx->size_peers) {
-			warnx("BUG: Bad index %zu", idx);
-			return -EPROTO;
-		}
-		peer = &ctx->peers[idx];
+	peer = n->peers[eid];
+	if (peer) {
 		if (!match_phys(&peer->phys, dest)) {
 			return -EEXIST;
 		}
@@ -1388,37 +1379,25 @@ static int add_peer(struct ctx *ctx, const dest_phys *dest, mctp_eid_t eid,
 		return 0;
 	}
 
-	// Find a slot
-	for (idx = 0; idx < (ssize_t)ctx->size_peers; idx++) {
-		if (ctx->peers[idx].state == UNUSED) {
-			break;
-		}
-	}
-	if (idx == (ssize_t)ctx->size_peers) {
-		// Allocate more entries
-		new_size = max(20, ctx->size_peers*2);
-		if (new_size > MAX_PEER_SIZE) {
-			return -ENOSPC;
-		}
-		tmp = realloc(ctx->peers, new_size * sizeof(*ctx->peers));
-		if (!tmp)
-			return -ENOMEM;
-		ctx->peers = tmp;
-		// Zero the new entries
-		memset(&ctx->peers[ctx->size_peers], 0x0,
-			sizeof(*ctx->peers) * (new_size - ctx->size_peers));
-		ctx->size_peers = new_size;
-		// Update user data for recovery tasks
-		for (size_t ridx = 0; ridx < ctx->size_peers; ridx++) {
-			peer = &ctx->peers[ridx];
-			if (sd_event_source_get_enabled(peer->recovery.source, NULL) > 0)
-				sd_event_source_set_userdata(peer->recovery.source, peer);
-		}
-	}
+	if (ctx->num_peers == MAX_PEER_SIZE)
+		return -ENOMEM;
+
+	// Allocate the peer itself
+	peer = malloc(sizeof(*peer));
+	if (!peer)
+		return -ENOMEM;
+
+	memset(peer, 0, sizeof(*peer));
+
+	// Add it to our peers array
+	tmp = realloc(ctx->peers, (ctx->num_peers + 1) * sizeof(*ctx->peers));
+	if (!tmp)
+		return -ENOMEM;
+	ctx->peers = tmp;
+	ctx->peers[ctx->num_peers] = peer;
+	ctx->num_peers++;
 
 	// Populate it
-	peer = &ctx->peers[idx];
-	memset(peer, 0x0, sizeof(*peer));
 	peer->eid = eid;
 	peer->net = net;
 	memcpy(&peer->phys, dest, sizeof(*dest));
@@ -1426,7 +1405,7 @@ static int add_peer(struct ctx *ctx, const dest_phys *dest, mctp_eid_t eid,
 	peer->ctx = ctx;
 
 	// Update network eid map
-	n->peeridx[eid] = idx;
+	n->peers[eid] = peer;
 
 	*ret_peer = peer;
 	return 0;
@@ -1434,28 +1413,13 @@ static int add_peer(struct ctx *ctx, const dest_phys *dest, mctp_eid_t eid,
 
 static int check_peer_struct(const struct peer *peer, const struct net *n)
 {
-	ssize_t idx;
-	struct ctx *ctx = peer->ctx;
-
 	if (n->net != peer->net) {
 		warnx("BUG: Mismatching net %d vs peer net %d", n->net, peer->net);
 		return -1;
 	}
 
-	if (((void*)peer - (void*)ctx->peers) % sizeof(struct peer) != 0) {
-		warnx("BUG: Bad address alignment");
-		return -1;
-	}
-
-	idx = peer - ctx->peers;
-	if (idx < 0 || idx > (ssize_t)ctx->size_peers) {
-		warnx("BUG: Bad address index");
-		return -1;
-	}
-
-	if (idx != n->peeridx[peer->eid]) {
-		warnx("BUG: Bad net %d peeridx 0x%zx vs 0x%zx",
-			peer->net, n->peeridx[peer->eid], idx);
+	if (peer != n->peers[peer->eid]) {
+		warnx("BUG: Bad peer: net %d eid %02x", peer->net, peer->eid);
 		return -1;
 	}
 
@@ -1464,12 +1428,10 @@ static int check_peer_struct(const struct peer *peer, const struct net *n)
 
 static int remove_peer(struct peer *peer)
 {
+	struct ctx *ctx = peer->ctx;
 	struct net *n = NULL;
-
-	if (peer->state == UNUSED) {
-		warnx("BUG: %s: unused peer", __func__);
-		return -EPROTO;
-	}
+	struct peer **tmp;
+	size_t idx;
 
 	n = lookup_net(peer->ctx, peer->net);
 	if (!n) {
@@ -1496,10 +1458,36 @@ static int remove_peer(struct peer *peer)
 		sd_event_source_unref(peer->recovery.source);
 	}
 
-	n->peeridx[peer->eid] = -1;
+	n->peers[peer->eid] = NULL;
 	free(peer->message_types);
 	free(peer->uuid);
-	memset(peer, 0x0, sizeof(struct peer));
+
+	for (idx = 0; idx < ctx->num_peers; idx++) {
+		if (ctx->peers[idx] == peer)
+			break;
+	}
+
+	if (idx == ctx->num_peers) {
+		warnx("BUG: peer net %d, eid %d not found on remove!",
+		      peer->net, peer->eid);
+		return -EPROTO;
+	}
+
+	// remove from peers array & resize
+	ctx->num_peers--;
+	memmove(ctx->peers + idx, ctx->peers + idx + 1,
+		(ctx->num_peers - idx) * sizeof(struct peer *));
+
+	tmp = realloc(ctx->peers, ctx->num_peers * sizeof(struct peer *));
+	if (!tmp && ctx->num_peers) {
+		warn("%s: peer realloc(reduce!) failed", __func__);
+		// we'll re-try on next add/remove
+	} else {
+		ctx->peers = tmp;
+	}
+
+	free(peer);
+
 	return 0;
 }
 
@@ -1520,13 +1508,13 @@ static int change_peer_eid(struct peer *peer, mctp_eid_t new_eid)
 		return -EPROTO;
 	}
 
-	if (n->peeridx[new_eid] != -1)
+	if (n->peers[new_eid])
 		return -EEXIST;
 
 	/* publish & unpublish will update peer->path */
 	unpublish_peer(peer);
-	n->peeridx[new_eid] = n->peeridx[peer->eid];
-	n->peeridx[peer->eid] = -1;
+	n->peers[new_eid] = n->peers[peer->eid];
+	n->peers[peer->eid] = NULL;
 	peer->eid = new_eid;
 	rc = publish_peer(peer, true);
 	if (rc)
@@ -1591,12 +1579,12 @@ static int endpoint_assign_eid(struct ctx *ctx, sd_bus_error *berr, const dest_p
 	} else {
 		/* Find an unused EID */
 		for (e = eid_alloc_min; e <= eid_alloc_max; e++) {
-			if (n->peeridx[e] == -1) {
-				rc = add_peer(ctx, dest, e, net, &peer);
-				if (rc < 0)
-					return rc;
-				break;
-			}
+			if (n->peers[e])
+				continue;
+			rc = add_peer(ctx, dest, e, net, &peer);
+			if (rc < 0)
+				return rc;
+			break;
 		}
 		if (e > eid_alloc_max) {
 			warnx("Ran out of EIDs for net %d, allocating %s", net, dest_phys_tostr(dest));
@@ -3584,7 +3572,7 @@ static int mctpd_dbus_enumerate(sd_bus *bus, const char* path,
 	for (i = 0; i < ctx->num_nets; i++) {
 		num_nodes++;
 		for (size_t t = 0; t < 256; t++) {
-			if (ctx->nets[i].peeridx[t] != -1) {
+			if (ctx->nets[i].peers[t]) {
 				// .../mctp1/networks/<NetID>/endpoints object
 				num_nodes++;
 				break;
@@ -3593,8 +3581,8 @@ static int mctpd_dbus_enumerate(sd_bus *bus, const char* path,
 	}
 
 	// .../mctp1/networks/<NetID>/endpoints/<EID> object
-	for (i = 0; i < ctx->size_peers; i++)
-		if (ctx->peers[i].published)
+	for (i = 0; i < ctx->num_peers; i++)
+		if (ctx->peers[i]->published)
 			num_nodes++;
 
 	// .../mctp1/interfaces object
@@ -3641,7 +3629,7 @@ static int mctpd_dbus_enumerate(sd_bus *bus, const char* path,
 		j++;
 
 		for (size_t t = 0; t < 256; t++) {
-			if (ctx->nets[i].peeridx[t] == -1) {
+			if (!ctx->nets[i].peers[t]) {
 				continue;
 			}
 			// .../mctp1/networks/<NetID>/endpoints object
@@ -3656,8 +3644,8 @@ static int mctpd_dbus_enumerate(sd_bus *bus, const char* path,
 	}
 
 	// Peers
-	for (i = 0; i < ctx->size_peers; i++) {
-		struct peer *peer = &ctx->peers[i];
+	for (i = 0; i < ctx->num_peers; i++) {
+		struct peer *peer = ctx->peers[i];
 		const char *tmp;
 
 		if (!peer->published)
@@ -3915,7 +3903,7 @@ static int prune_old_nets(struct ctx *ctx)
 			// stale, don't keep
 			for (size_t p = 0; p < 256; p++) {
 				// Sanity check that no peers are used
-				if (ctx->nets[i].peeridx[p] != -1) {
+				if (ctx->nets[i].peers[p]) {
 					warnx("BUG: stale entry for eid %zd in deleted net %d",
 						p, ctx->nets[i].net);
 				}
@@ -3934,8 +3922,8 @@ static int del_interface(struct ctx *ctx, int old_ifindex)
 	if (ctx->verbose) {
 		fprintf(stderr, "Deleting interface #%d\n", old_ifindex);
 	}
-	for (size_t i = 0; i < ctx->size_peers; i++) {
-		struct peer *p = &ctx->peers[i];
+	for (size_t i = 0; i < ctx->num_peers; i++) {
+		struct peer *p = ctx->peers[i];
 		if (p->state == REMOTE && p->phys.ifindex == old_ifindex) {
 			remove_peer(p);
 		}
@@ -3985,8 +3973,8 @@ static int change_net_interface(struct ctx *ctx, int ifindex, int old_net)
 		new_n = lookup_net(ctx, new_net);
 	}
 
-	for (size_t i = 0; i < ctx->size_peers; i++) {
-		struct peer *peer = &ctx->peers[i];
+	for (size_t i = 0; i < ctx->num_peers; i++) {
+		struct peer *peer = ctx->peers[i];
 		if (!(peer->state == REMOTE && peer->phys.ifindex == ifindex)) {
 			// skip peers on other interfaces
 			continue;
@@ -4003,7 +3991,7 @@ static int change_net_interface(struct ctx *ctx, int ifindex, int old_net)
 			return -EPROTO;
 		}
 
-		if (new_n->peeridx[peer->eid] != -1) {
+		if (new_n->peers[peer->eid]) {
 			// Conflict, drop it
 			warnx("EID %d already exists moving net %d->%d, dropping it",
 				peer->eid, old_net, new_net);
@@ -4013,8 +4001,8 @@ static int change_net_interface(struct ctx *ctx, int ifindex, int old_net)
 
 		// Move networks, change route/neigh entries, emit new dbus signals
 		unpublish_peer(peer);
-		new_n->peeridx[peer->eid] = old_n->peeridx[peer->eid];
-		old_n->peeridx[peer->eid] = -1;
+		new_n->peers[peer->eid] = old_n->peers[peer->eid];
+		old_n->peers[peer->eid] = NULL;
 		peer->net = new_net;
 		rc = publish_peer(peer, true);
 		if (rc) {
@@ -4147,9 +4135,6 @@ static int add_net(struct ctx *ctx, int net)
 	n = &ctx->nets[ctx->num_nets-1];
 	memset(n, 0x0, sizeof(*n));
 	n->net = net;
-	for (size_t j = 0; j < 256; j++) {
-		n->peeridx[j] = -1;
-	}
 	emit_net_added(ctx, net);
 	return 0;
 }
@@ -4220,7 +4205,6 @@ static int setup_nets(struct ctx *ctx)
 static int setup_testing(struct ctx *ctx) {
 	dest_phys dest = {};
 	struct peer *peer;
-	size_t i, j;
 	int rc;
 
 	if (!ctx->testing)
@@ -4242,9 +4226,6 @@ static int setup_testing(struct ctx *ctx) {
 		}
 		ctx->nets[0].net = 10;
 		ctx->nets[1].net = 12;
-		for (j = 0; j < ctx->num_nets; j++)
-			for (i = 0; i < 256; i++)
-				ctx->nets[j].peeridx[i] = -1;
 
 		rc = add_peer(ctx, &dest, 7, 10, &peer);
 		if (rc < 0) {
