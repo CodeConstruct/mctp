@@ -248,12 +248,13 @@ class MCTPControlCommand(MCTPCommand):
         return bytes([flags, self.cmd]) + self.data
 
 class Endpoint:
-    def __init__(self, iface, lladdr, ep_uuid = None, eid = 0, types = None):
+    def __init__(self, iface, lladdr, ep_uuid = None, eid = 0, types = None, pool_size = 0):
         self.iface = iface
         self.lladdr = lladdr
         self.uuid = ep_uuid or uuid.uuid1()
         self.eid = eid
         self.types = types or [0]
+        self.pool_size = pool_size
         # keyed by (type, type-specific-instance)
         self.commands = {}
 
@@ -291,6 +292,10 @@ class Endpoint:
                 (op, eid) = data[2:]
                 self.eid = eid
                 data = bytes(hdr + [0x00, 0x00, self.eid, 0x00])
+                if (self.pool_size):
+                    data = bytes(hdr + [0x00, 0x01, self.eid, self.pool_size])
+                else:
+                    data = bytes(hdr + [0x00, 0x00, self.eid, 0x00])
                 await sock.send(raddr, data)
 
             elif opcode == 2:

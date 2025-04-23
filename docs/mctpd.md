@@ -123,15 +123,17 @@ Similar to SetupEndpoint, but will always assign an EID rather than querying for
 existing ones. Will return `new = false` when an endpoint is already known to
 `mctpd`.
 
-#### `.AssignEndpointStatic`: `ayy` → `yisb`
+#### `.AssignEndpointStatic`: `ayyy` → `yisb`
 
 Similar to AssignEndpoint, but takes an additional EID argument:
 
 ```
-AssignEndpointStatic <hwaddr> <static-EID>
+AssignEndpointStatic <hwaddr> <static-EID> <pool_start-EID>
 ```
 
 to assign `<static-EID>` to the endpoint with hardware address `hwaddr`.
+
+For MCTP Bridges `<pool_start-EID>` will be starting eid assigned for downstream devices. For non-bridge devices this argument value will be zero.
 
 This call will fail if the endpoint already has an EID, and that EID is
 different from `static-EID`, or if `static-EID` is already assigned to another

@@ -177,6 +177,11 @@ struct peer {
 		uint8_t endpoint_type;
 		uint8_t medium_spec;
 	} recovery;
+
+	// Pool size
+	uint8_t pool_size;
+	uint8_t pool_start;
+
 };
 typedef struct peer peer;
 
@@ -1313,7 +1318,7 @@ static int endpoint_query_phys(ctx *ctx, const dest_phys *dest,
 }
 
 /* returns -ECONNREFUSED if the endpoint returns failure. */
-static int endpoint_send_set_endpoint_id(const peer *peer, mctp_eid_t *new_eid)
+static int endpoint_send_set_endpoint_id(peer *peer, mctp_eid_t *new_eid)
 {
 	struct sockaddr_mctp_ext addr;
 	struct mctp_ctrl_cmd_set_eid req = {0};
@@ -1360,9 +1365,11 @@ static int endpoint_send_set_endpoint_id(const peer *peer, mctp_eid_t *new_eid)
 
 	alloc = resp->status & 0x3;
 	if (alloc != 0) {
-		// TODO for bridges
-		warnx("%s requested allocation pool, unimplemented",
-			dest_phys_tostr(dest));
+		peer->pool_size = resp->eid_pool_size;
+		if (peer->ctx->verbose) {
+			warnx("%s requested allocation of pool size = %d",
+				dest_phys_tostr(dest), peer->pool_size);
+		}
 	}
 
 	rc = 0;
@@ -2114,7 +2121,7 @@ static int method_assign_endpoint_static(sd_bus_message *call, void *data,
 	char *peer_path = NULL;
 	peer *peer = NULL;
 	ctx *ctx = data;
-	uint8_t eid;
+	uint8_t eid, start_eid;
 	int rc;
 
 	dest->ifindex = interface_call_to_ifindex_busowner(ctx, call);
@@ -2127,6 +2134,10 @@ static int method_assign_endpoint_static(sd_bus_message *call, void *data,
 		goto err;
 
 	rc = sd_bus_message_read(call, "y", &eid);
+	if (rc < 0)
+		goto err;
+
+	rc = sd_bus_message_read(call, "y", &start_eid);
 	if (rc < 0)
 		goto err;
 
@@ -2172,6 +2183,11 @@ static int method_assign_endpoint_static(sd_bus_message *call, void *data,
 		goto err;
 	}
 	dfree(peer_path);
+
+	/* MCTP Bridge Support */
+	if(peer->pool_size > 0) {
+		peer->pool_start = start_eid;
+	}
 
 	return sd_bus_reply_method_return(call, "yisb",
 		peer->eid, peer->net, peer_path, 1);
@@ -2852,9 +2868,10 @@ static const sd_bus_vtable bus_owner_vtable[] = {
 		0),
 
 	SD_BUS_METHOD_WITH_NAMES("AssignEndpointStatic",
-		"ayy",
+		"ayyy",
 		SD_BUS_PARAM(physaddr)
-		SD_BUS_PARAM(eid),
+		SD_BUS_PARAM(eid)
+		SD_BUS_PARAM(start_eid),
 		"yisb",
 		SD_BUS_PARAM(eid)
 		SD_BUS_PARAM(net)

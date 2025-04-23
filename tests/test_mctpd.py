@@ -287,10 +287,12 @@ async def test_assign_endpoint_static(dbus, mctpd):
     dev = mctpd.network.endpoints[0]
     mctp = await mctpd_mctp_iface_obj(dbus, iface)
     static_eid = 12
+    start_eid = 0
 
     (eid, _, _, new) = await mctp.call_assign_endpoint_static(
         dev.lladdr,
-        static_eid
+        static_eid,
+        start_eid
     )
 
     assert eid == static_eid
@@ -309,10 +311,12 @@ async def test_assign_endpoint_static_allocated(dbus, mctpd):
     mctp = await mctpd_mctp_iface_obj(dbus, iface)
     dev = mctpd.network.endpoints[0]
     static_eid = 12
+    start_eid = 0
 
     (eid, _, _, new) = await mctp.call_assign_endpoint_static(
         dev.lladdr,
         static_eid,
+        start_eid
     )
 
     assert eid == static_eid
@@ -322,6 +326,7 @@ async def test_assign_endpoint_static_allocated(dbus, mctpd):
     (eid, _, _, new) = await mctp.call_assign_endpoint_static(
         dev.lladdr,
         static_eid,
+        start_eid
     )
 
     assert eid == static_eid
@@ -345,7 +350,7 @@ async def test_assign_endpoint_static_conflict(dbus, mctpd):
 
     # try to assign dev2 with the dev1's existing EID
     with pytest.raises(asyncdbus.errors.DBusError) as ex:
-        await mctp.call_assign_endpoint_static(dev2.lladdr, eid)
+        await mctp.call_assign_endpoint_static(dev2.lladdr, eid, 0)
 
     assert str(ex.value) == "Address in use"
 
@@ -356,17 +361,19 @@ async def test_assign_endpoint_static_varies(dbus, mctpd):
     dev = mctpd.network.endpoints[0]
     mctp = await mctpd_mctp_iface_obj(dbus, iface)
     static_eid = 12
+    start_eid = 0
 
     (eid, _, _, new) = await mctp.call_assign_endpoint_static(
         dev.lladdr,
-        static_eid
+        static_eid,
+        start_eid
     )
 
     assert eid == static_eid
     assert new
 
     with pytest.raises(asyncdbus.errors.DBusError) as ex:
-        await mctp.call_assign_endpoint_static(dev.lladdr, 13)
+        await mctp.call_assign_endpoint_static(dev.lladdr, 13, 0)
 
     assert str(ex.value) == "Already assigned a different EID"
 
