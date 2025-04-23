@@ -189,6 +189,11 @@ struct peer {
 		uint8_t endpoint_type;
 		uint8_t medium_spec;
 	} recovery;
+
+	// Pool size
+	uint8_t pool_size;
+	uint8_t pool_start;
+
 };
 
 struct ctx {
@@ -1321,8 +1326,7 @@ static int endpoint_query_phys(struct ctx *ctx, const dest_phys *dest,
 }
 
 /* returns -ECONNREFUSED if the endpoint returns failure. */
-static int endpoint_send_set_endpoint_id(const struct peer *peer,
-					 mctp_eid_t *new_eidp)
+static int endpoint_send_set_endpoint_id(struct peer *peer, mctp_eid_t *new_eidp)
 {
 	struct sockaddr_mctp_ext addr;
 	struct mctp_ctrl_cmd_set_eid req = { 0 };
@@ -1387,9 +1391,11 @@ static int endpoint_send_set_endpoint_id(const struct peer *peer,
 
 	alloc = resp->status & 0x3;
 	if (alloc != 0) {
-		// TODO for bridges
-		warnx("%s requested allocation pool, unimplemented",
-		      dest_phys_tostr(dest));
+		peer->pool_size = resp->eid_pool_size;
+		if (peer->ctx->verbose) {
+			warnx("%s requested allocation of pool size = %d",
+				dest_phys_tostr(dest), peer->pool_size);
+		}
 	}
 
 	rc = 0;
@@ -2083,6 +2089,11 @@ static int method_setup_endpoint(sd_bus_message *call, void *data,
 	if (ctx->verbose)
 		fprintf(stderr, "%s returning from endpoint_assign_eid %s\n",
 			__func__, peer_tostr(peer));
+	if (peer->pool_size > 0) {
+		// Dynamic pool EID starts after bridge's EID
+		peer->pool_start = peer->eid + 1;
+		// Call for Allocate EndpointID
+	}
 	return sd_bus_reply_method_return(call, "yisb", peer->eid, peer->net,
 					  peer_path, 1);
 
@@ -2133,6 +2144,12 @@ static int method_assign_endpoint(sd_bus_message *call, void *data,
 	peer_path = path_from_peer(peer);
 	if (!peer_path)
 		goto err;
+
+	if (peer->pool_size > 0) {
+		// Dynamic pool EID starts after bridge's EID
+		peer->pool_start = peer->eid + 1;
+		// Call for Allocate EndpointID
+	}
 
 	return sd_bus_reply_method_return(call, "yisb", peer->eid, peer->net,
 					  peer_path, 1);
@@ -2207,6 +2224,12 @@ static int method_assign_endpoint_static(sd_bus_message *call, void *data,
 	if (!peer_path)
 		goto err;
 
+	if (peer->pool_size > 0) {
+		// Dynamic pool EID starts after bridge's EID
+		peer->pool_start = peer->eid + 1;
+		// Call for Allocate EndpointID
+	}
+
 	return sd_bus_reply_method_return(call, "yisb", peer->eid, peer->net,
 					  peer_path, 1);
 err:
@@ -2257,6 +2280,103 @@ static int method_learn_endpoint(sd_bus_message *call, void *data,
 		goto err;
 	return sd_bus_reply_method_return(call, "yisb", peer->eid, peer->net,
 					  peer_path, 1);
+err:
+	set_berr(ctx, rc, berr);
+	return rc;
+}
+
+static int method_assign_bridge_static(sd_bus_message *call, void *data,
+					 sd_bus_error *berr)
+{
+	const char *peer_path = NULL;
+	dest_phys desti, *dest = &desti;
+	struct link *link = data;
+	struct ctx *ctx = link->ctx;
+	struct peer *peer = NULL;
+	uint8_t eid, pool_start, pool_size;
+	char msg[200];
+	int msg_len = 0;
+	int rc;
+
+	dest->ifindex = link->ifindex;
+	memset(msg, '\0', sizeof(msg));
+
+	if (dest->ifindex <= 0)
+		return sd_bus_error_setf(berr, SD_BUS_ERROR_INVALID_ARGS,
+			"Unknown MCTP interface");
+
+	rc = message_read_hwaddr(call, dest);
+	if (rc < 0)
+		goto err;
+
+	rc = sd_bus_message_read(call, "y", &eid);
+	if (rc < 0)
+		goto err;
+
+	rc = sd_bus_message_read(call, "y", &pool_start);
+	if (rc < 0)
+		goto err;
+
+	rc = sd_bus_message_read(call, "y", &pool_size);
+	if (rc < 0)
+		goto err;
+
+	rc = validate_dest_phys(ctx, dest);
+	if (rc < 0)
+		return sd_bus_error_setf(berr, SD_BUS_ERROR_INVALID_ARGS,
+			"Bad physaddr");
+
+	if (pool_start < eid) {
+		return sd_bus_error_setf(berr, SD_BUS_ERROR_INVALID_ARGS,
+						"Bridge Pool EIDs must start after Bridge's EID");
+	}
+
+	peer = find_peer_by_phys(ctx, dest);
+	if (peer) {
+		if (peer->eid != eid) {
+			return sd_bus_error_setf(berr, SD_BUS_ERROR_INVALID_ARGS,
+				"Already assigned a different Bridge EID, Downstream EIDs must be already allocated");
+		}
+
+		// Return existing record.
+		peer_path = path_from_peer(peer);
+		if (!peer_path)
+			goto err;
+
+		return sd_bus_reply_method_return(call, "yisbs",
+			peer->eid, peer->net, peer_path, 0, "Already assigned same Bridge EID, Downstream EIDs must be already allocated");
+	} else {
+		uint32_t netid;
+
+		// is the requested EID already in use? if so, reject
+		netid = mctp_nl_net_byindex(ctx->nl, dest->ifindex);
+		peer = find_peer_by_addr(ctx, eid, netid);
+		if (peer) {
+			return sd_bus_error_setf(berr, SD_BUS_ERROR_INVALID_ARGS,
+				"Address in use");
+		}
+	}
+
+	rc = endpoint_assign_eid(ctx, berr, dest, &peer, eid);
+	if (rc < 0) {
+		goto err;
+	}
+
+	peer_path = path_from_peer(peer);
+	msg_len = snprintf(msg, sizeof(msg), "Statically assigned Bridge %d", peer->eid);
+	if (!peer_path) {
+		goto err;
+	}
+
+	if (peer->pool_size > 0) {
+		peer->pool_start = pool_start;
+		peer->pool_size = min(peer->pool_size, pool_size);
+
+		//call for Allocate EndpointID
+	}
+
+	return sd_bus_reply_method_return(call, "yisbs",
+		peer->eid, peer->net, peer_path, 1, msg);
 err:
 	set_berr(ctx, rc, berr);
 	return rc;
@@ -2835,6 +2955,20 @@ static const sd_bus_vtable bus_link_owner_vtable[] = {
 		SD_BUS_PARAM(path)
 		SD_BUS_PARAM(found),
 		method_learn_endpoint,
+		0),
+	SD_BUS_METHOD_WITH_NAMES("AssignBridgeStatic",
+		"ayyyy",
+		SD_BUS_PARAM(physaddr)
+		SD_BUS_PARAM(eid)
+		SD_BUS_PARAM(pool_start)
+		SD_BUS_PARAM(pool_size),
+		"yisbs",
+		SD_BUS_PARAM(eid)
+		SD_BUS_PARAM(net)
+		SD_BUS_PARAM(path)
+		SD_BUS_PARAM(new)
+		SD_BUS_PARAM(msg),
+		method_assign_bridge_static,
 		0),
 	SD_BUS_VTABLE_END,
 
