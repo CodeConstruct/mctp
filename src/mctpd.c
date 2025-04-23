@@ -206,7 +206,7 @@ struct ctx {
 	struct peer **peers;
 	size_t num_peers;
 
-	struct net *nets;
+	struct net **nets;
 	size_t num_nets;
 
 	// Timeout in usecs for a MCTP response
@@ -265,8 +265,8 @@ static struct net *lookup_net(struct ctx *ctx, int net)
 {
 	size_t i;
 	for (i = 0; i < ctx->num_nets; i++)
-		if (ctx->nets[i].net == net)
-			return &ctx->nets[i];
+		if (ctx->nets[i]->net == net)
+			return ctx->nets[i];
 	return NULL;
 }
 
@@ -3382,7 +3382,7 @@ static int mctpd_dbus_enumerate(sd_bus *bus, const char* path,
 	for (i = 0; i < ctx->num_nets; i++) {
 		num_nodes++;
 		for (size_t t = 0; t < 256; t++) {
-			if (ctx->nets[i].peers[t]) {
+			if (ctx->nets[i]->peers[t]) {
 				// .../mctp1/networks/<NetID>/endpoints object
 				num_nodes++;
 				break;
@@ -3431,7 +3431,7 @@ static int mctpd_dbus_enumerate(sd_bus *bus, const char* path,
 
 	for (i = 0; i < ctx->num_nets; i++) {
 		// .../mctp1/networks/<NetId>
-		nodes[j] = net_path(ctx->nets[i].net);
+		nodes[j] = net_path(ctx->nets[i]->net);
 		if (nodes[j] == NULL) {
 			rc = -ENOMEM;
 			goto out;
@@ -3439,11 +3439,11 @@ static int mctpd_dbus_enumerate(sd_bus *bus, const char* path,
 		j++;
 
 		for (size_t t = 0; t < 256; t++) {
-			if (!ctx->nets[i].peers[t]) {
+			if (!ctx->nets[i]->peers[t]) {
 				continue;
 			}
 			// .../mctp1/networks/<NetID>/endpoints object
-			nodes[j] = root_endpoints_path(ctx->nets[i].net);
+			nodes[j] = root_endpoints_path(ctx->nets[i]->net);
 			if (nodes[j] == NULL) {
 				rc = -ENOMEM;
 				goto out;
@@ -3644,25 +3644,27 @@ static int prune_old_nets(struct ctx *ctx)
 
 	// iterate and discard unused nets
 	for (i = 0, j = 0; i < ctx->num_nets; i++) {
+		struct net *net = ctx->nets[i];
+
 		bool found = false;
 		for (size_t n = 0; n < num_list && !found; n++)
-			if (net_list[n] == ctx->nets[i].net)
+			if (net_list[n] == net->net)
 				found = true;
 
 		if (found) {
 			// isn't stale
-			memmove(&ctx->nets[j], &ctx->nets[i], sizeof(*ctx->nets));
+			ctx->nets[j] = net;
 			j++;
 		} else {
 			// stale, don't keep
 			for (size_t p = 0; p < 256; p++) {
 				// Sanity check that no peers are used
-				if (ctx->nets[i].peers[p]) {
+				if (ctx->nets[i]->peers[p]) {
 					warnx("BUG: stale entry for eid %zd in deleted net %d",
-						p, ctx->nets[i].net);
+						p, net->net);
 				}
 			}
-			emit_net_removed(ctx, ctx->nets[i].net);
+			emit_net_removed(ctx, net->net);
 		}
 	}
 	ctx->num_nets = j;
@@ -3875,26 +3877,35 @@ static int add_interface_local(struct ctx *ctx, int ifindex)
 	return 0;
 }
 
-static int add_net(struct ctx *ctx, int net)
+static int add_net(struct ctx *ctx, int net_id)
 {
-	struct net *n, *tmp;
-	if (lookup_net(ctx, net) != NULL) {
-		warnx("BUG: add_net for existing net %d", net);
+	struct net *net, **tmp;
+
+	if (lookup_net(ctx, net_id) != NULL) {
+		warnx("BUG: add_net for existing net %d", net_id);
 		return -EEXIST;
 	}
-	tmp = realloc(ctx->nets, sizeof(struct net) * (ctx->num_nets+1));
+
+	net = malloc(sizeof(*net));
+	if (!net) {
+		warn("failed to allocate net");
+		return -ENOMEM;
+	}
+	memset(net, 0, sizeof(*net));
+
+	tmp = realloc(ctx->nets, sizeof(struct net *) * (ctx->num_nets+1));
 	if (!tmp) {
 		warnx("Out of memory");
 		return -ENOMEM;
 	}
 	ctx->nets = tmp;
+	ctx->nets[ctx->num_nets] = net;
 	ctx->num_nets++;
 
 	// Initialise the new entry
-	n = &ctx->nets[ctx->num_nets-1];
-	memset(n, 0x0, sizeof(*n));
-	n->net = net;
-	emit_net_added(ctx, net);
+	net->net = net_id;
+
+	emit_net_added(ctx, net_id);
 	return 0;
 }
 
@@ -4009,8 +4020,8 @@ static int setup_testing(struct ctx *ctx) {
 			ctx->num_nets = 0;
 			return -ENOMEM;
 		}
-		ctx->nets[0].net = 10;
-		ctx->nets[1].net = 12;
+		ctx->nets[0]->net = 10;
+		ctx->nets[1]->net = 12;
 
 		rc = add_peer(ctx, &dest, 7, 10, &peer);
 		if (rc < 0) {
