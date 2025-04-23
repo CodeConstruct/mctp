@@ -51,6 +51,7 @@
 #define OPENBMC_IFACE_COMMON_UUID "xyz.openbmc_project.Common.UUID"
 #define CC_MCTP_DBUS_IFACE_INTERFACE "au.com.codeconstruct.MCTP.Interface1"
 #define CC_MCTP_DBUS_NETWORK_INTERFACE "au.com.codeconstruct.MCTP.Network1"
+#define ERROR_BRIDGE_START_EID 0
 
 // an arbitrary constant for use with sd_id128_get_machine_app_specific()
 static const char *mctpd_appid = "67369c05-4b97-4b7e-be72-65cfd8639f10";
@@ -190,6 +191,10 @@ struct peer {
 		uint8_t endpoint_type;
 		uint8_t medium_spec;
 	} recovery;
+
+	// Pool size
+	uint8_t pool_size;
+	uint8_t pool_start;
 };
 
 struct ctx {
@@ -1364,7 +1369,7 @@ static int endpoint_query_phys(struct ctx *ctx, const dest_phys *dest,
 }
 
 /* returns -ECONNREFUSED if the endpoint returns failure. */
-static int endpoint_send_set_endpoint_id(const struct peer *peer,
+static int endpoint_send_set_endpoint_id(struct peer *peer,
 					 mctp_eid_t *new_eidp)
 {
 	struct sockaddr_mctp_ext addr;
@@ -1430,9 +1435,11 @@ static int endpoint_send_set_endpoint_id(const struct peer *peer,
 
 	alloc = resp->status & 0x3;
 	if (alloc != 0) {
-		// TODO for bridges
-		warnx("%s requested allocation pool, unimplemented",
-		      dest_phys_tostr(dest));
+		peer->pool_size = resp->eid_pool_size;
+		if (peer->ctx->verbose) {
+			warnx("%s requested allocation of pool size = %d",
+			      dest_phys_tostr(dest), peer->pool_size);
+		}
 	}
 
 	rc = 0;
@@ -1662,7 +1669,7 @@ static int peer_set_mtu(struct ctx *ctx, struct peer *peer, uint32_t mtu)
 
 static int endpoint_assign_eid(struct ctx *ctx, sd_bus_error *berr,
 			       const dest_phys *dest, struct peer **ret_peer,
-			       mctp_eid_t static_eid)
+			       mctp_eid_t static_eid, bool check_bridge)
 {
 	mctp_eid_t e, new_eid;
 	struct net *n = NULL;
@@ -1693,20 +1700,61 @@ static int endpoint_assign_eid(struct ctx *ctx, sd_bus_error *berr,
 		for (e = eid_alloc_min; e <= eid_alloc_max; e++) {
 			if (n->peers[e])
 				continue;
+			// todo: check reservation of eid e from other bridge
+			if (check_bridge) {
+				// check for max sized pool as well from e + 1
+				int max_pool_size = ctx->max_pool_size;
+				int num_downstream_eid = 0;
+				if (e + 1 + max_pool_size > eid_alloc_max) {
+					warnx("Ran out of EIDs for net %d, allocating %s",
+					      net, dest_phys_tostr(dest));
+					sd_bus_error_setf(berr,
+							  SD_BUS_ERROR_FAILED,
+							  "Ran out of EIDs");
+					return -EADDRNOTAVAIL;
+				}
+				for (; num_downstream_eid < max_pool_size &&
+				       (e + num_downstream_eid + 1) <=
+					       eid_alloc_max;) {
+					//todo: add check reservation of EID from another bridge
+					if (n->peers[e + num_downstream_eid +
+						     1] != NULL) {
+						break;
+					}
+					num_downstream_eid++;
+				}
+				if (num_downstream_eid == max_pool_size) {
+					rc = add_peer(ctx, dest, e, net, &peer);
+					if (rc < 0)
+						return rc;
+					peer->pool_size = max_pool_size;
+					peer->pool_start = e + 1;
+					break;
+				} else {
+					e = e + num_downstream_eid;
+					continue;
+				}
+			}
 			rc = add_peer(ctx, dest, e, net, &peer);
 			if (rc < 0)
 				return rc;
 			break;
 		}
-		if (e > eid_alloc_max) {
-			warnx("Ran out of EIDs for net %d, allocating %s", net,
-			      dest_phys_tostr(dest));
+		if (e > eid_alloc_max ||
+		    (check_bridge && (e == eid_alloc_max))) {
+			if (check_bridge) {
+				warnx("Ran out of EIDs for net %d, allocating Bridge at %s ",
+				      net, dest_phys_tostr(dest));
+			} else {
+				warnx("Ran out of EIDs for net %d, allocating %s",
+				      net, dest_phys_tostr(dest));
+			}
 			sd_bus_error_setf(berr, SD_BUS_ERROR_FAILED,
 					  "Ran out of EIDs");
 			return -EADDRNOTAVAIL;
 		}
 	}
-
+	// todo: reserve eids from peer->pool_start -> peer->pool_start + max_pool_size
 	rc = endpoint_send_set_endpoint_id(peer, &new_eid);
 	if (rc == -ECONNREFUSED)
 		sd_bus_error_setf(
@@ -1716,8 +1764,10 @@ static int endpoint_assign_eid(struct ctx *ctx, sd_bus_error *berr,
 		remove_peer(peer);
 		return rc;
 	}
-
+	// todo: release extra reserved eids (max_pool_size - peer->pool_size)
 	if (new_eid != peer->eid) {
+		//todo: release all earlier reserved eid from
+		// peer->pool_start-> peer->pool_start + max_pool_size
 		rc = change_peer_eid(peer, new_eid);
 		if (rc == -EEXIST) {
 			sd_bus_error_setf(
@@ -1728,6 +1778,33 @@ static int endpoint_assign_eid(struct ctx *ctx, sd_bus_error *berr,
 		if (rc < 0) {
 			remove_peer(peer);
 			return rc;
+		}
+		// check again for available peer->pool_size from new peer->eid + 1
+		if (check_bridge && (peer->pool_size > 0)) {
+			if (peer->eid + peer->pool_size > eid_alloc_max) {
+				warnx("Error: Bridge assigned eid %d but ran out of EIDs for its downstream endpoints",
+				      peer->eid);
+				sd_bus_error_setf(berr, SD_BUS_ERROR_FAILED,
+						  "Ran out of EIDs");
+				peer->pool_start =
+					ERROR_BRIDGE_START_EID; // using reserved eid for error
+			} else {
+				for (e = peer->eid + 1;
+				     e <= (peer->eid + peer->pool_size); e++) {
+					//add: check reservation of eid e from other bridge
+					if (n->peers[e] != NULL) {
+						warnx("Error: Bridge assigned eid %d but failed to find contigous pool",
+						      peer->eid);
+						peer->pool_start =
+							ERROR_BRIDGE_START_EID; // using reserved eid for error
+						break;
+					}
+				}
+				if (peer->pool_start !=
+				    ERROR_BRIDGE_START_EID) {
+					// todo : reserved eids from new peer->eid + 1 -> peer->eid + peer->pool_size
+				}
+			}
 		}
 	}
 
@@ -2117,7 +2194,7 @@ static int method_setup_endpoint(sd_bus_message *call, void *data,
 	}
 
 	/* Set Endpoint ID */
-	rc = endpoint_assign_eid(ctx, berr, dest, &peer, 0);
+	rc = endpoint_assign_eid(ctx, berr, dest, &peer, 0, false);
 	if (rc < 0)
 		goto err;
 
@@ -2170,13 +2247,17 @@ static int method_assign_endpoint(sd_bus_message *call, void *data,
 						  peer->net, peer_path, 0);
 	}
 
-	rc = endpoint_assign_eid(ctx, berr, dest, &peer, 0);
+	rc = endpoint_assign_eid(ctx, berr, dest, &peer, 0, true);
 	if (rc < 0)
 		goto err;
 
 	peer_path = path_from_peer(peer);
 	if (!peer_path)
 		goto err;
+
+	if (peer->pool_size > 0 && peer->pool_start != ERROR_BRIDGE_START_EID) {
+		// Call for Allocate EndpointID
+	}
 
 	return sd_bus_reply_method_return(call, "yisb", peer->eid, peer->net,
 					  peer_path, 1);
@@ -2242,7 +2323,7 @@ static int method_assign_endpoint_static(sd_bus_message *call, void *data,
 		}
 	}
 
-	rc = endpoint_assign_eid(ctx, berr, dest, &peer, eid);
+	rc = endpoint_assign_eid(ctx, berr, dest, &peer, eid, false);
 	if (rc < 0) {
 		goto err;
 	}
@@ -2652,7 +2733,8 @@ static int peer_endpoint_recover(sd_event_source *s, uint64_t usec,
 			 * after which we immediately return as there's no old peer state left to
 			 * maintain.
 			 */
-			return endpoint_assign_eid(ctx, NULL, &phys, &peer, 0);
+			return endpoint_assign_eid(ctx, NULL, &phys, &peer, 0,
+						   false);
 		}
 
 		/* Confirmation of the same device, apply its already allocated EID */
