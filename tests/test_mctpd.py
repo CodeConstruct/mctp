@@ -623,3 +623,16 @@ async def test_change_network(dbus, mctpd):
         '/au/com/codeconstruct/mctp1/networks/2/endpoints/8'
     )
     assert ep is not None
+
+""" Delete our only interface """
+async def test_del_interface_last(dbus, mctpd):
+    iface = mctpd.system.interfaces[0]
+    await mctpd.system.del_interface(iface)
+
+    # interface should be gone
+    with pytest.raises(asyncdbus.errors.DBusError):
+        await mctpd_mctp_iface_obj(dbus, iface)
+
+    # network should be gone
+    with pytest.raises(asyncdbus.errors.DBusError):
+        await mctpd_mctp_network_obj(dbus, iface.net)

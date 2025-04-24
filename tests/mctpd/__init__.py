@@ -115,6 +115,11 @@ class System:
         if self.nl:
             await self.nl.notify_newlink(iface)
 
+    async def del_interface(self, iface):
+        self.interfaces.remove(iface)
+        if self.nl:
+            await self.nl.notify_dellink(iface)
+
     async def add_address(self, address):
         self.addresses.append(address)
         if self.nl:
@@ -731,6 +736,9 @@ class NLSocket(BaseSocket):
 
     async def notify_newlink(self, link):
         await self._notify_link(link, rtnl.RTM_NEWLINK)
+
+    async def notify_dellink(self, link):
+        await self._notify_link(link, rtnl.RTM_DELLINK)
 
     def _format_addr(self, msg, addr):
         msg['index'] = addr.iface.ifindex
