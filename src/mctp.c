@@ -260,7 +260,7 @@ static int display_ifaddr(struct ctx *ctx, void *p, size_t len) {
 
 	eid = 0;
 	mctp_get_rtnlmsg_attr_u8(IFA_LOCAL, rta, rta_len, &eid);
-	printf("eid %d net %d dev %s\n", eid,
+	printf("eid %d net %u dev %s\n", eid,
 		mctp_nl_net_byindex(ctx->nl, msg->ifa_index),
 		mctp_nl_if_byindex(ctx->nl, msg->ifa_index));
 
@@ -305,7 +305,7 @@ static int display_neighbour(struct ctx *ctx, void *p, size_t len)
 	eid = 0;
 	mctp_get_rtnlmsg_attr_u8(NDA_DST, rta, rta_len, &eid);
 	lladdr = mctp_get_rtnlmsg_attr(NDA_LLADDR, rta, rta_len, &lladdr_len);
-	printf("eid %d net %d dev %s lladdr 0x", eid,
+	printf("eid %d net %u dev %s lladdr 0x", eid,
 		mctp_nl_net_byindex(ctx->nl, msg->ndm_ifindex),
 		mctp_nl_if_byindex(ctx->nl, msg->ndm_ifindex));
 	if (lladdr && lladdr_len)

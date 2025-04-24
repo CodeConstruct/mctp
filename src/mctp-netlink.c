@@ -23,7 +23,7 @@
 struct linkmap_entry {
 	int	ifindex;
 	char	ifname[IFNAMSIZ+1];
-	int	net;
+	uint32_t net;
 	bool 	up;
 
 	uint32_t min_mtu;
@@ -56,7 +56,7 @@ static int fill_local_addrs(mctp_nl *nl);
 static int fill_linkmap(mctp_nl *nl);
 static void sort_linkmap(mctp_nl *nl);
 static int linkmap_add_entry(mctp_nl *nl, struct ifinfomsg *info,
-		const char *ifname, size_t ifname_len, int net,
+		const char *ifname, size_t ifname_len, uint32_t net,
 		bool up, uint32_t min_mtu, uint32_t max_mtu);
 static struct linkmap_entry *entry_byindex(const mctp_nl *nl,
 	int index);
@@ -941,7 +941,7 @@ const char* mctp_nl_if_byindex(const mctp_nl *nl, int index)
 	return NULL;
 }
 
-int mctp_nl_net_byindex(const mctp_nl *nl, int index)
+uint32_t mctp_nl_net_byindex(const mctp_nl *nl, int index)
 {
 	struct linkmap_entry *entry = entry_byindex(nl, index);
 	if (entry)
@@ -1034,20 +1034,17 @@ static struct linkmap_entry *entry_byindex(const mctp_nl *nl,
 	return NULL;
 }
 
-int *mctp_nl_net_list(const mctp_nl *nl, size_t *ret_num_nets)
+uint32_t *mctp_nl_net_list(const mctp_nl *nl, size_t *ret_num_nets)
 {
+	uint32_t *nets = NULL;
 	size_t i, j;
-	int *nets = NULL;
 
 	*ret_num_nets = 0;
 	// allocation may be oversized, that's OK
-	nets = malloc(sizeof(int) * nl->linkmap_count);
+	nets = calloc(sizeof(uint32_t), nl->linkmap_count);
 	if (!nets) {
 		warnx("Allocation failed");
 		return NULL;
-	}
-	for (j = 0; j < nl->linkmap_count; j++) {
-		nets[j] = -1;
 	}
 
 	for (i = 0; i < nl->linkmap_count; i++) {
@@ -1056,7 +1053,7 @@ int *mctp_nl_net_list(const mctp_nl *nl, size_t *ret_num_nets)
 				// Already added
 				break;
 			}
-			if (nets[j] == -1) {
+			if (nets[j] == 0) {
 				// End of the list, add it
 				nets[j] = nl->linkmap[i].net;
 				(*ret_num_nets)++;
@@ -1084,7 +1081,7 @@ int *mctp_nl_if_list(const mctp_nl *nl, size_t *ret_num_ifs)
 }
 
 static int linkmap_add_entry(mctp_nl *nl, struct ifinfomsg *info,
-		const char *ifname, size_t ifname_len, int net,
+		const char *ifname, size_t ifname_len, uint32_t net,
 		bool up, uint32_t min_mtu, uint32_t max_mtu)
 {
 	struct linkmap_entry *entry;

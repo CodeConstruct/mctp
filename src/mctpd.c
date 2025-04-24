@@ -77,7 +77,7 @@ typedef struct dest_phys dest_phys;
 /* Table of per-network details */
 struct net {
 	struct ctx *ctx;
-	int net;
+	uint32_t net;
 
 	// EID mappings, NULL is unused.
 	struct peer *peers[256];
@@ -134,7 +134,7 @@ struct link {
 };
 
 struct peer {
-	int net;
+	uint32_t net;
 	mctp_eid_t eid;
 
 	// multiple local interfaces can have the same eid,
@@ -243,10 +243,11 @@ static int peer_neigh_update(struct peer *peer, uint16_t type);
 
 static int add_interface_local(struct ctx *ctx, int ifindex);
 static int del_interface(struct link *link);
-static int change_net_interface(struct ctx *ctx, int ifindex, int old_net);
-static int add_local_eid(struct ctx *ctx, int net, int eid);
-static int del_local_eid(struct ctx *ctx, int net, int eid);
-static int add_net(struct ctx *ctx, int net);
+static int change_net_interface(struct ctx *ctx, int ifindex,
+				uint32_t old_net);
+static int add_local_eid(struct ctx *ctx, uint32_t net, int eid);
+static int del_local_eid(struct ctx *ctx, uint32_t net, int eid);
+static int add_net(struct ctx *ctx, uint32_t net);
 static void del_net(struct net *net);
 static int add_interface(struct ctx *ctx, int ifindex);
 
@@ -267,7 +268,7 @@ mctp_eid_t local_addr(const struct ctx *ctx, int ifindex) {
 
 static void* dfree(void* ptr);
 
-static struct net *lookup_net(struct ctx *ctx, int net)
+static struct net *lookup_net(struct ctx *ctx, uint32_t net)
 {
 	size_t i;
 	for (i = 0; i < ctx->num_nets; i++)
@@ -295,7 +296,8 @@ static struct peer *find_peer_by_phys(struct ctx *ctx, const dest_phys *dest)
 	return NULL;
 }
 
-static struct peer *find_peer_by_addr(struct ctx *ctx, mctp_eid_t eid, int net)
+static struct peer *find_peer_by_addr(struct ctx *ctx, mctp_eid_t eid,
+				      uint32_t net)
 {
 	struct net *n = lookup_net(ctx, net);
 
@@ -352,7 +354,8 @@ static const char* ext_addr_tostr(const struct sockaddr_mctp_ext *addr)
 	}
 
 	write_hex_addr(addr->smctp_haddr, addr->smctp_halen, hex, sizeof(hex));
-	snprintf(buf, l, "sockaddr_mctp_ext eid %d net %d type 0x%02x if %d hw len %hhu 0x%s",
+	snprintf(buf, l,
+		 "sockaddr_mctp_ext eid %d net %u type 0x%02x if %d hw len %hhu 0x%s",
 		addr->smctp_base.smctp_addr.s_addr,
 		addr->smctp_base.smctp_network,
 		addr->smctp_base.smctp_type,
@@ -370,7 +373,7 @@ static const char* peer_tostr(const struct peer *peer)
 	if (!str) {
 		return "Out of memory";
 	}
-	snprintf(str, l, "peer eid %d net %d phys %s state %d",
+	snprintf(str, l, "peer eid %d net %u phys %s state %d",
 		peer->eid, peer->net, dest_phys_tostr(&peer->phys),
 		peer->state);
 	return dfree(str);
@@ -385,7 +388,7 @@ static const char* peer_tostr_short(const struct peer *peer)
 	if (!str) {
 		return "Out of memory";
 	}
-	snprintf(str, l, "%d:%d", peer->net, peer->eid);
+	snprintf(str, l, "%u:%d", peer->net, peer->eid);
 	return dfree(str);
 }
 
@@ -876,7 +879,7 @@ out:
 	return 0;
 }
 
-static int listen_control_msg(struct ctx *ctx, int net)
+static int listen_control_msg(struct ctx *ctx, uint32_t net)
 {
 	struct sockaddr_mctp addr = { 0 };
 	int rc, sd = -1, val;
@@ -969,7 +972,8 @@ static int cb_listen_monitor(sd_event_source *s, int sd, uint32_t revents,
 
 		case MCTP_NL_ADD_EID:
 		{
-			int net = mctp_nl_net_byindex(ctx->nl, c->ifindex);
+			uint32_t net = mctp_nl_net_byindex(ctx->nl,
+							   c->ifindex);
 			rc = add_local_eid(ctx, net, c->eid);
 			any_error |= (rc < 0);
 		}
@@ -1344,14 +1348,14 @@ out:
 /* Returns the newly added peer.
  * Error is -EEXISTS if it exists */
 static int add_peer(struct ctx *ctx, const dest_phys *dest, mctp_eid_t eid,
-	int net, struct peer **ret_peer)
+	uint32_t net, struct peer **ret_peer)
 {
 	struct peer *peer, **tmp;
 	struct net *n;
 
 	n = lookup_net(ctx, net);
 	if (!n) {
-		warnx("BUG: %s Bad net %d", __func__, net);
+		warnx("BUG: %s Bad net %u", __func__, net);
 		return -EPROTO;
 	}
 
@@ -1399,12 +1403,13 @@ static int add_peer(struct ctx *ctx, const dest_phys *dest, mctp_eid_t eid,
 static int check_peer_struct(const struct peer *peer, const struct net *n)
 {
 	if (n->net != peer->net) {
-		warnx("BUG: Mismatching net %d vs peer net %d", n->net, peer->net);
+		warnx("BUG: Mismatching net %d vs peer net %u",
+		      n->net, peer->net);
 		return -1;
 	}
 
 	if (peer != n->peers[peer->eid]) {
-		warnx("BUG: Bad peer: net %d eid %02x", peer->net, peer->eid);
+		warnx("BUG: Bad peer: net %u eid %02x", peer->net, peer->eid);
 		return -1;
 	}
 
@@ -1420,7 +1425,7 @@ static int remove_peer(struct peer *peer)
 
 	n = lookup_net(peer->ctx, peer->net);
 	if (!n) {
-		warnx("BUG: %s: Bad net %d", __func__, peer->net);
+		warnx("BUG: %s: Bad net %u", __func__, peer->net);
 		return -EPROTO;
 	}
 
@@ -1453,7 +1458,7 @@ static int remove_peer(struct peer *peer)
 	}
 
 	if (idx == ctx->num_peers) {
-		warnx("BUG: peer net %d, eid %d not found on remove!",
+		warnx("BUG: peer net %u, eid %d not found on remove!",
 		      peer->net, peer->eid);
 		return -EPROTO;
 	}
@@ -1497,7 +1502,7 @@ static int change_peer_eid(struct peer *peer, mctp_eid_t new_eid)
 
 	n = lookup_net(peer->ctx, peer->net);
 	if (!n) {
-		warnx("BUG: %s: Bad net %d", __func__, peer->net);
+		warnx("BUG: %s: Bad net %u", __func__, peer->net);
 		return -EPROTO;
 	}
 
@@ -1553,11 +1558,11 @@ static int endpoint_assign_eid(struct ctx *ctx, sd_bus_error *berr, const dest_p
 	mctp_eid_t e, new_eid;
 	struct net *n = NULL;
 	struct peer *peer = NULL;
-	int net;
+	uint32_t net;
 	int rc;
 
 	net = mctp_nl_net_byindex(ctx->nl, dest->ifindex);
-	if (net <= 0) {
+	if (!net) {
 		warnx("BUG: No net known for ifindex %d", dest->ifindex);
 		return -EPROTO;
 	}
@@ -1719,7 +1724,7 @@ static int get_endpoint_peer(struct ctx *ctx, sd_bus_error *berr,
 	mctp_eid_t eid;
 	uint8_t ep_type, medium_spec;
 	struct peer *peer = NULL;
-	int net;
+	uint32_t net;
 	int rc;
 
 	*ret_peer = NULL;
@@ -1731,7 +1736,7 @@ static int get_endpoint_peer(struct ctx *ctx, sd_bus_error *berr,
 		*ret_cur_eid = eid;
 
 	net = mctp_nl_net_byindex(ctx->nl, dest->ifindex);
-	if (net < 1) {
+	if (!net) {
 		return -EPROTO;
 	}
 
@@ -1921,7 +1926,7 @@ static int validate_dest_phys(struct ctx *ctx, const dest_phys *dest)
 		warnx("bad ifindex %d", dest->ifindex);
 		return -EINVAL;
 	}
-	if (mctp_nl_net_byindex(ctx->nl, dest->ifindex) <= 0) {
+	if (!mctp_nl_net_byindex(ctx->nl, dest->ifindex)) {
 		warnx("unknown ifindex %d", dest->ifindex);
 		return -EINVAL;
 	}
@@ -2103,7 +2108,7 @@ static int method_assign_endpoint_static(sd_bus_message *call, void *data,
 		return sd_bus_reply_method_return(call, "yisb",
 			peer->eid, peer->net, peer_path, 0);
 	} else {
-		int netid;
+		uint32_t netid;
 
 		// is the requested EID already in use? if so, reject
 		netid = mctp_nl_net_byindex(ctx->nl, dest->ifindex);
@@ -3370,7 +3375,7 @@ int request_dbus(struct ctx *ctx)
 
 
 // Deletes one local EID.
-static int del_local_eid(struct ctx *ctx, int net, int eid)
+static int del_local_eid(struct ctx *ctx, uint32_t net, int eid)
 {
 	struct peer *peer = NULL;
 	int rc;
@@ -3406,8 +3411,8 @@ static int del_local_eid(struct ctx *ctx, int net, int eid)
 // Remove nets that have no interfaces
 static int prune_old_nets(struct ctx *ctx)
 {
-	int *net_list;
 	size_t i, j, num_list;
+	uint32_t *net_list;
 
 	net_list = mctp_nl_net_list(ctx->nl, &num_list);
 
@@ -3475,11 +3480,11 @@ static int del_interface(struct link *link)
 }
 
 // Moves remote peers from old->new net.
-static int change_net_interface(struct ctx *ctx, int ifindex, int old_net)
+static int change_net_interface(struct ctx *ctx, int ifindex, uint32_t old_net)
 {
 	int rc;
 	struct net *old_n, *new_n;
-	int new_net = mctp_nl_net_byindex(ctx->nl, ifindex);
+	uint32_t new_net = mctp_nl_net_byindex(ctx->nl, ifindex);
 
 	if (ctx->verbose) {
 		fprintf(stderr, "Moving interface #%d %s from net %d -> %d\n",
@@ -3554,7 +3559,7 @@ static int change_net_interface(struct ctx *ctx, int ifindex, int old_net)
 }
 
 // Adds one local EID
-static int add_local_eid(struct ctx *ctx, int net, int eid)
+static int add_local_eid(struct ctx *ctx, uint32_t net, int eid)
 {
 	struct peer *peer;
 	int rc;
@@ -3612,8 +3617,8 @@ static int add_interface_local(struct ctx *ctx, int ifindex)
 {
 	mctp_eid_t *eids = NULL;
 	struct link *link = NULL;
+	uint32_t net;
 	size_t num;
-	int net;
 	int rc;
 
 	if (ctx->verbose) {
@@ -3654,7 +3659,7 @@ static int add_interface_local(struct ctx *ctx, int ifindex)
 	return 0;
 }
 
-static int add_net(struct ctx *ctx, int net_id)
+static int add_net(struct ctx *ctx, uint32_t net_id)
 {
 	struct net *net, **tmp;
 
@@ -3714,8 +3719,8 @@ static int add_interface(struct ctx *ctx, int ifindex)
 {
 	int rc;
 
-	int net = mctp_nl_net_byindex(ctx->nl, ifindex);
-	if (net <= 0) {
+	uint32_t net = mctp_nl_net_byindex(ctx->nl, ifindex);
+	if (!net) {
 		warnx("Can't find link index %d\n", ifindex);
 		return -ENOENT;
 	}
