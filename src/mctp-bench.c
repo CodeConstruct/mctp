@@ -300,6 +300,10 @@ static int mctp_bench_send(struct mctp_bench_send_args send_args)
 
         hdr = (struct msg_header *)buf;
         hdr->magic = MAGIC_VAL;
+
+	/* will not match a sensible sendto() return value */
+	last_rc = 0;
+
         while (1) {
                 addr.smctp_tag = tag;
                 hdr->seq_no = sequence;
