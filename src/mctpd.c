@@ -254,6 +254,7 @@ static int del_local_eid(struct ctx *ctx, uint32_t net, int eid);
 static int add_net(struct ctx *ctx, uint32_t net);
 static void del_net(struct net *net);
 static int add_interface(struct ctx *ctx, int ifindex);
+static int endpoint_allocate_eid(struct peer *peer);
 
 static const sd_bus_vtable bus_endpoint_obmc_vtable[];
 static const sd_bus_vtable bus_endpoint_cc_vtable[];
@@ -2257,6 +2258,18 @@ static int method_assign_endpoint(sd_bus_message *call, void *data,
 
 	if (peer->pool_size > 0 && peer->pool_start != ERROR_BRIDGE_START_EID) {
 		// Call for Allocate EndpointID
+		rc = endpoint_allocate_eid(peer);
+		if (rc < 0) {
+			warnx("Failed to allocate downstream EIDs");
+		} else {
+			if (peer->ctx->verbose) {
+				fprintf(stderr,
+					"Downstream EIDs assigned from %d to %d : pool size %d\n",
+					peer->pool_start,
+					peer->pool_start + peer->pool_size - 1,
+					peer->pool_size);
+			}
+		}
 	}
 
 	return sd_bus_reply_method_return(call, "yisb", peer->eid, peer->net,
@@ -4098,6 +4111,114 @@ static void setup_config_defaults(struct ctx *ctx)
 static void free_config(struct ctx *ctx)
 {
 	free(ctx->config_filename);
+}
+
+static int endpoint_send_allocate_endpoint_id(struct peer *peer,
+					      mctp_eid_t eid_start,
+					      uint8_t eid_pool_size,
+					      mctp_ctrl_cmd_alloc_eid_op oper,
+					      uint8_t *allocated_pool_size,
+					      mctp_eid_t *allocated_pool_start)
+{
+	struct sockaddr_mctp_ext addr;
+	struct mctp_ctrl_cmd_alloc_eid req = { 0 };
+	struct mctp_ctrl_resp_alloc_eid *resp = NULL;
+	uint8_t *buf = NULL;
+	size_t buf_size;
+	uint8_t iid, stat;
+	int rc;
+
+	iid = mctp_next_iid(peer->ctx);
+	req.ctrl_hdr.rq_dgram_inst = RQDI_REQ | iid;
+	req.ctrl_hdr.command_code = MCTP_CTRL_CMD_ALLOCATE_ENDPOINT_IDS;
+	req.alloc_eid_op = (uint8_t)(oper & 0x03);
+	req.pool_size = eid_pool_size;
+	req.start_eid = eid_start;
+	rc = endpoint_query_peer(peer, MCTP_CTRL_HDR_MSG_TYPE, &req,
+				 sizeof(req), &buf, &buf_size, &addr);
+	if (rc < 0)
+		goto out;
+
+	rc = mctp_ctrl_validate_response(buf, buf_size, sizeof(*resp),
+					 peer_tostr_short(peer), iid,
+					 MCTP_CTRL_CMD_ALLOCATE_ENDPOINT_IDS);
+
+	if (rc)
+		goto out;
+
+	resp = (void *)buf;
+	if (!resp) {
+		warnx("%s Invalid response Buffer\n", __func__);
+		return -ENOMEM;
+	}
+
+	stat = resp->status & 0x03;
+	if (stat == 0x00) {
+		if (peer->ctx->verbose) {
+			fprintf(stderr, "%s Allocation Accepted \n", __func__);
+		}
+	} else if (stat == 0x1) {
+		warnx("%s Allocation was rejected as it was Allocated by other bus \n",
+		      __func__);
+	}
+
+	*allocated_pool_size = resp->eid_pool_size;
+	*allocated_pool_start = resp->eid_set;
+	if (peer->ctx->verbose) {
+		fprintf(stderr,
+			"%s Allocated size of %d, starting from EID %d\n",
+			__func__, resp->eid_pool_size, resp->eid_set);
+	}
+
+	return 0;
+out:
+	free(buf);
+	return rc;
+}
+
+static int endpoint_allocate_eid(struct peer *peer)
+{
+	uint8_t allocated_pool_size = 0;
+	mctp_eid_t allocated_pool_start = 0;
+	int rc = 0;
+
+	/* Find pool sized contiguous unused eids to allocate on the bridge. */
+	if (peer->pool_start >= eid_alloc_max || peer->pool_start <= 0) {
+		warnx("%s Invalid Pool start %d", __func__, peer->pool_start);
+		return -1;
+	}
+	rc = endpoint_send_allocate_endpoint_id(
+		peer, peer->pool_start, peer->pool_size,
+		mctp_ctrl_cmd_alloc_eid_alloc_eid, &allocated_pool_size,
+		&allocated_pool_start);
+	if (rc) {
+		warnx("%s failed to allocate endpoints, returned %s %d\n",
+		      __func__, strerror(-rc), rc);
+	} else {
+		peer->pool_size = allocated_pool_size;
+		peer->pool_start = allocated_pool_start;
+
+		// add Gateway route for all Bridge's downstream eids
+		struct mctp_fq_addr gw_addr;
+		gw_addr.net = peer->net;
+		gw_addr.eid = peer->eid;
+		rc = mctp_nl_route_add(peer->ctx->nl, peer->pool_start,
+				       peer->pool_size - 1, peer->phys.ifindex,
+				       &gw_addr, peer->mtu);
+		if (rc < 0) {
+			warnx("Failed to add Gateway route for EID %d: %s",
+			      gw_addr.eid, strerror(-rc));
+			// If the route already exists, continue polling
+			if (rc != -EEXIST) {
+				return rc;
+			} else {
+				rc = 0;
+			}
+		}
+		// Polling logic for downstream EID
+	}
+
+	return rc;
 }
 
 int main(int argc, char **argv)
