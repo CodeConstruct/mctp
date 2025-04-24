@@ -224,7 +224,6 @@ struct ctx {
 
 	// Verbose logging
 	bool verbose;
-	bool testing;
 };
 
 static int emit_endpoint_added(const struct peer *peer);
@@ -2394,128 +2393,6 @@ static int unpublish_peer(struct peer *peer) {
 	return 0;
 }
 
-
-// Testing code
-static int method_sendto_phys(sd_bus_message *call, void *data, sd_bus_error *berr)
-{
-	int rc;
-	const char *ifname = NULL;
-	struct sockaddr_mctp_ext addr;
-	dest_phys desti, *dest = &desti;
-	struct ctx *ctx = data;
-	uint8_t type;
-	uint8_t *resp = NULL;
-	const uint8_t *req = NULL;
-	size_t req_len, resp_len;
-	sd_bus_message *m = NULL;
-
-	rc = sd_bus_message_read(call, "s", &ifname);
-	if (rc < 0)
-		goto err;
-
-	rc = message_read_hwaddr(call, dest);
-	if (rc < 0)
-		goto err;
-
-	rc = sd_bus_message_read(call, "y", &type);
-	if (rc < 0)
-		goto err;
-
-	rc = sd_bus_message_read_array(call, 'y', (const void**)&req, &req_len);
-	if (rc < 0)
-		goto err;
-
-	dest->ifindex = mctp_nl_ifindex_byname(ctx->nl, ifname);
-	if (dest->ifindex <= 0)
-		return sd_bus_error_setf(berr, SD_BUS_ERROR_INVALID_ARGS,
-			"Unknown MCTP ifname '%s'", ifname);
-
-	rc = validate_dest_phys(ctx, dest);
-	if (rc < 0)
-		return sd_bus_error_setf(berr, SD_BUS_ERROR_INVALID_ARGS,
-			"Bad physaddr");
-
-	rc = endpoint_query_phys(ctx, dest, type, req,
-		req_len, &resp, &resp_len, &addr);
-	if (rc < 0)
-		goto err;
-
-	dfree(resp);
-	rc = sd_bus_message_new_method_return(call, &m);
-	if (rc < 0)
-		goto err;
-
-	rc = sd_bus_message_append(m, "yi",
-		addr.smctp_base.smctp_addr,
-		addr.smctp_base.smctp_network);
-	if (rc < 0)
-		goto err;
-
-	rc = sd_bus_message_append_array(m, 'y', resp, resp_len);
-	if (rc < 0)
-		goto err;
-
-	rc = sd_bus_send(sd_bus_message_get_bus(m), m, NULL);
-	sd_bus_message_unref(m);
-	return rc;
-
-err:
-	set_berr(ctx, rc, berr);
-	return rc;
-}
-
-static int method_sendto_addr(sd_bus_message *call, void *data, sd_bus_error *berr)
-{
-	int rc;
-	struct sockaddr_mctp_ext req_addr = {0};
-	struct sockaddr_mctp_ext addr;
-	struct ctx *ctx = data;
-	uint8_t *req = NULL, *resp = NULL;
-	size_t req_len, resp_len;
-	sd_bus_message *m = NULL;
-
-	req_addr.smctp_base.smctp_family = AF_MCTP;
-	req_addr.smctp_base.smctp_tag = MCTP_TAG_OWNER;
-
-	rc = sd_bus_message_read(call, "y", &req_addr.smctp_base.smctp_addr);
-	if (rc < 0)
-		goto err;
-
-	rc = sd_bus_message_read(call, "i", &req_addr.smctp_base.smctp_network);
-	if (rc < 0)
-		goto err;
-
-	rc = sd_bus_message_read(call, "y", &req_addr.smctp_base.smctp_type);
-	if (rc < 0)
-		goto err;
-
-	rc = sd_bus_message_read_array(call, 'y', (const void**)&req, &req_len);
-	if (rc < 0)
-		goto err;
-
-	rc = endpoint_query_addr(ctx, &req_addr, false, req, req_len,
-		&resp, &resp_len, &addr);
-	if (rc < 0)
-		goto err;
-
-	dfree(resp);
-	rc = sd_bus_message_new_method_return(call, &m);
-	if (rc < 0)
-		goto err;
-
-	rc = sd_bus_message_append_array(m, 'y', resp, resp_len);
-	if (rc < 0)
-		goto err;
-
-	rc = sd_bus_send(sd_bus_message_get_bus(m), m, NULL);
-	sd_bus_message_unref(m);
-	return rc;
-
-err:
-	set_berr(ctx, rc, berr);
-	return rc;
-}
-
 static int method_endpoint_remove(sd_bus_message *call, void *data,
 	sd_bus_error *berr)
 {
@@ -2796,59 +2673,6 @@ err:
 	return rc;
 }
 
-// Testing code
-static int cb_test_timer(sd_event_source *s, uint64_t t, void* data)
-{
-	sd_bus_message *call = data;
-	// sd_bus *bus = sd_bus_message_get_bus(call);
-	int rc;
-
-	rc = sd_bus_reply_method_return(call, "i", (int)(t % 11111));
-	sd_bus_message_unref(call);
-	if (rc < 0)
-		return rc;
-	return 0;
-}
-
-static int method_test_timer_async(sd_bus_message *call, void *data, sd_bus_error *sderr)
-{
-	int rc;
-	int seconds;
-	struct ctx *ctx = data;
-
-	rc = sd_bus_message_read(call, "i", &seconds);
-	if (rc < 0)
-		return rc;
-
-	rc = sd_event_add_time_relative(ctx->event, NULL,
-		CLOCK_MONOTONIC, 1000000ULL * seconds, 0,
-		cb_test_timer, call);
-	if (rc < 0)
-		return rc;
-
-	sd_bus_message_ref(call);
-
-	// reply later
-	return 1;
-}
-
-// Testing code
-static int method_test_timer(sd_bus_message *call, void *data, sd_bus_error *sderr)
-{
-	int rc;
-	int seconds;
-	// struct struct ctx *ctx = data;
-
-	rc = sd_bus_message_read(call, "i", &seconds);
-	if (rc < 0)
-		return rc;
-
-	sleep(seconds);
-
-	rc = sd_bus_reply_method_return(call, "i", seconds*10);
-	return rc;
-}
-
 static const sd_bus_vtable bus_link_owner_vtable[] = {
 	SD_BUS_VTABLE_START(0),
 
@@ -2898,48 +2722,6 @@ static const sd_bus_vtable bus_link_owner_vtable[] = {
 		0),
 	SD_BUS_VTABLE_END,
 
-};
-
-static const sd_bus_vtable testing_vtable[] = {
-	SD_BUS_VTABLE_START(0),
-	SD_BUS_METHOD_WITH_NAMES("SendToPhys",
-		"sayyay",
-		SD_BUS_PARAM(ifname)
-		SD_BUS_PARAM(physaddr)
-		SD_BUS_PARAM(type)
-		SD_BUS_PARAM(req),
-		"yiay",
-		SD_BUS_PARAM(eid)
-		SD_BUS_PARAM(net)
-		SD_BUS_PARAM(resp),
-		method_sendto_phys,
-		0),
-	SD_BUS_METHOD_WITH_NAMES("SendTo",
-		"yiyay",
-		SD_BUS_PARAM(eid)
-		SD_BUS_PARAM(net)
-		SD_BUS_PARAM(type)
-		SD_BUS_PARAM(req),
-		"ay",
-		SD_BUS_PARAM(resp),
-		method_sendto_addr,
-		0),
-	SD_BUS_METHOD_WITH_NAMES("TestTimer",
-		"i",
-		SD_BUS_PARAM(seconds),
-		"i",
-		SD_BUS_PARAM(secondsx10),
-		method_test_timer,
-		0),
-	SD_BUS_METHOD_WITH_NAMES("TestTimerAsync",
-		"i",
-		SD_BUS_PARAM(seconds),
-		"i",
-		SD_BUS_PARAM(secondsx10),
-		method_test_timer_async,
-		0),
-
-	SD_BUS_VTABLE_END
 };
 
 static int bus_endpoint_get_prop(sd_bus *bus,
@@ -3297,17 +3079,6 @@ static int emit_interface_removed(struct link *link)
 	}
 
 	return rc;
-}
-
-static int bus_mctpd_find(sd_bus *bus, const char *path,
-	const char *interface, void *userdata, void **ret_found,
-	sd_bus_error *ret_error)
-{
-	if (strcmp(path, MCTP_DBUS_PATH) == 0) {
-		*ret_found = userdata;
-		return 1;
-	}
-	return 0;
 }
 
 static int setup_bus(struct ctx *ctx)
@@ -3835,80 +3606,10 @@ static void free_nets(struct ctx *ctx)
 	free(ctx->nets);
 }
 
-static int setup_testing(struct ctx *ctx) {
-	dest_phys dest = {};
-	struct peer *peer;
-	int rc;
-
-	if (!ctx->testing)
-		return 0;
-
-	warnx("Running in development testing mode. Not safe for production");
-
-	if (ctx->num_nets > 0) {
-		warnx("Not populating fake MCTP nets, real ones exist");
-	} else {
-		warnx("Populating fake MCTP nets");
-
-		add_net(ctx, 10);
-		add_net(ctx, 12);
-
-		rc = add_peer(ctx, &dest, 7, 10, &peer);
-		if (rc < 0) {
-			warnx("%s failed add_peer, %s", __func__, strerror(-rc));
-			return rc;
-		}
-		peer->state = REMOTE;
-		peer->uuid = malloc(16);
-		sd_id128_randomize((void*)peer->uuid);
-		publish_peer(peer, false);
-
-		rc = add_peer(ctx, &dest, 7, 12, &peer);
-		if (rc < 0) {
-			warnx("%s failed add_peer, %s", __func__, strerror(-rc));
-			return rc;
-		}
-		peer->state = REMOTE;
-		peer->num_message_types = 3;
-		peer->message_types = malloc(3);
-		peer->message_types[0] = 0x00;
-		peer->message_types[1] = 0x03;
-		peer->message_types[2] = 0x04;
-		publish_peer(peer, false);
-
-		rc = add_peer(ctx, &dest, 9, 12, &peer);
-		if (rc < 0) {
-			warnx("%s failed add_peer, %s", __func__, strerror(-rc));
-			return rc;
-		}
-		peer->state = REMOTE;
-		peer->uuid = malloc(16);
-		// a UUID that remains constant across runs
-		memcpy(peer->uuid, ctx->uuid, 16);
-		publish_peer(peer, false);
-	}
-
-	/* Add extra interface with test methods */
-	rc = sd_bus_add_fallback_vtable(ctx->bus, NULL,
-					MCTP_DBUS_PATH,
-					CC_MCTP_DBUS_IFACE_TESTING,
-					testing_vtable,
-					bus_mctpd_find,
-					ctx);
-	if (rc < 0) {
-		warnx("Failed testing dbus object");
-		return rc;
-	}
-
-
-	return 0;
-}
-
 static void print_usage(struct ctx *ctx)
 {
-	fprintf(stderr, "mctpd [-v] [-N] [-c FILE]\n");
+	fprintf(stderr, "mctpd [-v] [-c FILE]\n");
 	fprintf(stderr, "      -v verbose\n");
-	fprintf(stderr, "      -N testing mode. Not safe for production\n");
 	fprintf(stderr, "      -c FILE read config from FILE\n");
 }
 
@@ -3917,7 +3618,6 @@ static int parse_args(struct ctx *ctx, int argc, char **argv)
 	struct option options[] = {
 		{ .name = "help", .has_arg = no_argument, .val = 'h' },
 		{ .name = "verbose", .has_arg = no_argument, .val = 'v' },
-		{ .name = "testing", .has_arg = no_argument, .val = 'N' },
 		{ .name = "config", .has_arg = required_argument, .val = 'c' },
 		{ 0 },
 	};
@@ -3929,9 +3629,6 @@ static int parse_args(struct ctx *ctx, int argc, char **argv)
 			break;
 
 		switch (c) {
-		case 'N':
-			ctx->testing = true;
-			break;
 		case 'v':
 			ctx->verbose = true;
 			break;
@@ -4132,20 +3829,15 @@ int main(int argc, char **argv)
 	}
 
 	rc = setup_nets(ctx);
-	if (rc < 0 && !ctx->testing)
+	if (rc < 0)
 		return 1;
 
 	// TODO add net argument?
 	rc = listen_control_msg(ctx, MCTP_NET_ANY);
 	if (rc < 0) {
 		warnx("Error in listen, returned %s %d", strerror(-rc), rc);
-		if (!ctx->testing)
-			return 1;
-	}
-
-	rc = setup_testing(ctx);
-	if (rc < 0)
 		return 1;
+	}
 
 	// All setup must be complete by here, we might immediately
 	// get requests from waiting clients.

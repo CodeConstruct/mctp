@@ -28,6 +28,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
    `au.com.codecontruct.MCTP.Interface1` interface, allowing link-to-network
    lookups
 
+### Removed
+
+1. mctpd: Test mode (`-N`) has been removed, as we have a more comprehensive
+   test environment with the python mctpd wrapper code.
+
+   To run using the wrapper:
+
+       (cd obj; python3 ../tests/mctpd/__init__.py)
+
 ## [2.1] - 2024-12-16
 
 ### Fixed
