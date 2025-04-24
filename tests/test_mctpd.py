@@ -25,6 +25,37 @@ DBUS_PROPERTIES_I = 'org.freedesktop.DBus.Properties'
 
 MCTPD_TRECLAIM = 5
 
+async def _introspect_path_recursive(dbus, path, node_set):
+    node_set.add(path)
+    dups = set()
+
+    obj = await dbus.get_proxy_object('au.com.codeconstruct.MCTP1', path)
+    iface = await obj.get_interface('org.freedesktop.DBus.Introspectable')
+    data = await iface.call_introspect()
+    node = asyncdbus.introspection.Node.parse(data)
+
+    for subnode in node.nodes:
+        if path == '/':
+            subnode_path = '/' + subnode.name
+        else:
+            subnode_path = path + '/' + subnode.name
+
+        if subnode_path in node_set:
+            dups.add(subnode_path)
+
+        d = await _introspect_path_recursive(dbus, subnode_path, node_set)
+        dups.update(d)
+
+    return dups
+
+""" Test that the dbus object tree is sensible: we can introspect all
+objects, and that there are no duplicates
+"""
+async def test_enumerate(dbus, mctpd):
+    dups = await _introspect_path_recursive(dbus, '/', set())
+    assert not dups
+
+
 """ Test the SetupEndpoint dbus call
 
 Using the default system & network ojects, call SetupEndpoint on our mock
