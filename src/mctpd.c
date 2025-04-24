@@ -2969,18 +2969,16 @@ static int bus_network_get_prop(sd_bus *bus,
 		sd_bus_message *reply, void *userdata, sd_bus_error *berr)
 {
 	struct net *net = userdata;
-	int rc = 0;
-	mctp_eid_t *eids = (mctp_eid_t *)malloc(256);
-	size_t num;
-
+	int rc = -ENOENT;
 
 	if (strcmp(property, "LocalEIDs") == 0) {
-		rc = find_local_eids_by_net(net, &num, eids);
-		if (rc < 0) {
-			return -ENOENT;
-		}
+		mctp_eid_t *eids = dfree(malloc(256));
+		size_t num;
 
-		dfree(eids);
+		rc = find_local_eids_by_net(net, &num, eids);
+		if (rc < 0)
+			return -ENOENT;
+
 		rc = sd_bus_message_append_array(reply, 'y', eids, num);
 	}
 
