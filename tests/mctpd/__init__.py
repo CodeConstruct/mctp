@@ -2,6 +2,7 @@
 import array
 import errno
 import os
+import signal
 import socket
 import struct
 import sys
@@ -1006,8 +1007,11 @@ class MctpdWrapper:
         res = None
         if self.proc:
             self.proc.terminate()
-            res = await self.proc_rc_recv_chan.receive()
+            res = await self.wait_mctpd()
         return res
+
+    async def wait_mctpd(self):
+        return await self.proc_rc_recv_chan.receive()
 
     async def mctpd_proc(self, nursery, send_chan,
             task_status = trio.TASK_STATUS_IGNORED):
@@ -1066,6 +1070,11 @@ async def default_sysnet():
 
     return Sysnet(system, network)
 
+async def sighandler():
+    with trio.open_signal_receiver(signal.SIGINT) as sigs:
+        async for sig in sigs:
+            return
+
 async def main():
     import asyncdbus
     binary = None
@@ -1075,7 +1084,9 @@ async def main():
         sysnet = await default_sysnet()
         mctpd = MctpdWrapper(dbus, sysnet, binary=binary)
         async with trio.open_nursery() as nursery:
+            nursery.start_soon(sighandler)
             await mctpd.start_mctpd(nursery)
+            await mctpd.wait_mctpd()
 
 if __name__ == '__main__':
     trio.run(main)
