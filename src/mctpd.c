@@ -3316,14 +3316,21 @@ static int setup_bus(struct ctx *ctx)
 	if (rc < 0)
 		goto out;
 
+	rc = sigaddset(&sigset, SIGINT);
+	if (rc < 0)
+		goto out;
+
 	rc = sigprocmask(SIG_BLOCK, &sigset, NULL);
 	if (rc < 0)
 		goto out;
 
 	rc = sd_event_add_signal(ctx->event, NULL, SIGTERM, NULL, NULL);
-	if (rc < 0) {
+	if (rc < 0)
 		goto out;
-	}
+
+	rc = sd_event_add_signal(ctx->event, NULL, SIGINT, NULL, NULL);
+	if (rc < 0)
+		goto out;
 
 	rc = sd_bus_default(&ctx->bus);
 	if (rc < 0) {
