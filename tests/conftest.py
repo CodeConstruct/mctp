@@ -25,4 +25,5 @@ async def mctpd(nursery, dbus, sysnet):
     m = fake_mctpd.MctpdWrapper(dbus, sysnet)
     await m.start_mctpd(nursery)
     yield m
-    m.stop_mctpd()
+    res = await m.stop_mctpd()
+    assert res == 0

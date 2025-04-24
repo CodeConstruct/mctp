@@ -999,13 +999,18 @@ class MctpdWrapper:
 
     async def start_mctpd(self, nursery):
         nursery.start_soon(self.handle_control, nursery)
-        self.proc = await nursery.start(self.mctpd_proc, nursery)
+        (send_chan, self.proc_rc_recv_chan) = trio.open_memory_channel(1)
+        self.proc = await nursery.start(self.mctpd_proc, nursery, send_chan)
 
-    def stop_mctpd(self):
+    async def stop_mctpd(self):
+        res = None
         if self.proc:
             self.proc.terminate()
+            res = await self.proc_rc_recv_chan.receive()
+        return res
 
-    async def mctpd_proc(self, nursery, task_status = trio.TASK_STATUS_IGNORED):
+    async def mctpd_proc(self, nursery, send_chan,
+            task_status = trio.TASK_STATUS_IGNORED):
         # We want to start the mctpd process, but not return before it's
         # ready to interact with our test via dbus.
         #
@@ -1044,7 +1049,9 @@ class MctpdWrapper:
         # process after the test has run.
         task_status.started(proc)
 
-        await proc.wait()
+        proc_rc = await proc.wait()
+
+        await send_chan.send(proc_rc)
 
 Sysnet = namedtuple('SysNet', ['system', 'network'])
 
