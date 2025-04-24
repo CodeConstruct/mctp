@@ -1476,6 +1476,19 @@ static int remove_peer(struct peer *peer)
 	return 0;
 }
 
+static void free_peers(struct ctx *ctx)
+{
+	for (size_t i = 0; i < ctx->num_peers; i++) {
+		struct peer *peer = ctx->peers[i];
+		free(peer->message_types);
+		free(peer->uuid);
+		free(peer->path);
+		free(peer);
+	}
+
+	free(ctx->peers);
+}
+
 /* Returns -EEXIST if the new_eid is already used */
 static int change_peer_eid(struct peer *peer, mctp_eid_t new_eid)
 {
@@ -3419,6 +3432,7 @@ static int prune_old_nets(struct ctx *ctx)
 			del_net(net);
 		}
 	}
+	free(net_list);
 	ctx->num_nets = j;
 	return 0;
 }
@@ -3688,6 +3702,7 @@ static void del_net(struct net *net)
 	net->slot = NULL;
 	net->net = 0;
 	free(net->path);
+	free(net);
 }
 
 static int add_interface(struct ctx *ctx, int ifindex)
@@ -3777,6 +3792,15 @@ static int setup_nets(struct ctx *ctx)
 	}
 
 	return 0;
+}
+
+static void free_nets(struct ctx *ctx)
+{
+	for (size_t i = 0; i < ctx->num_nets; i++) {
+		del_net(ctx->nets[i]);
+	}
+
+	free(ctx->nets);
 }
 
 static int setup_testing(struct ctx *ctx) {
@@ -4103,6 +4127,15 @@ int main(int argc, char **argv)
 		warnx("Error in loop, returned %s %d", strerror(-rc), rc);
 		return 1;
 	}
+
+	sd_bus_flush(ctx->bus);
+	sd_bus_close(ctx->bus);
+
+	mctp_nl_close(ctx->nl);
+	mctp_nl_close(ctx->nl_query);
+
+	free_peers(ctx);
+	free_nets(ctx);
 
 	return 0;
 }
