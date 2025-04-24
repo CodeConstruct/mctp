@@ -2999,6 +2999,12 @@ static int bus_link_get_prop(sd_bus *bus,
 
 	if (link->published && strcmp(property, "Role") == 0) {
 		rc = sd_bus_message_append(reply, "s", roles[link->role].dbus_val);
+	} else if (strcmp(property, "NetworkId") == 0) {
+		uint32_t  net = mctp_nl_net_byindex(link->ctx->nl,
+						    link->ifindex);
+
+		rc = sd_bus_message_append_basic(reply, 'u', &net);
+
 	} else {
 		sd_bus_error_setf(berr, SD_BUS_ERROR_INVALID_ARGS,
 				"Unknown property.");
@@ -3166,6 +3172,11 @@ static const sd_bus_vtable bus_link_vtable[] = {
 			"s",
 			bus_link_get_prop,
 			bus_link_set_prop,
+			0,
+			SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
+	SD_BUS_PROPERTY("NetworkId",
+			"u",
+			bus_link_get_prop,
 			0,
 			SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
 	SD_BUS_VTABLE_END
@@ -3482,14 +3493,21 @@ static int del_interface(struct link *link)
 // Moves remote peers from old->new net.
 static int change_net_interface(struct ctx *ctx, int ifindex, uint32_t old_net)
 {
-	int rc;
-	struct net *old_n, *new_n;
 	uint32_t new_net = mctp_nl_net_byindex(ctx->nl, ifindex);
+	struct net *old_n, *new_n;
+	struct link *link;
+	int rc;
 
 	if (ctx->verbose) {
 		fprintf(stderr, "Moving interface #%d %s from net %d -> %d\n",
 			ifindex, mctp_nl_if_byindex(ctx->nl, ifindex),
 			old_net, new_net);
+	}
+
+	link = mctp_nl_get_link_userdata(ctx->nl, ifindex);
+	if (!link) {
+		warnx("No link for ifindex %d", ifindex);
+		return -EPROTO;
 	}
 
 	if (new_net == 0) {
@@ -3515,6 +3533,10 @@ static int change_net_interface(struct ctx *ctx, int ifindex, uint32_t old_net)
 			return rc;
 		new_n = lookup_net(ctx, new_net);
 	}
+
+	sd_bus_emit_properties_changed(ctx->bus, link->path,
+				       CC_MCTP_DBUS_IFACE_INTERFACE,
+				       "NetworkId", NULL);
 
 	for (size_t i = 0; i < ctx->num_peers; i++) {
 		struct peer *peer = ctx->peers[i];

@@ -24,6 +24,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 3. tests: the fake mctp environment can now be run standalone, allowing
    experimentation with different system and network configurations
 
+4. mctpd: Add a `NetworkId` property to the
+   `au.com.codecontruct.MCTP.Interface1` interface, allowing link-to-network
+   lookups
+
 ## [2.1] - 2024-12-16
 
 ### Fixed

@@ -47,6 +47,7 @@ interface:
 ```
 NAME                                 TYPE      SIGNATURE RESULT/VALUE FLAGS
 au.com.codeconstruct.MCTP.Interface1 interface -         -            -
+.NetworkId                           property  u         1            emits-change
 .Role                                property  s         "BusOwner"   emits-change writable
 ```
 
@@ -64,6 +65,9 @@ this to configure the initial MCTP state of the platform.
 When the interface `Role` is `BusOwner`, the MCTP interface object will
 also host the `BusOwner1` dbus interface:
 
+The `NetworkId` property represents the network on which this interface is
+present.
+
 ### Bus-owner interface: `au.com.codeconstruct.MCTP.BusOwner1` interface
 
 This interface exposes bus-owner level functions, on each interface object that
@@ -72,6 +76,7 @@ represents the bus-owner side of a transport.
 ```
 NAME                                 TYPE      SIGNATURE RESULT/VALUE FLAGS
 au.com.codeconstruct.MCTP.Interface1 interface -         -            -
+.NetworkId                           property  u         1            emits-change
 .Role                                property  s         "BusOwner"   emits-change writable
 au.com.codeconstruct.MCTP.BusOwner1  interface -         -            -
 .AssignEndpoint                      method    ay        yisb         -
