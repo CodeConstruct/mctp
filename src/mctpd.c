@@ -53,6 +53,7 @@
 #define CC_MCTP_DBUS_IFACE_INTERFACE "au.com.codeconstruct.MCTP.Interface1"
 #define CC_MCTP_DBUS_NETWORK_INTERFACE "au.com.codeconstruct.MCTP.Network1"
 
+#define BRIDGE_SETTLE_DELAY_SEC 4
 // an arbitrary constant for use with sd_id128_get_machine_app_specific()
 static const char* mctpd_appid = "67369c05-4b97-4b7e-be72-65cfd8639f10";
 
@@ -177,6 +178,11 @@ struct peer {
 		uint8_t endpoint_type;
 		uint8_t medium_spec;
 	} recovery;
+
+	// Pool size
+	uint8_t pool_size;
+	uint8_t pool_start;
+
 };
 typedef struct peer peer;
 
@@ -238,6 +244,7 @@ static int add_local_eid(ctx *ctx, int net, int eid);
 static int del_local_eid(ctx *ctx, int net, int eid);
 static int add_net(ctx *ctx, int net);
 static int add_interface(ctx *ctx, int ifindex);
+static int endpoint_allocate_eid(peer *peer);
 
 mctp_eid_t local_addr(const ctx *ctx, int ifindex) {
 	mctp_eid_t *eids, ret = 0;
@@ -1313,7 +1320,7 @@ static int endpoint_query_phys(ctx *ctx, const dest_phys *dest,
 }
 
 /* returns -ECONNREFUSED if the endpoint returns failure. */
-static int endpoint_send_set_endpoint_id(const peer *peer, mctp_eid_t *new_eid)
+static int endpoint_send_set_endpoint_id(peer *peer, mctp_eid_t *new_eid)
 {
 	struct sockaddr_mctp_ext addr;
 	struct mctp_ctrl_cmd_set_eid req = {0};
@@ -1360,9 +1367,11 @@ static int endpoint_send_set_endpoint_id(const peer *peer, mctp_eid_t *new_eid)
 
 	alloc = resp->status & 0x3;
 	if (alloc != 0) {
-		// TODO for bridges
-		warnx("%s requested allocation pool, unimplemented",
-			dest_phys_tostr(dest));
+		peer->pool_size = resp->eid_pool_size;
+		if (peer->ctx->verbose) {
+			warnx("%s requested allocation of pool size = %d",
+				dest_phys_tostr(dest), peer->pool_size);
+		}
 	}
 
 	rc = 0;
@@ -2100,6 +2109,16 @@ static int method_assign_endpoint(sd_bus_message *call, void *data, sd_bus_error
 		goto err;
 	dfree(peer_path);
 
+	/* MCTP Bridge Support */
+	/* Allocate Endopint EID while looking for pool start eid
+	 * Update pool endpoints to dbus */
+
+	 if(peer->pool_size > 0) {
+		/* new start eid will be assigned before MCTP Allocate eid control command */
+		peer->pool_start = peer->eid + 1;
+		rc = endpoint_allocate_eid(peer);
+	}
+
 	return sd_bus_reply_method_return(call, "yisb",
 		peer->eid, peer->net, peer_path, 1);
 err:
@@ -2114,7 +2133,7 @@ static int method_assign_endpoint_static(sd_bus_message *call, void *data,
 	char *peer_path = NULL;
 	peer *peer = NULL;
 	ctx *ctx = data;
-	uint8_t eid;
+	uint8_t eid, start_eid;
 	int rc;
 
 	dest->ifindex = interface_call_to_ifindex_busowner(ctx, call);
@@ -2127,6 +2146,10 @@ static int method_assign_endpoint_static(sd_bus_message *call, void *data,
 		goto err;
 
 	rc = sd_bus_message_read(call, "y", &eid);
+	if (rc < 0)
+		goto err;
+
+	rc = sd_bus_message_read(call, "y", &start_eid);
 	if (rc < 0)
 		goto err;
 
@@ -2172,6 +2195,14 @@ static int method_assign_endpoint_static(sd_bus_message *call, void *data,
 		goto err;
 	}
 	dfree(peer_path);
+
+	/* MCTP Bridge Support */
+	/* Allocate Endopint EID
+	 * Update pool endpoints to dbus */
+	if(peer->pool_size > 0) {
+		peer->pool_start = start_eid;
+		rc = endpoint_allocate_eid(peer);
+	}
 
 	return sd_bus_reply_method_return(call, "yisb",
 		peer->eid, peer->net, peer_path, 1);
@@ -2852,9 +2883,10 @@ static const sd_bus_vtable bus_owner_vtable[] = {
 		0),
 
 	SD_BUS_METHOD_WITH_NAMES("AssignEndpointStatic",
-		"ayy",
+		"ayyy",
 		SD_BUS_PARAM(physaddr)
-		SD_BUS_PARAM(eid),
+		SD_BUS_PARAM(eid)
+		SD_BUS_PARAM(start_eid),
 		"yisb",
 		SD_BUS_PARAM(eid)
 		SD_BUS_PARAM(net)
@@ -4475,6 +4507,160 @@ static void setup_config_defaults(ctx *ctx)
 {
 	ctx->mctp_timeout = 250000; // 250ms
 	ctx->default_role = ENDPOINT_ROLE_BUS_OWNER;
+}
+
+static int endpoint_send_allocate_endpoint_id(peer *peer,
+	mctp_eid_t eid_start, uint8_t eid_pool_size, mctp_ctrl_cmd_alloc_eid_op oper,
+	uint8_t *allocated_pool_size, mctp_eid_t *allocated_pool_start)
+{
+	struct sockaddr_mctp_ext addr;
+	struct mctp_ctrl_cmd_alloc_eid req = {0};
+	struct mctp_ctrl_resp_alloc_eid *resp = NULL;
+	uint8_t *buf = NULL;
+	size_t buf_size;
+	uint8_t iid, stat;
+	int rc;
+
+	iid = mctp_next_iid(peer->ctx);
+	req.ctrl_hdr.rq_dgram_inst = RQDI_REQ | iid;
+	req.ctrl_hdr.command_code = MCTP_CTRL_CMD_ALLOCATE_ENDPOINT_IDS;
+	req.alloc_eid_op = alloc_eid;
+	req.pool_size = eid_pool_size;
+	req.start_eid = eid_start;
+	rc = endpoint_query_peer(peer, MCTP_CTRL_HDR_MSG_TYPE, &req, sizeof(req),
+							&buf, &buf_size, &addr);
+	if (rc < 0)
+		goto out;
+
+	rc = mctp_ctrl_validate_response(buf, buf_size, sizeof(*resp),
+									peer_tostr_short(peer), iid,
+									MCTP_CTRL_CMD_ALLOCATE_ENDPOINT_IDS);
+
+	if (rc)
+		goto out;
+
+	resp = (void *)buf;
+	if (!resp) {
+		warnx("%s Invalid response Buffer\n", __func__);
+		return -ENOMEM;
+	}
+
+	stat = resp->status & 0x03;
+	if (stat == 0x00) {
+		if(peer->ctx->verbose) {
+			fprintf(stderr, "%s Allocation Accepted \n", __func__);
+		}
+	}
+	else if (stat == 0x1) {
+		warnx("%s Allocation was rejected as it was Allocated by other bus \n", __func__);
+	}
+
+	*allocated_pool_size = resp->eid_pool_size;
+	*allocated_pool_start = resp->eid_set;
+	if(peer->ctx->verbose) {
+		fprintf(stderr, "%s Allocated size of %d, starting from EID %d\n", __func__,
+				resp->eid_pool_size, resp->eid_set);
+	}
+
+	return 0;
+out:
+	free(buf);
+	return rc;
+}
+static int cb_populate_pool_eids(sd_event_source *s, uint64_t t, void* data)
+{
+	peer *peer = data;
+	int net = peer->net;
+	struct peer *allocated_peer = NULL;
+	dest_phys dest = peer->phys;
+	int rc;
+
+	fprintf (stderr, "Bridge Time expired, set pool eids\n");
+	for (mctp_eid_t eid = peer->pool_start;
+		eid < peer->pool_start + peer->pool_size; eid++) {
+		rc = add_peer(peer->ctx, &dest, eid, net, &allocated_peer);
+		if (rc < 0) {
+			warnx("%s failed to find peer for allocated eid %d\n",
+					__func__, eid);
+			continue;
+		}
+
+		rc = setup_added_peer(allocated_peer);
+		if (rc < 0) {
+			warnx("%s failed to setup peer for allocated eid %d\n",
+					__func__, eid);
+			continue;
+		}
+	}
+
+	return 0;
+}
+
+static mctp_eid_t get_pool_start (peer *peer, mctp_eid_t eid_start, uint8_t pool_size)
+{
+	uint8_t count = 0;
+	mctp_eid_t pool_start = eid_alloc_max;
+	net_det *n = lookup_net(peer->ctx, peer->net);
+
+	if (!n) {
+		warnx("BUG: Unknown net %d : failed to get pool start\n", peer->net);
+		return eid_alloc_max;
+	}
+
+	for (mctp_eid_t e = eid_start; e <= eid_alloc_max; e++) {
+		if (n->peeridx[e] == -1) {
+			if(pool_start == eid_alloc_max) {
+				pool_start = e;
+			}
+			count++;
+			if (count == pool_size) return pool_start;
+		} else {
+			pool_start = eid_alloc_max;
+			count = 0;
+		}
+	}
+
+	return eid_alloc_max;
+}
+
+static int endpoint_allocate_eid(peer* peer)
+{
+	uint8_t allocated_pool_size = 0;
+	mctp_eid_t allocated_pool_start = 0;
+
+	/* Find pool sized contiguous unused eids to allocate on the bridge. */
+	peer->pool_start = get_pool_start(peer, peer->pool_start, peer->pool_size);
+	if(peer->pool_start == eid_alloc_max) {
+		warnx("%s failed to find contiguous EIDs of required size", __func__);
+		return 0;
+	} else {
+		if(peer->ctx->verbose)
+			fprintf(stderr, "%s Asking for contiguous EIDs for pool with start eid : %d\n", __func__, peer->pool_start);
+	}
+
+	int rc = endpoint_send_allocate_endpoint_id(peer, peer->pool_start, peer->pool_size,
+				alloc_eid, &allocated_pool_size, &allocated_pool_start);
+	if (rc) {
+		warnx("%s failed to allocate endpoints, returned %s %d\n",
+				__func__, strerror(-rc), rc);
+	} else {
+		peer->pool_size = allocated_pool_size;
+		peer->pool_start = allocated_pool_start;
+
+		//delay for settling MCTP Bridge after allocation of downstream eid
+		uint64_t now_usec, timer_usec;
+		// Get the current time in microseconds
+		if (sd_event_now(peer->ctx->event, CLOCK_MONOTONIC, &now_usec) < 0) {
+			warnx("Failed to get current time");
+			return -1;
+		}
+		timer_usec = now_usec + BRIDGE_SETTLE_DELAY_SEC * 1000000ULL;
+		rc = sd_event_add_time(peer->ctx->event, NULL,
+				CLOCK_MONOTONIC, timer_usec, 0,
+				cb_populate_pool_eids, peer);
+	}
+
+	return 0;
 }
 
 int main(int argc, char **argv)

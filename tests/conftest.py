@@ -248,12 +248,13 @@ class MCTPControlCommand(MCTPCommand):
         return bytes([flags, self.cmd]) + self.data
 
 class Endpoint:
-    def __init__(self, iface, lladdr, ep_uuid = None, eid = 0, types = None):
+    def __init__(self, iface, lladdr, ep_uuid = None, eid = 0, types = None, pool_size = 0):
         self.iface = iface
         self.lladdr = lladdr
         self.uuid = ep_uuid or uuid.uuid1()
         self.eid = eid
         self.types = types or [0]
+        self.pool_size = pool_size
         # keyed by (type, type-specific-instance)
         self.commands = {}
 
@@ -291,6 +292,10 @@ class Endpoint:
                 (op, eid) = data[2:]
                 self.eid = eid
                 data = bytes(hdr + [0x00, 0x00, self.eid, 0x00])
+                if (self.pool_size):
+                    data = bytes(hdr + [0x00, 0x01, self.eid, self.pool_size])
+                else:
+                    data = bytes(hdr + [0x00, 0x00, self.eid, 0x00])
                 await sock.send(raddr, data)
 
             elif opcode == 2:
@@ -307,6 +312,12 @@ class Endpoint:
                 # Get Message Type Support
                 types = self.types
                 data = bytes(hdr + [0x00, len(types)] + types)
+                await sock.send(raddr, data)
+
+            elif opcode == 8:
+                # Allocate Enpoint IDs
+                (_, pool_st) = data[3:]
+                data = bytes(hdr + [0x00, 0x00, self.pool_size, pool_st])
                 await sock.send(raddr, data)
 
             else:
@@ -343,9 +354,9 @@ class Network:
     def add_endpoint(self, endpoint):
         self.endpoints.append(endpoint)
 
-    def lookup_endpoint(self, iface, lladdr):
+    def lookup_endpoint(self, iface, lladdr, eid):
         for ep in self.endpoints:
-            if ep.iface == iface and ep.lladdr == lladdr:
+            if ep.iface == iface and ep.lladdr == lladdr and (eid == ep.eid or not eid):
                 return ep
         return None
 
@@ -565,7 +576,7 @@ class MCTPSocket(BaseSocket):
         if phys is None:
             return
 
-        ep = self.network.lookup_endpoint(*phys)
+        ep = self.network.lookup_endpoint(*phys, a.eid)
         if ep is None:
             return
 
@@ -1026,8 +1037,8 @@ Sysnet = namedtuple('SysNet', ['system', 'network'])
 
 """Simple system & network.
 
-Contains one interface (lladdr 0x10, local EID 8), and one endpoint (lladdr
-0x1d), that reports support for MCTP control and PLDM.
+Contains two interface (lladdr 0x10, local EID 8), (lladdr 0x11, local EID 10) with one endpoint (lladdr
+0x1d), and MCTP bridge (lladdr 0x1e, pool size 2), that reports support for MCTP control and PLDM.
 """
 @pytest.fixture
 async def sysnet():
@@ -1038,6 +1049,12 @@ async def sysnet():
 
     network = Network()
     network.add_endpoint(Endpoint(iface, bytes([0x1d]), types = [0, 1]))
+
+    # new interface for MCTP Bridge device
+    bridge_iface = System.Interface('mctp1', 2, 2, bytes([0x11]), 68, 254, True)
+    await system.add_interface(bridge_iface)
+    await system.add_address(System.Address(bridge_iface, 10))
+    network.add_endpoint(Endpoint(bridge_iface, bytes([0x1e]), types=[0, 1], pool_size= 0x2))
 
     return Sysnet(system, network)
 
