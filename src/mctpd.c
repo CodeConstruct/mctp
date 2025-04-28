@@ -1515,8 +1515,10 @@ static int remove_peer(struct peer *peer)
 }
 
 /* Returns -EEXIST if the new_eid is already used */
-static int change_peer_eid(struct peer *peer, mctp_eid_t new_eid) {
+static int change_peer_eid(struct peer *peer, mctp_eid_t new_eid)
+{
 	struct net *n = NULL;
+	int rc;
 
 	n = lookup_net(peer->ctx, peer->net);
 	if (!n) {
@@ -1536,7 +1538,9 @@ static int change_peer_eid(struct peer *peer, mctp_eid_t new_eid) {
 	n->peeridx[new_eid] = n->peeridx[peer->eid];
 	n->peeridx[peer->eid] = -1;
 	peer->eid = new_eid;
-	publish_peer(peer, true);
+	rc = publish_peer(peer, true);
+	if (rc)
+		return rc;
 
 	return 0;
 }
@@ -2364,6 +2368,8 @@ static int publish_peer(struct peer *peer, bool add_route)
 	if (!peer->published) {
 		peer->published = true;
 		rc = emit_endpoint_added(peer);
+		if (rc > 0)
+			rc = 0;
 	}
 
 	return rc;
@@ -4017,7 +4023,11 @@ static int change_net_interface(struct ctx *ctx, int ifindex, int old_net)
 		new_n->peeridx[peer->eid] = old_n->peeridx[peer->eid];
 		old_n->peeridx[peer->eid] = -1;
 		peer->net = new_net;
-		publish_peer(peer, true);
+		rc = publish_peer(peer, true);
+		if (rc) {
+			warnx("Error publishing new peer eid %d, net %d after change: %s",
+			      peer->eid, peer->net, strerror(-rc));
+		}
 	}
 
 	prune_old_nets(ctx);
@@ -4071,8 +4081,8 @@ static int add_local_eid(struct ctx *ctx, int net, int eid)
 	}
 
 	rc = publish_peer(peer, true);
-	if (rc < 0) {
-		warnx("BUG: Error publishing local eid %d net %d", eid, net);
+	if (rc) {
+		warnx("Error publishing local eid %d net %d", eid, net);
 	}
 	return 0;
 
