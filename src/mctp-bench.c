@@ -15,6 +15,10 @@
 
 #include "mctp.h"
 
+// Code Construct allocation
+static const uint8_t VENDOR_TYPE_BENCH[3] = { 0xcc, 0xde, 0xf1 };
+static const uint8_t MCTP_TYPE_VENDOR_PCIE = 0x7e;
+
 struct mctp_bench_send_args {
         mctp_eid_t eid;
         size_t len;
@@ -22,9 +26,10 @@ struct mctp_bench_send_args {
 };
 
 struct msg_header {
+        uint8_t vendor_prefix[sizeof(VENDOR_TYPE_BENCH)];
         uint16_t magic;
         uint32_t seq_no;
-};
+} __attribute__((packed));
 
 struct mctp_stats {
         size_t total_received_len, curr_packet_len;
@@ -114,8 +119,27 @@ static int handle_incoming_msg(struct recv_ctx *recv_ctx)
                      recv_ctx->stats.curr_packet_len);
                 return -1;
         }
+        if (recv_ctx->stats.curr_packet_len < sizeof(VENDOR_TYPE_BENCH)) {
+                warn("recv: short vendor prefix, got:%zd bytes",
+                     recv_ctx->stats.curr_packet_len);
+                return -1;
+        }
 
         hdr = (struct msg_header *)recv_ctx->buf;
+        if (memcmp(hdr->vendor_prefix, VENDOR_TYPE_BENCH,
+                sizeof(VENDOR_TYPE_BENCH)) != 0) {
+                warnx("recv: unexpected vendor prefix %02x %02x %02x",
+                        hdr->vendor_prefix[0], hdr->vendor_prefix[1],
+                        hdr->vendor_prefix[2]
+                        );
+                return -1;
+        }
+        if (recv_ctx->stats.curr_packet_len < sizeof(*hdr)) {
+                warn("recv: short message, got:%zd bytes",
+                     recv_ctx->stats.curr_packet_len);
+                return -1;
+        }
+
         if (hdr->magic != MAGIC_VAL) {
                 warnx("recv: expected magic:\"%x\", got:\"%x\"\n", MAGIC_VAL,
                       hdr->magic);
@@ -158,7 +182,7 @@ static int mctp_bench_recv()
         addr.smctp_family = AF_MCTP;
         addr.smctp_network = MCTP_NET_ANY;
         addr.smctp_addr.s_addr = MCTP_ADDR_ANY;
-        addr.smctp_type = 1;
+        addr.smctp_type = MCTP_TYPE_VENDOR_PCIE;
         addr.smctp_tag = MCTP_TAG_OWNER;
 
         recv_ctx.buf = malloc(MAX_LEN);
@@ -283,7 +307,7 @@ static int mctp_bench_send(struct mctp_bench_send_args send_args)
         addr.smctp_family = AF_MCTP;
         addr.smctp_network = send_args.net;
         addr.smctp_addr.s_addr = send_args.eid;
-        addr.smctp_type = 1;
+        addr.smctp_type = MCTP_TYPE_VENDOR_PCIE;
         printf("send: eid = %d, net = %d, type = %d, msg_len = %zu bytes\n",
                send_args.eid, send_args.net, addr.smctp_type, send_args.len);
 
