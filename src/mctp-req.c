@@ -22,16 +22,20 @@ static const int DEFAULT_NET = 1;
 static const mctp_eid_t DEFAULT_EID = 8;
 static const size_t DEFAULT_LEN = 1;
 
+// Code Construct allocation
+static const uint8_t VENDOR_TYPE_ECHO[3] = { 0xcc, 0xde, 0xf0 };
+static const uint8_t MCTP_TYPE_VENDOR_PCIE = 0x7e;
+
 /* lladdrlen != -1 to ignore ifindex/lladdr */
 static int mctp_req(unsigned int net, mctp_eid_t eid,
 	unsigned int ifindex, uint8_t *lladdr, int lladdrlen,
 	uint8_t *data, size_t len)
 {
 	struct sockaddr_mctp_ext addr;
-	unsigned char *buf, *rxbuf;
+	unsigned char *payload, *buf;
 	socklen_t addrlen;
 	int rc, sd, val;
-	size_t i;
+	size_t i, buf_len;
 
 	sd = socket(AF_MCTP, SOCK_DGRAM, 0);
 	if (sd < 0)
@@ -42,20 +46,23 @@ static int mctp_req(unsigned int net, mctp_eid_t eid,
 	addr.smctp_base.smctp_family = AF_MCTP;
 	addr.smctp_base.smctp_network = net;
 	addr.smctp_base.smctp_addr.s_addr = eid;
-	addr.smctp_base.smctp_type = 1;
+	addr.smctp_base.smctp_type = MCTP_TYPE_VENDOR_PCIE;
 	addr.smctp_base.smctp_tag = MCTP_TAG_OWNER;
-	printf("req:  sending to (net %d, eid %d), type %d\n",
+	printf("req:  sending to (net %d, eid %d), type 0x%x\n",
 		net, eid, addr.smctp_base.smctp_type);
 
-	rxbuf = malloc(len);
-	if (!rxbuf)
+	buf_len = len + sizeof(VENDOR_TYPE_ECHO);
+	buf = malloc(buf_len);
+	if (!buf)
 		err(EXIT_FAILURE, "malloc");
+	memcpy(buf, VENDOR_TYPE_ECHO, sizeof(VENDOR_TYPE_ECHO));
+	payload = &buf[sizeof(VENDOR_TYPE_ECHO)];
+
 	if (data) {
-		buf = data;
+		memcpy(payload, data, len);
 	} else {
-		buf = rxbuf;
 		for (i = 0; i < len; i++)
-			buf[i] = i & 0xff;
+			payload[i] = i & 0xff;
 	}
 
 	/* extended addressing */
@@ -76,20 +83,20 @@ static int mctp_req(unsigned int net, mctp_eid_t eid,
 
 
 	/* send data */
-	rc = sendto(sd, buf, len, 0,
+	rc = sendto(sd, buf, buf_len, 0,
 			(struct sockaddr *)&addr, addrlen);
-	if (rc != (int)len)
-		err(EXIT_FAILURE, "sendto(%zd)", len);
+	if (rc != (int)buf_len)
+		err(EXIT_FAILURE, "sendto(%zd)", buf_len);
 
 	/* receive response */
 	addrlen = sizeof(addr);
-	rc = recvfrom(sd, rxbuf, len, MSG_TRUNC,
+	rc = recvfrom(sd, buf, buf_len, MSG_TRUNC,
 			(struct sockaddr *)&addr, &addrlen);
 	if (rc < 0)
 		err(EXIT_FAILURE, "recvfrom");
-	else if ((size_t)rc != len)
+	else if ((size_t)rc != buf_len)
 		errx(EXIT_FAILURE, "unexpected length: got %d, exp %zd",
-				rc, len);
+				rc, buf_len);
 
 	if (!(addrlen == sizeof(struct sockaddr_mctp_ext) ||
 		addrlen == sizeof(struct sockaddr_mctp)))
@@ -98,24 +105,27 @@ static int mctp_req(unsigned int net, mctp_eid_t eid,
 				sizeof(struct sockaddr_mctp));
 
 
-	printf("req:  message from (net %d, eid %d) type %d len %zd: 0x%02x..\n",
+	printf("req:  message from (net %d, eid %d) type 0x%x len %zd\n",
 			addr.smctp_base.smctp_network, addr.smctp_base.smctp_addr.s_addr,
 			addr.smctp_base.smctp_type,
-			len,
-			rxbuf[0]);
+			len);
 	if (addrlen == sizeof(struct sockaddr_mctp_ext)) {
 		printf("      ext ifindex %d ha[0]=0x%02x len %hhu\n",
 			addr.smctp_ifindex,
 			addr.smctp_haddr[0], addr.smctp_halen);
 	}
 
+	if (memcmp(buf, VENDOR_TYPE_ECHO, sizeof(VENDOR_TYPE_ECHO)) != 0) {
+		errx(EXIT_FAILURE, "unexpected vendor ID");
+	}
+
 	for (i = 0; i < len; i++) {
 		uint8_t exp = data ? data[i] : i & 0xff;
-		if (rxbuf[i] != exp)
+		if (payload[i] != exp)
 			errx(EXIT_FAILURE,
 				"payload mismatch at byte 0x%zx; "
 					"sent 0x%02x, received 0x%02x",
-				i, exp, rxbuf[i]);
+				i, exp, buf[i]);
 	}
 
 	return 0;
