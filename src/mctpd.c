@@ -1301,7 +1301,7 @@ static int endpoint_send_set_endpoint_id(const struct peer *peer, mctp_eid_t *ne
 	iid = mctp_next_iid(peer->ctx);
 	req.ctrl_hdr.rq_dgram_inst = RQDI_REQ | iid;
 	req.ctrl_hdr.command_code = MCTP_CTRL_CMD_SET_ENDPOINT_ID;
-	req.operation = 0; // 00b Set EID. TODO: do we want Force?
+	req.operation = mctp_ctrl_cmd_set_eid_set_eid; // TODO: do we want Force?
 	req.eid = peer->eid;
 	rc = endpoint_query_phys(peer->ctx, dest, MCTP_CTRL_HDR_MSG_TYPE, &req,
 		sizeof(req), &buf, &buf_size, &addr);

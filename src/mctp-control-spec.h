@@ -3,6 +3,9 @@
 /* Derived from libmctp's libmctp-cmds.h */
 #pragma once
 
+#include <stdint.h>
+#include <linux/mctp.h>
+
 /*
  * Helper structs and functions for MCTP control messages.
  * See DSP0236 v1.3.0 sec. 11 for reference.
@@ -19,16 +22,15 @@ struct mctp_ctrl_resp {
 } __attribute__((packed));
 
 typedef enum {
-	set_eid,
-	force_eid,
-	reset_eid,
-	set_discovered_flag
+	mctp_ctrl_cmd_set_eid_set_eid = 0,
+	mctp_ctrl_cmd_set_eid_force_eid = 1,
+	mctp_ctrl_cmd_set_eid_reset_eid = 2,
+	mctp_ctrl_cmd_set_eid_set_discovered_flag = 3,
 } mctp_ctrl_cmd_set_eid_op;
 
 struct mctp_ctrl_cmd_set_eid {
 	struct mctp_ctrl_msg_hdr ctrl_hdr;
-	mctp_ctrl_cmd_set_eid_op operation : 2;
-	uint8_t : 6;
+	uint8_t operation;
 	uint8_t eid;
 } __attribute__((__packed__));
 
