@@ -18,7 +18,7 @@ jobs:
         run: pip install --user -r tests/requirements.txt
 
       - name: Configure mctp build
-        run: meson setup build
+        run: meson setup build -Db_sanitize=address
 
       - name: Build mctp
         run: meson compile -C build

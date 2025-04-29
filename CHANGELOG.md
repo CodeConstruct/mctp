@@ -28,6 +28,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
    `au.com.codecontruct.MCTP.Interface1` interface, allowing link-to-network
    lookups
 
+### Changed
+
+1. tests are now run with address sanitizer enabled (-fsanitize=address)
+
 ### Removed
 
 1. mctpd: Test mode (`-N`) has been removed, as we have a more comprehensive
