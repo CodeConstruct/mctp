@@ -15,6 +15,10 @@
 #include <sys/socket.h>
 #include "mctp.h"
 
+// Code Construct allocation
+static const uint8_t VENDOR_TYPE_ECHO[3] = { 0xcc, 0xde, 0xf0 };
+static const uint8_t MCTP_TYPE_VENDOR_PCIE = 0x7e;
+
 int main(void)
 {
 	struct sockaddr_mctp addr;
@@ -32,7 +36,7 @@ int main(void)
 	addr.smctp_family = AF_MCTP;
 	addr.smctp_network = MCTP_NET_ANY;
 	addr.smctp_addr.s_addr = MCTP_ADDR_ANY;
-	addr.smctp_type = 1;
+	addr.smctp_type = MCTP_TYPE_VENDOR_PCIE;
 	addr.smctp_tag = MCTP_TAG_OWNER;
 
 	buflen = 0;
@@ -70,11 +74,29 @@ int main(void)
 			continue;
 		}
 
-		printf("echo: message from (net %d, eid %d), tag %d, type %d: len %zd, 0x%02x ..., responding\n",
+		if (len < (ssize_t)sizeof(VENDOR_TYPE_ECHO)) {
+			warnx("echo: short message from (net %d, eid %d), tag %d, type 0x%x: len %zd.\n",
 				addr.smctp_network, addr.smctp_addr.s_addr,
 				addr.smctp_tag,
 				addr.smctp_type,
-				len, buf[0]);
+				len);
+			continue;
+		}
+
+		if (memcmp(buf, VENDOR_TYPE_ECHO, sizeof(VENDOR_TYPE_ECHO)) != 0) {
+			warnx("echo: unexpected vendor ID from (net %d, eid %d), tag %d, type 0x%x, len %zd.\n",
+				addr.smctp_network, addr.smctp_addr.s_addr,
+				addr.smctp_tag,
+				addr.smctp_type,
+				len);
+			continue;
+		}
+
+		printf("echo: message from (net %d, eid %d), tag %d, type 0x%x: len %zd, responding\n",
+				addr.smctp_network, addr.smctp_addr.s_addr,
+				addr.smctp_tag,
+				addr.smctp_type,
+				len);
 
 		addr.smctp_tag &= ~MCTP_TAG_OWNER;
 
