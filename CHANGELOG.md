@@ -41,6 +41,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
        (cd obj; python3 ../tests/mctpd/__init__.py)
 
+3. mctp-bench, mctp-req, mctp-echo: Message format has changed to use a
+   vendor-defined message type, rather than MCTP type 1.
+
 ## [2.1] - 2024-12-16
 
 ### Fixed
