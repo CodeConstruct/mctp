@@ -21,6 +21,10 @@ conf.set10('HAVE_LINUX_MCTP_H',
     cc.has_header('linux/mctp.h'),
     description: 'Is linux/mctp.h available?'
 )
+conf.set10('HAVE_STRUCT_MCTP_FQ_ADDR',
+    cc.has_type('struct mctp_fq_addr', prefix: '#include <linux/mctp.h>'),
+    description: 'Is struct mctp_fq_addr available?'
+)
 conf.set10('MCTPD_RECOVER_NIL_UUID',
     get_option('unsafe-recover-nil-uuid'),
     description: 'Consider a nil UUID to be valid for endpoint recovery purposes',
