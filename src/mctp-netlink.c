@@ -1152,15 +1152,20 @@ struct mctp_rtalter_msg {
 };
 static int fill_rtalter_args(struct mctp_nl *nl, struct mctp_rtalter_msg *msg,
 	struct rtattr **prta, size_t *prta_len,
-	mctp_eid_t eid, const char* linkstr)
+	mctp_eid_t eid, const char* linkstr, const struct mctp_fq_addr *gw)
 {
-	int ifindex;
 	struct rtattr *rta;
+	int ifindex = 0;
 	size_t rta_len;
 
-	ifindex = mctp_nl_ifindex_byname(nl, linkstr);
-	if (!ifindex) {
-		warnx("invalid device %s", linkstr);
+	if (linkstr) {
+		ifindex = mctp_nl_ifindex_byname(nl, linkstr);
+		if (!ifindex) {
+			warnx("invalid device %s", linkstr);
+			return -1;
+		}
+	} else if (!gw || !gw->eid) {
+		warnx("invalid route output: no device or gateway");
 		return -1;
 	}
 
@@ -1179,8 +1184,13 @@ static int fill_rtalter_args(struct mctp_nl *nl, struct mctp_rtalter_msg *msg,
 
 	msg->nh.nlmsg_len += mctp_put_rtnlmsg_attr(&rta, &rta_len,
 		RTA_DST, &eid, sizeof(eid));
-	msg->nh.nlmsg_len += mctp_put_rtnlmsg_attr(&rta, &rta_len,
-		RTA_OIF, &ifindex, sizeof(ifindex));
+	if (ifindex) {
+		msg->nh.nlmsg_len += mctp_put_rtnlmsg_attr(&rta, &rta_len,
+			RTA_OIF, &ifindex, sizeof(ifindex));
+	} else {
+		msg->nh.nlmsg_len += mctp_put_rtnlmsg_attr(&rta, &rta_len,
+			RTA_GATEWAY, gw, sizeof(*gw));
+	}
 
 	if (prta)
 		*prta = rta;
@@ -1191,13 +1201,14 @@ static int fill_rtalter_args(struct mctp_nl *nl, struct mctp_rtalter_msg *msg,
 }
 
 int mctp_nl_route_add(struct mctp_nl *nl, uint8_t eid, const char* ifname,
-		uint32_t mtu) {
+		      const struct mctp_fq_addr *gw, uint32_t mtu)
+{
 	struct mctp_rtalter_msg msg;
 	struct rtattr *rta;
 	size_t rta_len;
 	int rc;
 
-	rc = fill_rtalter_args(nl, &msg, &rta, &rta_len, eid, ifname);
+	rc = fill_rtalter_args(nl, &msg, &rta, &rta_len, eid, ifname, gw);
 	if (rc) {
 		return -1;
 	}
@@ -1226,12 +1237,13 @@ int mctp_nl_route_add(struct mctp_nl *nl, uint8_t eid, const char* ifname,
 
 }
 
-int mctp_nl_route_del(struct mctp_nl *nl, uint8_t eid, const char* ifname)
+int mctp_nl_route_del(struct mctp_nl *nl, uint8_t eid, const char* ifname,
+		      const struct mctp_fq_addr *gw)
 {
 	struct mctp_rtalter_msg msg;
 	int rc;
 
-	rc = fill_rtalter_args(nl, &msg, NULL, NULL, eid, ifname);
+	rc = fill_rtalter_args(nl, &msg, NULL, NULL, eid, ifname, gw);
 	if (rc) {
 		return rc;
 	}

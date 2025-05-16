@@ -28,6 +28,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
    `au.com.codecontruct.MCTP.Interface1` interface, allowing link-to-network
    lookups
 
+5. `mctp` now supports gateway routes
+
 ### Changed
 
 1. tests are now run with address sanitizer enabled (-fsanitize=address)
