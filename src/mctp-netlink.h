@@ -109,8 +109,9 @@ int mctp_nl_addr_del(struct mctp_nl *nl, uint8_t eid, int ifindex);
 
 /* MCTP route helper */
 int mctp_nl_route_add(struct mctp_nl *nl, uint8_t eid, int ifindex,
-		      uint32_t mtu);
-int mctp_nl_route_del(struct mctp_nl *nl, uint8_t eid, int ifindex);
+		      const struct mctp_fq_addr *gw, uint32_t mtu);
+int mctp_nl_route_del(struct mctp_nl *nl, uint8_t eid, int ifindex,
+		      const struct mctp_fq_addr *gw);
 
 /* Helpers */
 
