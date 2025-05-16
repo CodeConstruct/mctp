@@ -347,11 +347,13 @@ static void dump_rtnlmsg_neighbour(struct ctx *ctx, struct ndmsg *msg,
 
 static int display_route(struct ctx *ctx, void *p, size_t len)
 {
-	struct rtmsg *msg = p;
-	size_t rta_len, nest_len;
 	struct rtattr *rta, *rd_nest;
+	size_t rta_len, attr_len;
+	struct mctp_fq_addr gw;
+	uint32_t ifindex, mtu;
+	struct rtmsg *msg = p;
+	bool has_gw, has_if;
 	uint8_t dst;
-	uint32_t net, ifindex, mtu;
 
 	if (len < sizeof(*msg)) {
 		printf("not enough data for a rtmsg\n");
@@ -361,20 +363,31 @@ static int display_route(struct ctx *ctx, void *p, size_t len)
 	rta_len = len - sizeof(*msg);
 
 	dst = 0;
-	net = 0;
 	ifindex = 0;
 	mtu = 0;
 	mctp_get_rtnlmsg_attr_u8(RTA_DST, rta, rta_len, &dst);
-	mctp_get_rtnlmsg_attr_u32(RTA_OIF, rta, rta_len, &ifindex);
-	rd_nest = mctp_get_rtnlmsg_attr(RTA_METRICS, rta, rta_len, &nest_len);
+	rd_nest = mctp_get_rtnlmsg_attr(RTA_METRICS, rta, rta_len, &attr_len);
 	if (rd_nest) {
-		mctp_get_rtnlmsg_attr_u32(RTAX_MTU, rd_nest, nest_len, &mtu);
+		mctp_get_rtnlmsg_attr_u32(RTAX_MTU, rd_nest, attr_len, &mtu);
 	}
-	net = mctp_nl_net_byindex(ctx->nl, ifindex);
+	has_if = mctp_get_rtnlmsg_attr_u32(RTA_OIF, rta, rta_len, &ifindex);
+	has_gw = mctp_get_rtnlmsg_fq_addr(RTA_GATEWAY, rta, rta_len, &gw);
 
-	printf("eid min %d max %d net %d dev %s mtu %d\n", dst,
-	       dst + msg->rtm_dst_len, net,
-	       mctp_nl_if_byindex(ctx->nl, ifindex), mtu);
+	if (has_gw) {
+		printf("eid min %d max %d net %d gw %d mtu %d\n", dst,
+		       dst + msg->rtm_dst_len, gw.net, gw.eid, mtu);
+
+	} else if (has_if) {
+		uint32_t net = mctp_nl_net_byindex(ctx->nl, ifindex);
+
+		printf("eid min %d max %d net %d dev %s mtu %d\n", dst,
+		       dst + msg->rtm_dst_len, net,
+		       mctp_nl_if_byindex(ctx->nl, ifindex), mtu);
+	} else {
+		printf("eid min %d max %d <invalid dst!> mtu %d\n", dst,
+		       dst + msg->rtm_dst_len, mtu);
+	}
+
 	return 0;
 }
 

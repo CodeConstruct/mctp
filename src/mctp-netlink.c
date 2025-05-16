@@ -443,6 +443,23 @@ bool mctp_get_rtnlmsg_attr_u8(int rta_type, struct rtattr *rta, size_t len,
 	return false;
 }
 
+bool mctp_get_rtnlmsg_fq_addr(int rta_type, struct rtattr *rta, size_t len,
+			      struct mctp_fq_addr *addr)
+{
+	size_t plen;
+	uint8_t *p = mctp_get_rtnlmsg_attr(rta_type, rta, len, &plen);
+	if (p) {
+		if (plen == sizeof(*addr)) {
+			memcpy(addr, p, plen);
+			return true;
+		} else {
+			warnx("Unexpected attribute length %zu for mctp_fq_addr",
+			      plen);
+		}
+	}
+	return false;
+}
+
 /* Returns the space used */
 size_t mctp_put_rtnlmsg_attr(struct rtattr **prta, size_t *rta_len,
 			     unsigned short type, const void *value,
