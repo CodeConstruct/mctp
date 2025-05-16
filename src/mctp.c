@@ -872,46 +872,43 @@ static int cmd_route_show(struct ctx *ctx, int argc, const char **argv)
 
 static int cmd_route_add(struct ctx *ctx, int argc, const char **argv)
 {
-	const char *eidstr = NULL, *linkstr = NULL, *mtustr = NULL;
+	const char *eidstr = NULL, *linkstr = NULL;
 	uint32_t mtu = 0, eid = 0;
-	int rc = 0;
 
-	if (!(argc == 4 || argc == 6)) {
-		rc = -EINVAL;
-	} else {
-		if (strcmp(argv[2], "via")) {
-			rc = -EINVAL;
-		} else {
-			eidstr = argv[1];
-			linkstr = argv[3];
-		}
-	}
+	if (!(argc == 4 || argc == 6))
+		goto err;
+
+	eidstr = argv[1];
+
+	if (strcmp(argv[2], "via"))
+		goto err;
+
+	linkstr = argv[3];
+
 	if (argc == 6) {
-		if (strcmp(argv[4], "mtu")) {
-			rc = -EINVAL;
-		} else {
-			mtustr = argv[5];
-		}
+		const char *mtustr;
+
+		if (strcmp(argv[4], "mtu"))
+			goto err;
+
+		mtustr = argv[5];
+		if (parse_uint32(mtustr, &mtu) < 0)
+			goto err;
 	}
 
-	if (mtustr) {
-		if (parse_uint32(mtustr, &mtu) < 0) {
-			rc = -EINVAL;
-		}
-	}
-	if (eidstr && parse_uint32(eidstr, &eid) < 0) {
-		rc = -EINVAL;
-	}
+	if (parse_uint32(eidstr, &eid) < 0)
+		goto err;
+
 	if (eid > 0xff) {
 		warnx("Bad eid");
-		rc = -EINVAL;
-	}
-	if (rc) {
-		warnx("add: invalid command line arguments");
-		return -1;
+		goto err;
 	}
 
 	return mctp_nl_route_add(ctx->nl, eid, linkstr, mtu);
+
+err:
+	warnx("add: invalid command line arguments");
+	return -1;
 }
 
 static int cmd_route_del(struct ctx *ctx, int argc, const char **argv)
@@ -919,31 +916,31 @@ static int cmd_route_del(struct ctx *ctx, int argc, const char **argv)
 	const char *linkstr = NULL, *eidstr = NULL;
 	uint32_t tmp = 0;
 	uint8_t eid;
-	int rc = 0;
 
-	if (argc != 4) {
-		rc = -EINVAL;
-	} else {
-		if (strcmp(argv[2], "via")) {
-			rc = -EINVAL;
-		}
-		eidstr = argv[1];
-	}
-	if (eidstr && parse_uint32(eidstr, &tmp) < 0) {
-		rc = -EINVAL;
-	}
+	if (argc != 4)
+		goto err;
+
+	if (strcmp(argv[2], "via"))
+		goto err;
+
+	eidstr = argv[1];
+
+	if (parse_uint32(eidstr, &tmp) < 0)
+		goto err;
+
 	if (tmp > 0xff) {
 		warnx("Bad eid");
-		rc = -EINVAL;
+		goto err;
 	}
-	if (rc) {
-		warnx("del: invalid command line arguments");
-		return -1;
-	}
+
 	eid = tmp & 0xff;
 	linkstr = argv[3];
 
 	return mctp_nl_route_del(ctx->nl, eid, linkstr);
+
+err:
+	warnx("del: invalid command line arguments");
+	return -1;
 }
 
 static int cmd_route(struct ctx *ctx, int argc, const char **argv)
