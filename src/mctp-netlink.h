@@ -38,6 +38,13 @@ struct mctp_nl_change {
 };
 typedef struct mctp_nl_change mctp_nl_change;
 
+#if !HAVE_STRUCT_MCTP_FQ_ADDR
+struct mctp_fq_addr {
+	unsigned int net;
+	mctp_eid_t eid;
+};
+#endif
+
 /* Allocates the structure, connects to netlink, and populates
    the list of interfaces */
 // verbose flag controls dumping error response packets
@@ -113,6 +120,8 @@ bool mctp_get_rtnlmsg_attr_u32(int rta_type, struct rtattr *rta, size_t len,
 			       uint32_t *ret_value);
 bool mctp_get_rtnlmsg_attr_u8(int rta_type, struct rtattr *rta, size_t len,
 			      uint8_t *ret_value);
+bool mctp_get_rtnlmsg_fq_addr(int rta_type, struct rtattr *rta, size_t len,
+			      struct mctp_fq_addr *addr);
 /* Returns the space used */
 size_t mctp_put_rtnlmsg_attr(struct rtattr **prta, size_t *rta_len,
 			     unsigned short type, const void *value,
