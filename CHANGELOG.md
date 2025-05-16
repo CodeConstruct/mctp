@@ -38,6 +38,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 6. New debug/test tool, `mctp-bench`, for performing basic requests to MCTP
    endpoints, and printing their responses
 
+7. `mctp` now supports gateway routes
+
 ### Changed
 
 1. tests are now run with address sanitizer enabled (-fsanitize=address)

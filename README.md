@@ -53,7 +53,9 @@ Use `mctp help` for the list of available commands:
     mctp route
     mctp route show [net <network>]
     mctp route add <eid> via <dev> [mtu <mtu>]
+    mctp route add <eid> gw <eid> [net <net>] [mtu <mtu>]
     mctp route del <eid> via <dev>
+    mctp route del <eid> gw <eid> [net <net>]
 
     mctp neigh
     mctp neigh show [dev <network>]

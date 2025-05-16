@@ -1250,10 +1250,16 @@ struct mctp_rtalter_msg {
 };
 static int fill_rtalter_args(struct mctp_nl *nl, struct mctp_rtalter_msg *msg,
 			     struct rtattr **prta, size_t *prta_len,
-			     mctp_eid_t eid, int ifindex)
+			     mctp_eid_t eid, int ifindex,
+			     const struct mctp_fq_addr *gw)
 {
 	struct rtattr *rta;
 	size_t rta_len;
+
+	if (!ifindex && (!gw || !gw->eid)) {
+		warnx("invalid route output: no device or gateway");
+		return -1;
+	}
 
 	memset(msg, 0x0, sizeof(*msg));
 	msg->nh.nlmsg_flags = NLM_F_REQUEST | NLM_F_ACK;
@@ -1270,8 +1276,13 @@ static int fill_rtalter_args(struct mctp_nl *nl, struct mctp_rtalter_msg *msg,
 
 	msg->nh.nlmsg_len += mctp_put_rtnlmsg_attr(&rta, &rta_len, RTA_DST,
 						   &eid, sizeof(eid));
-	msg->nh.nlmsg_len += mctp_put_rtnlmsg_attr(&rta, &rta_len, RTA_OIF,
-						   &ifindex, sizeof(ifindex));
+	if (ifindex) {
+		msg->nh.nlmsg_len += mctp_put_rtnlmsg_attr(
+			&rta, &rta_len, RTA_OIF, &ifindex, sizeof(ifindex));
+	} else {
+		msg->nh.nlmsg_len += mctp_put_rtnlmsg_attr(
+			&rta, &rta_len, RTA_GATEWAY, gw, sizeof(*gw));
+	}
 
 	if (prta)
 		*prta = rta;
@@ -1282,14 +1293,14 @@ static int fill_rtalter_args(struct mctp_nl *nl, struct mctp_rtalter_msg *msg,
 }
 
 int mctp_nl_route_add(struct mctp_nl *nl, uint8_t eid, int ifindex,
-		      uint32_t mtu)
+		      const struct mctp_fq_addr *gw, uint32_t mtu)
 {
 	struct mctp_rtalter_msg msg;
 	struct rtattr *rta;
 	size_t rta_len;
 	int rc;
 
-	rc = fill_rtalter_args(nl, &msg, &rta, &rta_len, eid, ifindex);
+	rc = fill_rtalter_args(nl, &msg, &rta, &rta_len, eid, ifindex, gw);
 	if (rc) {
 		return -1;
 	}
@@ -1318,12 +1329,13 @@ int mctp_nl_route_add(struct mctp_nl *nl, uint8_t eid, int ifindex,
 	return mctp_nl_send(nl, &msg.nh);
 }
 
-int mctp_nl_route_del(struct mctp_nl *nl, uint8_t eid, int ifindex)
+int mctp_nl_route_del(struct mctp_nl *nl, uint8_t eid, int ifindex,
+		      const struct mctp_fq_addr *gw)
 {
 	struct mctp_rtalter_msg msg;
 	int rc;
 
-	rc = fill_rtalter_args(nl, &msg, NULL, NULL, eid, ifindex);
+	rc = fill_rtalter_args(nl, &msg, NULL, NULL, eid, ifindex, gw);
 	if (rc) {
 		return rc;
 	}

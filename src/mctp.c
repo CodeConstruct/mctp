@@ -880,12 +880,15 @@ static int cmd_route_show(struct ctx *ctx, int argc, const char **argv)
 }
 
 static int parse_route_args(struct ctx *ctx, int argc, const char **argv,
-			    mctp_eid_t *eidp, int *ifindexp, unsigned int *mtup)
+			    mctp_eid_t *eidp, int *ifindexp,
+			    struct mctp_fq_addr *gwp, unsigned int *mtup)
 {
 	const char *eidstr, *linkstr = NULL;
+	struct mctp_fq_addr gw = { 0 };
+	bool have_net = false;
 	unsigned int mtu = 0;
+	int ifindex = 0, rc;
 	mctp_eid_t eid;
-	int ifindex, rc;
 
 	if (argc < 3 || !(argc % 2))
 		return -1;
@@ -899,6 +902,8 @@ static int parse_route_args(struct ctx *ctx, int argc, const char **argv,
 
 	/* one of:
 	 *  via <dev>
+	 *  gw <eid>
+	 *   + net <net>
 	 *  mtu <mtu>
 	 */
 	for (int i = 1; i < argc; i += 2) {
@@ -907,6 +912,21 @@ static int parse_route_args(struct ctx *ctx, int argc, const char **argv,
 
 		if (!strcmp(name, "via")) {
 			linkstr = val;
+
+		} else if (!strcmp(name, "gw")) {
+			rc = parse_eid(val, &gw.eid);
+			if (rc) {
+				warnx("Invalid gateway EID '%s'", val);
+				return -1;
+			}
+
+		} else if (!strcmp(name, "net")) {
+			rc = parse_uint32(val, &gw.net);
+			if (rc) {
+				warnx("Invalid gateway net '%s'", val);
+				return -1;
+			}
+			have_net = true;
 
 		} else if (!strcmp(name, "mtu")) {
 			rc = parse_uint32(val, &mtu);
@@ -917,19 +937,27 @@ static int parse_route_args(struct ctx *ctx, int argc, const char **argv,
 		}
 	}
 
-	if (!linkstr) {
-		warnx("No link specified");
+	if (have_net && linkstr) {
+		warnx("Invalid route arguments: cannot specify both net and device");
 		return -1;
 	}
 
-	ifindex = mctp_nl_ifindex_byname(ctx->nl, linkstr);
-	if (!ifindex) {
-		warnx("add: invalid device %s", linkstr);
+	if (!linkstr && !gw.eid) {
+		warnx("Invalid route arguments: must specify device or gateway");
 		return -1;
+	}
+
+	if (linkstr) {
+		ifindex = mctp_nl_ifindex_byname(ctx->nl, linkstr);
+		if (!ifindex) {
+			warnx("add: invalid device %s", linkstr);
+			return -1;
+		}
 	}
 
 	*eidp = eid;
 	*ifindexp = ifindex;
+	*gwp = gw;
 	*mtup = mtu;
 
 	return 0;
@@ -937,33 +965,37 @@ static int parse_route_args(struct ctx *ctx, int argc, const char **argv,
 
 static int cmd_route_add(struct ctx *ctx, int argc, const char **argv)
 {
+	struct mctp_fq_addr gw = { 0 };
 	uint32_t mtu = 0;
 	int rc, ifindex = 0;
 	mctp_eid_t eid;
 
-	rc = parse_route_args(ctx, argc - 1, argv + 1, &eid, &ifindex, &mtu);
+	rc = parse_route_args(ctx, argc - 1, argv + 1, &eid, &ifindex, &gw,
+			      &mtu);
 	if (rc) {
 		warnx("add: invalid command line arguments");
 		return -1;
 	}
 
-	return mctp_nl_route_add(ctx->nl, eid, ifindex, mtu);
+	return mctp_nl_route_add(ctx->nl, eid, ifindex, &gw, mtu);
 }
 
 static int cmd_route_del(struct ctx *ctx, int argc, const char **argv)
 {
+	struct mctp_fq_addr gw = { 0 };
 	unsigned int mtu = 0;
 	int ifindex = 0;
 	mctp_eid_t eid;
 	int rc;
 
-	rc = parse_route_args(ctx, argc - 1, argv + 1, &eid, &ifindex, &mtu);
+	rc = parse_route_args(ctx, argc - 1, argv + 1, &eid, &ifindex, &gw,
+			      &mtu);
 	if (rc) {
 		warnx("del: invalid command line arguments");
 		return -1;
 	}
 
-	return mctp_nl_route_del(ctx->nl, eid, ifindex);
+	return mctp_nl_route_del(ctx->nl, eid, ifindex, &gw);
 }
 
 static int cmd_route(struct ctx *ctx, int argc, const char **argv)
@@ -975,7 +1007,12 @@ static int cmd_route(struct ctx *ctx, int argc, const char **argv)
 			ctx->top_cmd);
 		fprintf(stderr, "%s route add <eid> via <dev> [mtu <mtu>]\n",
 			ctx->top_cmd);
+		fprintf(stderr,
+			"%s route add <eid> gw <eid> [net <net>] [mtu <mtu>]\n",
+			ctx->top_cmd);
 		fprintf(stderr, "%s route del <eid> via <dev>\n", ctx->top_cmd);
+		fprintf(stderr, "%s route del <eid> gw <eid> [net <net>]\n",
+			ctx->top_cmd);
 		return 255;
 	}
 
