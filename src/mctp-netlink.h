@@ -102,8 +102,9 @@ void *mctp_nl_get_link_userdata_byname(const mctp_nl *nl, const char *ifname);
 
 /* MCTP route helper */
 int mctp_nl_route_add(struct mctp_nl *nl, uint8_t eid, const char* ifname,
-		uint32_t mtu);
-int mctp_nl_route_del(struct mctp_nl *nl, uint8_t eid, const char* ifname);
+		      const struct mctp_fq_addr *gw, uint32_t mtu);
+int mctp_nl_route_del(struct mctp_nl *nl, uint8_t eid, const char* ifname,
+		      const struct mctp_fq_addr *gw);
 
 /* Helpers */
 

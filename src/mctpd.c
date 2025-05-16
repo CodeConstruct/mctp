@@ -1564,7 +1564,7 @@ static int peer_set_mtu(struct ctx *ctx, struct peer *peer, uint32_t mtu) {
 		return -EPROTO;
 	}
 
-	rc = mctp_nl_route_del(ctx->nl, peer->eid, ifname);
+	rc = mctp_nl_route_del(ctx->nl_query, peer->eid, ifname, NULL);
 	if (rc < 0 && rc != -ENOENT) {
 		warnx("%s, Failed removing existing route for eid %d %s",
 			__func__,
@@ -1572,7 +1572,7 @@ static int peer_set_mtu(struct ctx *ctx, struct peer *peer, uint32_t mtu) {
 		// Continue regardless, route_add will likely fail with EEXIST
 	}
 
-	rc = mctp_nl_route_add(ctx->nl, peer->eid, ifname, mtu);
+	rc = mctp_nl_route_add(ctx->nl_query, peer->eid, ifname, NULL, mtu);
 	if (rc >= 0) {
 		peer->mtu = mtu;
 	}
@@ -2421,10 +2421,11 @@ static int peer_route_update(struct peer *peer, uint16_t type)
 	}
 
 	if (type == RTM_NEWROUTE) {
-		return mctp_nl_route_add(peer->ctx->nl,
-			peer->eid, link, peer->mtu);
+		return mctp_nl_route_add(peer->ctx->nl_query, peer->eid,
+					 link, NULL, peer->mtu);
 	} else if (type == RTM_DELROUTE) {
-		return mctp_nl_route_del(peer->ctx->nl, peer->eid, link);
+		return mctp_nl_route_del(peer->ctx->nl_query, peer->eid,
+					 link, NULL);
 	}
 
 	bug_warn("%s: bad type %d", __func__, type);
