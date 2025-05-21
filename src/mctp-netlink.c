@@ -1041,7 +1041,7 @@ uint32_t *mctp_nl_net_list(const mctp_nl *nl, size_t *ret_num_nets)
 
 	*ret_num_nets = 0;
 	// allocation may be oversized, that's OK
-	nets = calloc(sizeof(uint32_t), nl->linkmap_count);
+	nets = calloc(nl->linkmap_count, sizeof(uint32_t));
 	if (!nets) {
 		warnx("Allocation failed");
 		return NULL;
