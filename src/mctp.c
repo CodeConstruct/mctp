@@ -892,9 +892,55 @@ static int parse_eid(const char *str, mctp_eid_t *eid)
 	return 0;
 }
 
+static int parse_eid_range(const char *str, mctp_eid_t *eid,
+			   unsigned int *extent)
+{
+	char tmp[10]; /* sufficient length to handle "100-101" */
+	mctp_eid_t min, max;
+	size_t len;
+	char *sep;
+	int rc;
+
+	len = strlen(str);
+	if (len >= sizeof(tmp) - 1)
+		return -1;
+
+	strncpy(tmp, str, sizeof(tmp) - 1);
+	tmp[sizeof(tmp) - 1] = '\0';
+
+	sep = strchr(tmp, '-');
+	if (sep) {
+		rc = parse_eid(sep + 1, &max);
+		if (rc)
+			return rc;
+
+		if (max >= 0xff)
+			return -1;
+
+		*sep = '\0';
+	}
+
+	rc = parse_eid(tmp, &min);
+	if (rc)
+		return rc;
+
+	*eid = min;
+	if (sep) {
+		if (max < min)
+			return -1;
+		*extent = max - min;
+	} else {
+		*extent = 0;
+	}
+
+	return 0;
+}
+
+
 static int parse_route_args(struct ctx *ctx, int argc, const char **argv,
-			    mctp_eid_t *eidp, const char **linkstrp,
-			    struct mctp_fq_addr *gwp, unsigned int *mtup)
+			    mctp_eid_t *eidp, unsigned int *extent,
+			    const char **linkstrp, struct mctp_fq_addr *gwp,
+			    unsigned int *mtup)
 {
 	const char *eidstr, *linkstr = NULL;
 	struct mctp_fq_addr gw = { 0 };
@@ -907,9 +953,9 @@ static int parse_route_args(struct ctx *ctx, int argc, const char **argv,
 		return -1;
 
 	eidstr = argv[0];
-	rc = parse_eid(eidstr, &eid);
+	rc = parse_eid_range(eidstr, &eid, extent);
 	if (rc) {
-		warnx("Invalid EID '%s'", eidstr);
+		warnx("Invalid EID/range '%s'", eidstr);
 		return -1;
 	}
 
@@ -972,35 +1018,37 @@ static int parse_route_args(struct ctx *ctx, int argc, const char **argv,
 static int cmd_route_add(struct ctx *ctx, int argc, const char **argv)
 {
 	struct mctp_fq_addr gw = { 0 };
+	unsigned int extent, mtu = 0;
 	const char *linkstr = NULL;
-	unsigned int mtu = 0;
 	mctp_eid_t eid;
 	int rc;
 
-	rc = parse_route_args(ctx, argc - 1, argv + 1, &eid, &linkstr, &gw, &mtu);
+	rc = parse_route_args(ctx, argc - 1, argv + 1, &eid, &extent,
+			      &linkstr, &gw, &mtu);
 	if (rc) {
 		warnx("add: invalid command line arguments");
 		return -1;
 	}
 
-	return mctp_nl_route_add(ctx->nl, eid, linkstr, &gw, mtu);
+	return mctp_nl_route_add(ctx->nl, eid, extent, linkstr, &gw, mtu);
 }
 
 static int cmd_route_del(struct ctx *ctx, int argc, const char **argv)
 {
 	struct mctp_fq_addr gw = { 0 };
+	unsigned int extent, mtu = 0;
 	const char *linkstr = NULL;
-	unsigned int mtu = 0;
 	mctp_eid_t eid;
 	int rc;
 
-	rc = parse_route_args(ctx, argc - 1, argv + 1, &eid, &linkstr, &gw, &mtu);
+	rc = parse_route_args(ctx, argc - 1, argv + 1, &eid, &extent,
+			      &linkstr, &gw, &mtu);
 	if (rc) {
 		warnx("del: invalid command line arguments");
 		return -1;
 	}
 
-	return mctp_nl_route_del(ctx->nl, eid, linkstr, &gw);
+	return mctp_nl_route_del(ctx->nl, eid, extent, linkstr, &gw);
 }
 
 static int cmd_route(struct ctx *ctx, int argc, const char **argv)
@@ -1009,11 +1057,14 @@ static int cmd_route(struct ctx *ctx, int argc, const char **argv)
 	if (argc == 2 && !strcmp(argv[1], "help")) {
 		fprintf(stderr, "%s route\n", ctx->top_cmd);
 		fprintf(stderr, "%s route show [net <network>]\n", ctx->top_cmd);
-		fprintf(stderr, "%s route add <eid> via <dev> [mtu <mtu>]\n", ctx->top_cmd);
-		fprintf(stderr, "%s route add <eid> gw <eid> [net <net>] [mtu <mtu>]\n",
+		fprintf(stderr, "%s route add <eid>[-<eid>] via <dev> [mtu <mtu>]\n",
 			ctx->top_cmd);
-		fprintf(stderr, "%s route del <eid> via <dev>\n", ctx->top_cmd);
-		fprintf(stderr, "%s route del <eid> gw <eid> [net <net>]\n", ctx->top_cmd);
+		fprintf(stderr, "%s route add <eid>[-<eid>] gw <eid> [net <net>] [mtu <mtu>]\n",
+			ctx->top_cmd);
+		fprintf(stderr, "%s route del <eid>[-<eid>] via <dev>\n",
+			ctx->top_cmd);
+		fprintf(stderr, "%s route del <eid>[-<eid>] gw <eid> [net <net>]\n",
+			ctx->top_cmd);
 		return 255;
 	}
 

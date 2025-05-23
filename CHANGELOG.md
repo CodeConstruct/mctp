@@ -30,6 +30,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 5. `mctp` now supports gateway routes
 
+6. `mctp` route can add & delete range routes, using a <min>-<max> range format
+
 ### Changed
 
 1. tests are now run with address sanitizer enabled (-fsanitize=address)

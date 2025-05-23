@@ -1152,7 +1152,8 @@ struct mctp_rtalter_msg {
 };
 static int fill_rtalter_args(struct mctp_nl *nl, struct mctp_rtalter_msg *msg,
 	struct rtattr **prta, size_t *prta_len,
-	mctp_eid_t eid, const char* linkstr, const struct mctp_fq_addr *gw)
+	mctp_eid_t eid, unsigned int extent,
+	const char* linkstr, const struct mctp_fq_addr *gw)
 {
 	struct rtattr *rta;
 	int ifindex = 0;
@@ -1169,13 +1170,17 @@ static int fill_rtalter_args(struct mctp_nl *nl, struct mctp_rtalter_msg *msg,
 		return -1;
 	}
 
+	if (extent > 0xff || (unsigned int)eid + extent > 0xfe) {
+		warnx("invalid route extent");
+		return -1;
+	}
+
 	memset(msg, 0x0, sizeof(*msg));
 	msg->nh.nlmsg_flags = NLM_F_REQUEST | NLM_F_ACK;
 
 	msg->rtmsg.rtm_family = AF_MCTP;
 	msg->rtmsg.rtm_type = RTN_UNICAST;
-	// TODO add eid range handling
-	msg->rtmsg.rtm_dst_len = 0;
+	msg->rtmsg.rtm_dst_len = extent;
 	msg->rtmsg.rtm_type = RTN_UNICAST;
 
 	msg->nh.nlmsg_len = NLMSG_LENGTH(sizeof(msg->rtmsg));
@@ -1200,15 +1205,17 @@ static int fill_rtalter_args(struct mctp_nl *nl, struct mctp_rtalter_msg *msg,
 	return 0;
 }
 
-int mctp_nl_route_add(struct mctp_nl *nl, uint8_t eid, const char* ifname,
-		      const struct mctp_fq_addr *gw, uint32_t mtu)
+int mctp_nl_route_add(struct mctp_nl *nl, uint8_t eid, unsigned int extent,
+		      const char* ifname, const struct mctp_fq_addr *gw,
+		      uint32_t mtu)
 {
 	struct mctp_rtalter_msg msg;
 	struct rtattr *rta;
 	size_t rta_len;
 	int rc;
 
-	rc = fill_rtalter_args(nl, &msg, &rta, &rta_len, eid, ifname, gw);
+	rc = fill_rtalter_args(nl, &msg, &rta, &rta_len, eid, extent, ifname,
+			       gw);
 	if (rc) {
 		return -1;
 	}
@@ -1237,13 +1244,13 @@ int mctp_nl_route_add(struct mctp_nl *nl, uint8_t eid, const char* ifname,
 
 }
 
-int mctp_nl_route_del(struct mctp_nl *nl, uint8_t eid, const char* ifname,
-		      const struct mctp_fq_addr *gw)
+int mctp_nl_route_del(struct mctp_nl *nl, uint8_t eid, unsigned int extent,
+		      const char* ifname, const struct mctp_fq_addr *gw)
 {
 	struct mctp_rtalter_msg msg;
 	int rc;
 
-	rc = fill_rtalter_args(nl, &msg, NULL, NULL, eid, ifname, gw);
+	rc = fill_rtalter_args(nl, &msg, NULL, NULL, eid, extent, ifname, gw);
 	if (rc) {
 		return rc;
 	}
