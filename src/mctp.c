@@ -879,24 +879,73 @@ static int cmd_route_show(struct ctx *ctx, int argc, const char **argv)
 	return 0;
 }
 
+/* Parses a "min-max" eid range, or a single eid, into *eid and *extent.
+ * If a single EID is given, *extent will be zero. Returns -1 on failure.
+ */
+static int parse_eid_range(const char *str, mctp_eid_t *eid,
+			   unsigned int *extent)
+{
+	char tmp[10]; /* sufficient length to handle "100-101" */
+	mctp_eid_t min, max;
+	size_t len;
+	char *sep;
+	int rc;
+
+	len = strlen(str);
+	if (len >= sizeof(tmp) - 1)
+		return -1;
+
+	strncpy(tmp, str, sizeof(tmp) - 1);
+	tmp[sizeof(tmp) - 1] = '\0';
+
+	sep = strchr(tmp, '-');
+	if (sep) {
+		rc = parse_eid(sep + 1, &max);
+		if (rc)
+			return rc;
+
+		if (max >= 0xff)
+			return -1;
+
+		*sep = '\0';
+	}
+
+	rc = parse_eid(tmp, &min);
+	if (rc)
+		return rc;
+
+	*eid = min;
+	if (sep) {
+		if (max < min)
+			return -1;
+		*extent = max - min;
+	} else {
+		*extent = 0;
+	}
+
+	return 0;
+}
+
 static int parse_route_args(struct ctx *ctx, int argc, const char **argv,
-			    mctp_eid_t *eidp, int *ifindexp,
-			    struct mctp_fq_addr *gwp, unsigned int *mtup)
+			    mctp_eid_t *eidp, unsigned int *extentp,
+			    int *ifindexp, struct mctp_fq_addr *gwp,
+			    unsigned int *mtup)
 {
 	const char *eidstr, *linkstr = NULL;
 	struct mctp_fq_addr gw = { 0 };
 	bool have_net = false;
 	unsigned int mtu = 0;
 	int ifindex = 0, rc;
+	unsigned int extent;
 	mctp_eid_t eid;
 
 	if (argc < 3 || !(argc % 2))
 		return -1;
 
 	eidstr = argv[0];
-	rc = parse_eid(eidstr, &eid);
+	rc = parse_eid_range(eidstr, &eid, &extent);
 	if (rc) {
-		warnx("Invalid EID '%s'", eidstr);
+		warnx("Invalid EID/range '%s'", eidstr);
 		return -1;
 	}
 
@@ -956,6 +1005,7 @@ static int parse_route_args(struct ctx *ctx, int argc, const char **argv,
 	}
 
 	*eidp = eid;
+	*extentp = extent;
 	*ifindexp = ifindex;
 	*gwp = gw;
 	*mtup = mtu;
@@ -966,36 +1016,37 @@ static int parse_route_args(struct ctx *ctx, int argc, const char **argv,
 static int cmd_route_add(struct ctx *ctx, int argc, const char **argv)
 {
 	struct mctp_fq_addr gw = { 0 };
-	uint32_t mtu = 0;
 	int rc, ifindex = 0;
+	unsigned int extent;
+	uint32_t mtu = 0;
 	mctp_eid_t eid;
 
-	rc = parse_route_args(ctx, argc - 1, argv + 1, &eid, &ifindex, &gw,
-			      &mtu);
+	rc = parse_route_args(ctx, argc - 1, argv + 1, &eid, &extent, &ifindex,
+			      &gw, &mtu);
 	if (rc) {
 		warnx("add: invalid command line arguments");
 		return -1;
 	}
 
-	return mctp_nl_route_add(ctx->nl, eid, ifindex, &gw, mtu);
+	return mctp_nl_route_add(ctx->nl, eid, extent, ifindex, &gw, mtu);
 }
 
 static int cmd_route_del(struct ctx *ctx, int argc, const char **argv)
 {
 	struct mctp_fq_addr gw = { 0 };
-	unsigned int mtu = 0;
+	unsigned int extent, mtu = 0;
 	int ifindex = 0;
 	mctp_eid_t eid;
 	int rc;
 
-	rc = parse_route_args(ctx, argc - 1, argv + 1, &eid, &ifindex, &gw,
-			      &mtu);
+	rc = parse_route_args(ctx, argc - 1, argv + 1, &eid, &extent, &ifindex,
+			      &gw, &mtu);
 	if (rc) {
 		warnx("del: invalid command line arguments");
 		return -1;
 	}
 
-	return mctp_nl_route_del(ctx->nl, eid, ifindex, &gw);
+	return mctp_nl_route_del(ctx->nl, eid, extent, ifindex, &gw);
 }
 
 static int cmd_route(struct ctx *ctx, int argc, const char **argv)
@@ -1005,13 +1056,16 @@ static int cmd_route(struct ctx *ctx, int argc, const char **argv)
 		fprintf(stderr, "%s route\n", ctx->top_cmd);
 		fprintf(stderr, "%s route show [net <network>]\n",
 			ctx->top_cmd);
-		fprintf(stderr, "%s route add <eid> via <dev> [mtu <mtu>]\n",
+		fprintf(stderr,
+			"%s route add <eid>[-<eid>] via <dev> [mtu <mtu>]\n",
 			ctx->top_cmd);
 		fprintf(stderr,
-			"%s route add <eid> gw <eid> [net <net>] [mtu <mtu>]\n",
+			"%s route add <eid>[-<eid>] gw <eid> [net <net>] [mtu <mtu>]\n",
 			ctx->top_cmd);
-		fprintf(stderr, "%s route del <eid> via <dev>\n", ctx->top_cmd);
-		fprintf(stderr, "%s route del <eid> gw <eid> [net <net>]\n",
+		fprintf(stderr, "%s route del <eid>[-<eid>] via <dev>\n",
+			ctx->top_cmd);
+		fprintf(stderr,
+			"%s route del <eid>[-<eid>] gw <eid> [net <net>]\n",
 			ctx->top_cmd);
 		return 255;
 	}
