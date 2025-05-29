@@ -859,7 +859,7 @@ static int fill_local_addrs(mctp_nl *nl)
 
 		entry = entry_byindex(nl, ifa->ifa_index);
 		if (!entry) {
-			warnx("kernel returned address for unknown if");
+			warnx("kernel returned address for unknown if %d", ifa->ifa_index);
 			continue;
 		}
 		tmp = realloc(entry->local_eids,
