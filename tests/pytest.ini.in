@@ -1,3 +1,6 @@
 [pytest]
 trio_mode = true
 testpaths = @testpaths@
+filterwarnings =
+    ignore:.*wait_readable:DeprecationWarning:asyncdbus
+    ignore:.*wait_writable:DeprecationWarning:asyncdbus
