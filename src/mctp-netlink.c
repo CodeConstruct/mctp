@@ -28,6 +28,7 @@ struct linkmap_entry {
 
 	uint32_t min_mtu;
 	uint32_t max_mtu;
+	uint32_t hwaddr_len;
 
 	mctp_eid_t *local_eids;
 	size_t num_local;
@@ -57,7 +58,7 @@ static int fill_linkmap(mctp_nl *nl);
 static void sort_linkmap(mctp_nl *nl);
 static int linkmap_add_entry(mctp_nl *nl, struct ifinfomsg *info,
 		const char *ifname, size_t ifname_len, uint32_t net,
-		bool up, uint32_t min_mtu, uint32_t max_mtu);
+		bool up, uint32_t min_mtu, uint32_t max_mtu, size_t hwaddr_len);
 static struct linkmap_entry *entry_byindex(const mctp_nl *nl,
 	int index);
 
@@ -683,7 +684,7 @@ static int parse_getlink_dump(mctp_nl *nl, struct nlmsghdr *nlh, uint32_t len)
 	for (; NLMSG_OK(nlh, len); nlh = NLMSG_NEXT(nlh, len)) {
 		struct rtattr *rta = NULL, *rt_nest = NULL, *rt_mctp = NULL;
 		char *ifname = NULL;
-		size_t ifname_len, rlen, nlen, mlen;
+		size_t ifname_len, rlen, nlen, mlen, hwaddr_len;
 		uint32_t net, min_mtu = 0, max_mtu = 0;
 		bool up;
 
@@ -734,10 +735,15 @@ static int parse_getlink_dump(mctp_nl *nl, struct nlmsghdr *nlh, uint32_t len)
 			continue;
 		}
 
+		/* Treat missing address as 0 length */
+		hwaddr_len = 0;
+		mctp_get_rtnlmsg_attr(IFLA_ADDRESS, rta, rlen, &hwaddr_len);
+
 		/* TODO: media type */
 
 		up = info->ifi_flags & IFF_UP;
-		linkmap_add_entry(nl, info, ifname, ifname_len, net, up, min_mtu, max_mtu);
+		linkmap_add_entry(nl, info, ifname, ifname_len, net, up,
+			min_mtu, max_mtu, hwaddr_len);
 	}
 	// Not done.
 	return 1;
@@ -1003,6 +1009,16 @@ uint32_t mctp_nl_max_mtu_byindex(const mctp_nl *nl, int index)
 	return 0;
 }
 
+int mctp_nl_hwaddr_len_byindex(const mctp_nl *nl, int index, size_t *ret_hwaddr_len)
+{
+	struct linkmap_entry *entry = entry_byindex(nl, index);
+	if (!entry) {
+		return -ENOENT;
+	}
+	*ret_hwaddr_len = entry->hwaddr_len;
+	return 0;
+}
+
 mctp_eid_t *mctp_nl_addrs_byindex(const mctp_nl *nl, int index,
 	size_t *ret_num)
 {
@@ -1082,7 +1098,7 @@ int *mctp_nl_if_list(const mctp_nl *nl, size_t *ret_num_ifs)
 
 static int linkmap_add_entry(mctp_nl *nl, struct ifinfomsg *info,
 		const char *ifname, size_t ifname_len, uint32_t net,
-		bool up, uint32_t min_mtu, uint32_t max_mtu)
+		bool up, uint32_t min_mtu, uint32_t max_mtu, size_t hwaddr_len)
 {
 	struct linkmap_entry *entry;
 	size_t newsz;
@@ -1120,6 +1136,7 @@ static int linkmap_add_entry(mctp_nl *nl, struct ifinfomsg *info,
 	entry->up = up;
 	entry->max_mtu = max_mtu;
 	entry->min_mtu = min_mtu;
+	entry->hwaddr_len = hwaddr_len;
 	return 0;
 }
 

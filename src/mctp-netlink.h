@@ -68,6 +68,8 @@ bool mctp_nl_up_byindex(const mctp_nl *nl, int index);
 uint32_t mctp_nl_min_mtu_byindex(const mctp_nl *nl, int index);
 /* Returns interface max_mtu, or 0 if bad index */
 uint32_t mctp_nl_max_mtu_byindex(const mctp_nl *nl, int index);
+/* Returns negative errno on failure */
+int mctp_nl_hwaddr_len_byindex(const mctp_nl *nl, int index, size_t *ret_hwaddr_len);
 /* Caller to free */
 mctp_eid_t *mctp_nl_addrs_byindex(const mctp_nl *nl, int index,
 	size_t *ret_num);
