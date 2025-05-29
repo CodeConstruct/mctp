@@ -323,6 +323,7 @@ static int mctp_bench_send(struct mctp_bench_send_args send_args)
                 buf[i] = i & 0xff;
 
         hdr = (struct msg_header *)buf;
+        memcpy(hdr->vendor_prefix, VENDOR_TYPE_BENCH, sizeof(VENDOR_TYPE_BENCH));
         hdr->magic = MAGIC_VAL;
 
 	/* will not match a sensible sendto() return value */
