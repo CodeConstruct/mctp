@@ -143,7 +143,7 @@ class System:
     async def del_neighbour(self, neigh):
         neigh = self.lookup_neighbour(neigh.iface, neigh.eid)
         if not neigh:
-            raise NetlinkError(errno.EENOENT)
+            raise NetlinkError(errno.ENOENT)
         self.neighbours.remove(neigh)
         if self.nl:
             await self.nl.notify_delneigh(neigh)
