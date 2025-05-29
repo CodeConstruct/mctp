@@ -198,11 +198,7 @@ struct ctx {
 	// Configuration
 	const char *config_filename;
 
-	// Main instance for link/address state and listening for updates
 	mctp_nl *nl;
-
-	// Second instance for sending mctp socket requests. State is unused.
-	mctp_nl *nl_query;
 
 	// Default BMC role in All of MCTP medium interface
 	enum endpoint_role default_role;
@@ -1536,7 +1532,7 @@ static int peer_set_mtu(struct ctx *ctx, struct peer *peer, uint32_t mtu) {
 		return -EPROTO;
 	}
 
-	rc = mctp_nl_route_del(ctx->nl_query, peer->eid, ifname);
+	rc = mctp_nl_route_del(ctx->nl, peer->eid, ifname);
 	if (rc < 0 && rc != -ENOENT) {
 		warnx("%s, Failed removing existing route for eid %d %s",
 			__func__,
@@ -1544,7 +1540,7 @@ static int peer_set_mtu(struct ctx *ctx, struct peer *peer, uint32_t mtu) {
 		// Continue regardless, route_add will likely fail with EEXIST
 	}
 
-	rc = mctp_nl_route_add(ctx->nl_query, peer->eid, ifname, mtu);
+	rc = mctp_nl_route_add(ctx->nl, peer->eid, ifname, mtu);
 	if (rc >= 0) {
 		peer->mtu = mtu;
 	}
@@ -2228,7 +2224,7 @@ static int peer_neigh_update(struct peer *peer, uint16_t type)
 		NDA_DST, &peer->eid, sizeof(peer->eid));
 	msg.nh.nlmsg_len += mctp_put_rtnlmsg_attr(&rta, &rta_len,
 		NDA_LLADDR, peer->phys.hwaddr, peer->phys.hwaddr_len);
-	return mctp_nl_send(peer->ctx->nl_query, &msg.nh);
+	return mctp_nl_send(peer->ctx->nl, &msg.nh);
 }
 
 // type is RTM_NEWROUTE or RTM_DELROUTE
@@ -2236,17 +2232,17 @@ static int peer_route_update(struct peer *peer, uint16_t type)
 {
 	const char * link;
 
-	link = mctp_nl_if_byindex(peer->ctx->nl_query, peer->phys.ifindex);
+	link = mctp_nl_if_byindex(peer->ctx->nl, peer->phys.ifindex);
 	if (!link) {
 		warnx("BUG %s: Unknown ifindex %d", __func__, peer->phys.ifindex);
 		return -ENODEV;
 	}
 
 	if (type == RTM_NEWROUTE) {
-		return mctp_nl_route_add(peer->ctx->nl_query,
+		return mctp_nl_route_add(peer->ctx->nl,
 			peer->eid, link, peer->mtu);
 	} else if (type == RTM_DELROUTE) {
-		return mctp_nl_route_del(peer->ctx->nl_query, peer->eid, link);
+		return mctp_nl_route_del(peer->ctx->nl, peer->eid, link);
 	}
 
 	warnx("BUG %s: bad type %d", __func__, type);
@@ -2260,7 +2256,7 @@ static int setup_added_peer(struct peer *peer)
 
 	// Set minimum MTU by default for compatibility. Clients can increase
 	// this with .SetMTU as needed
-	peer->mtu = mctp_nl_min_mtu_byindex(peer->ctx->nl_query, peer->phys.ifindex);
+	peer->mtu = mctp_nl_min_mtu_byindex(peer->ctx->nl, peer->phys.ifindex);
 
 	// add route before querying
 	add_peer_route(peer);
@@ -2782,11 +2778,8 @@ static int bus_link_get_prop(sd_bus *bus,
 	if (link->published && strcmp(property, "Role") == 0) {
 		rc = sd_bus_message_append(reply, "s", roles[link->role].dbus_val);
 	} else if (strcmp(property, "NetworkId") == 0) {
-		uint32_t  net = mctp_nl_net_byindex(link->ctx->nl,
-						    link->ifindex);
-
+		uint32_t  net = mctp_nl_net_byindex(link->ctx->nl, link->ifindex);
 		rc = sd_bus_message_append_basic(reply, 'u', &net);
-
 	} else {
 		sd_bus_error_setf(berr, SD_BUS_ERROR_INVALID_ARGS,
 				"Unknown property.");
@@ -3063,7 +3056,7 @@ static int emit_interface_removed(struct link *link)
 	const char* ifname = NULL;
 	int rc;
 
-	ifname = mctp_nl_if_byindex(ctx->nl_query, ifindex);
+	ifname = mctp_nl_if_byindex(ctx->nl, ifindex);
 	if (!ifname) {
 		warnx("BUG %s: no interface for ifindex %d", __func__, ifindex);
 		return -EPROTO;
@@ -3805,13 +3798,7 @@ int main(int argc, char **argv)
 		warnx("Failed creating netlink object");
 		return 1;
 	}
-
-	ctx->nl_query = mctp_nl_new(false);
-	if (!ctx->nl_query) {
-		warnx("Failed creating 2nd netlink object");
-		return 1;
-	}
-	mctp_nl_warn_eexist(ctx->nl_query, false);
+	mctp_nl_warn_eexist(ctx->nl, false);
 
 	/* D-Bus needs to be set up before setup_nets() so we
 	   can populate D-Bus objects for interfaces */
@@ -3856,7 +3843,6 @@ int main(int argc, char **argv)
 	sd_bus_close(ctx->bus);
 
 	mctp_nl_close(ctx->nl);
-	mctp_nl_close(ctx->nl_query);
 
 	free_peers(ctx);
 	free_nets(ctx);
