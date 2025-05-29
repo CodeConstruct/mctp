@@ -387,7 +387,7 @@ class ifinfmsg_mctp(rtnl.ifinfmsg.ifinfmsg):
             )
 
     class l2addr(netlink.nla_base):
-        fields = [('value', 'c')]
+        fields = [('value', 's')]
 
 class ifaddrmsg_mctp(rtnl.ifaddrmsg.ifaddrmsg):
     nla_map = (
