@@ -636,3 +636,56 @@ async def test_del_interface_last(dbus, mctpd):
     # network should be gone
     with pytest.raises(asyncdbus.errors.DBusError):
         await mctpd_mctp_network_obj(dbus, iface.net)
+
+""" Remove and re-add an interface """
+async def test_add_interface(dbus, mctpd):
+    net = 1
+    # Create a new netdevice
+    iface = mctpd.system.Interface('mctpnew', 10, net, bytes([]), 68, 254, True)
+    await mctpd.system.add_interface(iface)
+    await mctpd.system.add_address(mctpd.system.Address(iface, 88))
+    mctp = await mctpd_mctp_iface_obj(dbus, iface)
+
+    # Add an endpoint on the interface
+    mctpd.network.add_endpoint(Endpoint(iface, bytes([]), types = [0, 1]))
+
+    static_eid = 30
+    (eid, _, _, new) = await mctp.call_assign_endpoint_static(
+        bytes([]),
+        static_eid
+    )
+    assert eid == static_eid
+    assert new
+    print(f"routes {mctpd.system.routes}")
+    assert mctpd.system.lookup_route(net, static_eid).iface == iface
+
+    # Remove the netdevice
+    await mctpd.system.del_interface(iface)
+
+    # Interface should be gone
+    with pytest.raises(asyncdbus.errors.DBusError):
+        await mctpd_mctp_iface_obj(dbus, iface)
+    assert mctpd.system.lookup_route(net, static_eid) is None
+
+    # Re-add the same interface name again, with a new ifindex 11
+    iface = mctpd.system.Interface('mctpnew', 11, net, bytes([]), 68, 254, True)
+    await mctpd.system.add_interface(iface)
+    await mctpd.system.add_address(mctpd.system.Address(iface, 89))
+    mctp = await mctpd_mctp_iface_obj(dbus, iface)
+
+    # Add an endpoint on the interface
+    mctpd.network.add_endpoint(Endpoint(iface, bytes([]), types = [0, 1]))
+
+    # Old route should still be gone
+    assert mctpd.system.lookup_route(net, static_eid) is None
+
+    static_eid = 40
+    (eid, _, _, new) = await mctp.call_assign_endpoint_static(
+        bytes([]),
+        static_eid
+    )
+    assert eid == static_eid
+    assert new
+    assert mctpd.system.lookup_route(net, static_eid).iface == iface
+
+    print(mctpd)
