@@ -126,6 +126,11 @@ cd obj
 pytest
 ```
 
+To run without an existing dbus session:
+```sh
+dbus-run-session env DBUS_STARTER_BUS_TYPE=user pytest
+```
+
 The test infrastructure depends on a few python packages, including the pytest
 binary. You can use a python `venv` to provide these:
 
