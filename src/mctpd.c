@@ -3068,16 +3068,8 @@ static int emit_net_removed(struct ctx *ctx, struct net *net)
 
 static int emit_interface_removed(struct link *link)
 {
-	int ifindex = link->ifindex;
 	struct ctx *ctx = link->ctx;
-	const char* ifname = NULL;
 	int rc;
-
-	ifname = mctp_nl_if_byindex(ctx->nl, ifindex);
-	if (!ifname) {
-		warnx("BUG %s: no interface for ifindex %d", __func__, ifindex);
-		return -EPROTO;
-	}
 
 	if (link->ctx->verbose)
 		warnx("emitting interface remove: %s", link->path);
@@ -3252,6 +3244,9 @@ static int del_interface(struct link *link)
 	for (size_t i = 0; i < ctx->num_peers; i++) {
 		struct peer *p = ctx->peers[i];
 		if (p->state == REMOTE && p->phys.ifindex == ifindex) {
+			// Linux removes routes to deleted links, so no need to request removal.
+			p->have_neigh = false;
+			p->have_route = false;
 			remove_peer(p);
 		}
 	}
