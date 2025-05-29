@@ -46,7 +46,7 @@ class System:
             self.name = name
             self.ifindex = ifindex
             self.net = net
-            self.lladdr = lladdr,
+            self.lladdr = lladdr
             self.min_mtu = min_mtu
             self.max_mtu = max_mtu
             self.mtu = max_mtu
