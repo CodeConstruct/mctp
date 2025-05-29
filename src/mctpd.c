@@ -2273,15 +2273,22 @@ out:
 	return rc;
 }
 
-/* Adds routes/neigh. This is separate from
-   publish_peer() because we want a two stage setup of querying
-   properties (routed packets) then emitting dbus once finished */
-static void add_peer_route(struct peer *peer)
+static void add_peer_neigh(struct peer *peer)
 {
+	size_t if_hwaddr_len;
 	int rc;
 
-	// We always try to add routes/neighs, ignoring if they
-	// already exist.
+	rc = mctp_nl_hwaddr_len_byindex(peer->ctx->nl, peer->phys.ifindex, &if_hwaddr_len);
+	if (rc) {
+		warnx("Missing neigh ifindex %d\n", peer->phys.ifindex);
+		return;
+	}
+
+	if (peer->phys.hwaddr_len == 0 && if_hwaddr_len == 0) {
+		// Don't add neigh entries for address-less transports
+		// We'll let the kernel reject mismatching entries.
+		return;
+	}
 
 	if (peer->ctx->verbose) {
 		fprintf(stderr, "Adding neigh to %s\n", peer_tostr(peer));
@@ -2293,6 +2300,19 @@ static void add_peer_route(struct peer *peer)
 	} else {
 		peer->have_neigh = true;
 	}
+}
+
+/* Adds routes/neigh. This is separate from
+   publish_peer() because we want a two stage setup of querying
+   properties (routed packets) then emitting dbus once finished */
+static void add_peer_route(struct peer *peer)
+{
+	int rc;
+
+	// We always try to add routes/neighs, ignoring if they
+	// already exist.
+
+	add_peer_neigh(peer);
 
 	if (peer->ctx->verbose) {
 		fprintf(stderr, "Adding route to %s\n", peer_tostr(peer));

@@ -199,7 +199,8 @@ class System:
             iface = route.iface
 
             neigh = self.lookup_neighbour(route.iface, addr.eid)
-            lladdr = neigh.lladdr
+            # if no neighbour, return an empty lladdr (eg mctpusb)
+            lladdr = neigh.lladdr if neigh else bytes()
 
         if iface is None or lladdr is None:
             return None
