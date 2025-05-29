@@ -116,6 +116,16 @@ class System:
             await self.nl.notify_newlink(iface)
 
     async def del_interface(self, iface):
+        routes = list(filter(lambda x: x.iface == iface, self.routes))
+        for x in routes:
+            await self.del_route(x)
+        neighbours = list(filter(lambda x: x.iface == iface, self.neighbours))
+        for x in neighbours:
+            await self.del_neighbour(x)
+        addresses = list(filter(lambda x: x.iface == iface, self.addresses))
+        for x in addresses:
+            await self.del_address(x)
+
         self.interfaces.remove(iface)
         if self.nl:
             await self.nl.notify_dellink(iface)
