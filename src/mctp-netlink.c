@@ -331,13 +331,13 @@ void mctp_nl_changes_dump(mctp_nl *nl, mctp_nl_change *changes, size_t num_chang
 		"ADD_EID", "DEL_EID",
 	};
 
-	printf("%zu changes:\n", num_changes);
+	fprintf(stderr, "%zu changes:\n", num_changes);
 	for (size_t i = 0; i < num_changes; i++) {
 		mctp_nl_change *ch = &changes[i];
 		const char* ifname = mctp_nl_if_byindex(nl, ch->ifindex);
 		if (!ifname)
 			ifname = "deleted";
-		printf("%3zd %-12s ifindex %3d (%-20s) eid %3d old_net %4d old_up %d\n",
+		fprintf(stderr, "%3zd %-12s ifindex %3d (%-20s) eid %3d old_net %4d old_up %d\n",
 			i, ops[ch->op], ch->ifindex, ifname, ch->eid,
 			ch->old_net, ch->old_up);
 	}
@@ -910,19 +910,19 @@ void mctp_nl_linkmap_dump(const mctp_nl *nl)
 {
 	size_t i, j;
 
-	printf("linkmap\n");
+	fprintf(stderr, "linkmap\n");
 	for (i = 0; i < nl->linkmap_count; i++) {
 		struct linkmap_entry *entry = &nl->linkmap[i];
 		const char* updown = entry->up ? "up" : "DOWN";
-		printf("  %2d: %s, net %d %s local addrs [",
+		fprintf(stderr, "  %2d: %s, net %d %s local addrs [",
 			entry->ifindex, entry->ifname,
 			entry->net, updown);
 		for (j = 0; j < entry->num_local; j++) {
 			if (j != 0)
-				printf(", ");
-			printf("%d", entry->local_eids[j]);
+				fprintf(stderr, ", ");
+			fprintf(stderr, "%d", entry->local_eids[j]);
 		}
-		printf("]\n");
+		fprintf(stderr, "]\n");
 	}
 }
 

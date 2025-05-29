@@ -764,9 +764,6 @@ static int handle_control_resolve_endpoint_id(struct ctx *ctx,
 		resp_len = sizeof(*resp) + peer->phys.hwaddr_len;
 	}
 
-	printf("resp_len %zu ... 0x%02x 0x%02x\n", resp_len,
-		((uint8_t*)resp)[resp_len-2],
-		((uint8_t*)resp)[resp_len-1]);
 	return reply_message(ctx, sd, resp, resp_len, addr);
 }
 
@@ -990,7 +987,7 @@ static int cb_listen_monitor(sd_event_source *s, int sd, uint32_t revents,
 	}
 
 	if (ctx->verbose && any_error) {
-		printf("Error handling netlink update\n");
+		warnx("Error handling netlink update");
 		mctp_nl_changes_dump(ctx->nl, changes, num_changes);
 		mctp_nl_linkmap_dump(ctx->nl);
 	}
@@ -2280,7 +2277,7 @@ static void add_peer_neigh(struct peer *peer)
 
 	rc = mctp_nl_hwaddr_len_byindex(peer->ctx->nl, peer->phys.ifindex, &if_hwaddr_len);
 	if (rc) {
-		warnx("Missing neigh ifindex %d\n", peer->phys.ifindex);
+		warnx("Missing neigh ifindex %d", peer->phys.ifindex);
 		return;
 	}
 
@@ -2760,7 +2757,7 @@ static int bus_endpoint_get_prop(sd_bus *bus,
 	} else if (strcmp(property, "Connectivity") == 0) {
 		rc = sd_bus_message_append(reply, "s", peer->degraded ? "Degraded" : "Available");
 	} else {
-		printf("Unknown property '%s' for %s iface %s\n", property, path, interface);
+		warnx("Unknown property '%s' for %s iface %s", property, path, interface);
 		rc = -ENOENT;
 	}
 
@@ -2821,7 +2818,7 @@ static int bus_link_set_prop(sd_bus *bus,
 	int rc = -1;
 
 	if (strcmp(property, "Role") != 0) {
-		printf("Unknown property '%s' for %s iface %s\n", property, path, interface);
+		warnx("Unknown property '%s' for %s iface %s", property, path, interface);
 		rc = -ENOENT;
 		goto out;
 	}
@@ -2842,7 +2839,7 @@ static int bus_link_set_prop(sd_bus *bus,
 
 	rc = get_role(state, &role);
 	if (rc < 0) {
-		printf("Invalid property value '%s' for property '%s' from interface '%s' on object '%s'\n",
+		warnx("Invalid property value '%s' for property '%s' from interface '%s' on object '%s'",
 			state, property, interface, path);
 		rc = -EINVAL;
 		goto out;
@@ -2878,7 +2875,7 @@ static int bus_endpoint_set_prop(sd_bus *bus, const char *path,
 		} else if (strcmp(connectivity, "Degraded") == 0) {
 			peer->degraded = true;
 		} else {
-			printf("Invalid property value '%s' for property '%s' from interface '%s' on object '%s'\n",
+			warnx("Invalid property value '%s' for property '%s' from interface '%s' on object '%s'",
 				connectivity, property, interface, path);
 			rc = -EINVAL;
 			goto out;
@@ -2888,7 +2885,7 @@ static int bus_endpoint_set_prop(sd_bus *bus, const char *path,
 			rc = sd_bus_emit_properties_changed(bus, path, interface, "Connectivity", NULL);
 		}
 	} else {
-		printf("Unknown property '%s' in interface '%s' on object '%s'\n", property,
+		warnx("Unknown property '%s' in interface '%s' on object '%s'", property,
 			interface, path);
 		rc = -ENOENT;
 	}
@@ -3527,13 +3524,13 @@ static int add_interface(struct ctx *ctx, int ifindex)
 
 	uint32_t net = mctp_nl_net_byindex(ctx->nl, ifindex);
 	if (!net) {
-		warnx("Can't find link index %d\n", ifindex);
+		warnx("Can't find link index %d", ifindex);
 		return -ENOENT;
 	}
 
 	const char *ifname = mctp_nl_if_byindex(ctx->nl, ifindex);
 	if (!ifname) {
-		warnx("Can't find link name for index %d\n", ifindex);
+		warnx("Can't find link name for index %d", ifindex);
 		return -ENOENT;
 	}
 
