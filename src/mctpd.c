@@ -250,6 +250,20 @@ static const sd_bus_vtable bus_endpoint_obmc_vtable[];
 static const sd_bus_vtable bus_endpoint_cc_vtable[];
 static const sd_bus_vtable bus_endpoint_uuid_vtable[];
 
+__attribute__((format(printf, 1, 2)))
+static void bug_warn(const char* fmt, ...) {
+	char *bug_fmt = NULL;
+	va_list ap;
+
+	asprintf(&bug_fmt, "BUG: %s", fmt);
+
+	va_start(ap, fmt);
+	mctp_ops.bug_warn(bug_fmt, ap);
+	va_end(ap);
+
+	free(bug_fmt);
+}
+
 mctp_eid_t local_addr(const struct ctx *ctx, int ifindex) {
 	mctp_eid_t *eids, ret = 0;
 	size_t num;
@@ -465,7 +479,7 @@ static const char *path_from_peer(const struct peer *peer)
 {
 
 	if (!peer->published) {
-		warnx("BUG: %s on peer %s", __func__, peer_tostr(peer));
+		bug_warn("%s on peer %s", __func__, peer_tostr(peer));
 		return NULL;
 	}
 	return peer->path;
@@ -527,7 +541,7 @@ static int read_message(struct ctx *ctx, int sd, uint8_t **ret_buf, size_t *ret_
 		goto out;
 	}
 	if ((size_t)len != buf_size) {
-		warnx("BUG: incorrect recvfrom %zd, expected %zu", len, buf_size);
+		bug_warn("incorrect recvfrom %zd, expected %zu", len, buf_size);
 		rc = -EPROTO;
 		goto out;
 	}
@@ -568,7 +582,7 @@ static int reply_message(struct ctx *ctx, int sd, const void *resp, size_t resp_
 
 	if (reply_addr.smctp_addr.s_addr == 0 ||
 		 reply_addr.smctp_addr.s_addr == 0xff) {
-		warnx("BUG: reply_message can't take EID %d",
+		bug_warn("reply_message can't take EID %d",
 			reply_addr.smctp_addr.s_addr);
 		return -EPROTO;
 	}
@@ -581,7 +595,7 @@ static int reply_message(struct ctx *ctx, int sd, const void *resp, size_t resp_
 	}
 
 	if ((size_t)len != resp_len) {
-		warnx("BUG: short sendto %zd, expected %zu", len, resp_len);
+		bug_warn("short sendto %zd, expected %zu", len, resp_len);
 		return -EPROTO;
 	}
 	return 0;
@@ -808,7 +822,7 @@ static int cb_listen_control_msg(sd_event_source *s, int sd, uint32_t revents,
 		errx(EXIT_FAILURE, "Control socket returned EOF");
 
 	if (addr.smctp_base.smctp_type != MCTP_CTRL_HDR_MSG_TYPE) {
-		warnx("BUG: Wrong message type for listen socket");
+		bug_warn("Wrong message type for listen socket");
 		rc = -EINVAL;
 		goto out;
 	}
@@ -1168,7 +1182,7 @@ static int endpoint_query_addr(struct ctx *ctx,
 	}
 
 	if (req_len == 0) {
-		warnx("BUG: zero length request");
+		bug_warn("zero length request");
 		rc = -EPROTO;
 		goto out;
 	}
@@ -1184,7 +1198,7 @@ static int endpoint_query_addr(struct ctx *ctx,
 		goto out;
 	}
 	if ((size_t)rc != req_len) {
-		warnx("BUG: incorrect sendto %zd, expected %zu", rc, req_len);
+		bug_warn("incorrect sendto %zd, expected %zu", rc, req_len);
 		rc = -EPROTO;
 		goto out;
 	}
@@ -1233,7 +1247,7 @@ static int endpoint_query_peer(const struct peer *peer,
 	struct sockaddr_mctp_ext addr = {0};
 
 	if (peer->state != REMOTE) {
-		warnx("BUG: %s bad peer %s", __func__, peer_tostr(peer));
+		bug_warn("%s bad peer %s", __func__, peer_tostr(peer));
 		return -EPROTO;
 	}
 
@@ -1347,7 +1361,7 @@ static int add_peer(struct ctx *ctx, const dest_phys *dest, mctp_eid_t eid,
 
 	n = lookup_net(ctx, net);
 	if (!n) {
-		warnx("BUG: %s Bad net %u", __func__, net);
+		bug_warn("%s Bad net %u", __func__, net);
 		return -EPROTO;
 	}
 
@@ -1395,13 +1409,13 @@ static int add_peer(struct ctx *ctx, const dest_phys *dest, mctp_eid_t eid,
 static int check_peer_struct(const struct peer *peer, const struct net *n)
 {
 	if (n->net != peer->net) {
-		warnx("BUG: Mismatching net %d vs peer net %u",
+		bug_warn("Mismatching net %d vs peer net %u",
 		      n->net, peer->net);
 		return -1;
 	}
 
 	if (peer != n->peers[peer->eid]) {
-		warnx("BUG: Bad peer: net %u eid %02x", peer->net, peer->eid);
+		bug_warn("Bad peer: net %u eid %02x", peer->net, peer->eid);
 		return -1;
 	}
 
@@ -1417,12 +1431,12 @@ static int remove_peer(struct peer *peer)
 
 	n = lookup_net(peer->ctx, peer->net);
 	if (!n) {
-		warnx("BUG: %s: Bad net %u", __func__, peer->net);
+		bug_warn("%s: Bad net %u", __func__, peer->net);
 		return -EPROTO;
 	}
 
 	if (check_peer_struct(peer, n) != 0) {
-		warnx("BUG: %s: Inconsistent state", __func__);
+		bug_warn("%s: Inconsistent state", __func__);
 		return -EPROTO;
 	}
 
@@ -1450,7 +1464,7 @@ static int remove_peer(struct peer *peer)
 	}
 
 	if (idx == ctx->num_peers) {
-		warnx("BUG: peer net %u, eid %d not found on remove!",
+		bug_warn("peer net %u, eid %d not found on remove!",
 		      peer->net, peer->eid);
 		return -EPROTO;
 	}
@@ -1494,12 +1508,12 @@ static int change_peer_eid(struct peer *peer, mctp_eid_t new_eid)
 
 	n = lookup_net(peer->ctx, peer->net);
 	if (!n) {
-		warnx("BUG: %s: Bad net %u", __func__, peer->net);
+		bug_warn("%s: Bad net %u", __func__, peer->net);
 		return -EPROTO;
 	}
 
 	if (check_peer_struct(peer, n) != 0) {
-		warnx("BUG: %s: Inconsistent state", __func__);
+		bug_warn("%s: Inconsistent state", __func__);
 		return -EPROTO;
 	}
 
@@ -1524,7 +1538,7 @@ static int peer_set_mtu(struct ctx *ctx, struct peer *peer, uint32_t mtu) {
 
 	ifname = mctp_nl_if_byindex(ctx->nl, peer->phys.ifindex);
 	if (!ifname) {
-		warnx("BUG %s: no interface for ifindex %d",
+		bug_warn("%s: no interface for ifindex %d",
 			__func__, peer->phys.ifindex);
 		return -EPROTO;
 	}
@@ -1555,13 +1569,13 @@ static int endpoint_assign_eid(struct ctx *ctx, sd_bus_error *berr, const dest_p
 
 	net = mctp_nl_net_byindex(ctx->nl, dest->ifindex);
 	if (!net) {
-		warnx("BUG: No net known for ifindex %d", dest->ifindex);
+		bug_warn("No net known for ifindex %d", dest->ifindex);
 		return -EPROTO;
 	}
 
 	n = lookup_net(ctx, net);
 	if (!n) {
-		warnx("BUG: Unknown net %d", net);
+		bug_warn("Unknown net %d", net);
 		return -EPROTO;
 	}
 
@@ -2231,7 +2245,7 @@ static int peer_route_update(struct peer *peer, uint16_t type)
 
 	link = mctp_nl_if_byindex(peer->ctx->nl, peer->phys.ifindex);
 	if (!link) {
-		warnx("BUG %s: Unknown ifindex %d", __func__, peer->phys.ifindex);
+		bug_warn("%s: Unknown ifindex %d", __func__, peer->phys.ifindex);
 		return -ENODEV;
 	}
 
@@ -2242,7 +2256,7 @@ static int peer_route_update(struct peer *peer, uint16_t type)
 		return mctp_nl_route_del(peer->ctx->nl, peer->eid, link);
 	}
 
-	warnx("BUG %s: bad type %d", __func__, type);
+	bug_warn("%s: bad type %d", __func__, type);
 	return -EPROTO;
 }
 
@@ -3166,18 +3180,18 @@ static int del_local_eid(struct ctx *ctx, uint32_t net, int eid)
 
 	peer = find_peer_by_addr(ctx, eid, net);
 	if (!peer) {
-		warnx("BUG: local eid %d net %d to delete is missing", eid, net);
+		bug_warn("local eid %d net %d to delete is missing", eid, net);
 		return -ENOENT;
 	}
 
 	if (peer->state != LOCAL) {
-		warnx("BUG: local eid %d net %d to delete is incorrect", eid, net);
+		bug_warn("local eid %d net %d to delete is incorrect", eid, net);
 		return -EPROTO;
 	}
 
 	peer->local_count--;
 	if (peer->local_count < 0) {
-		warnx("BUG: local eid %d net %d bad refcount %d",
+		bug_warn("local eid %d net %d bad refcount %d",
 			eid, net, peer->local_count);
 	}
 
@@ -3218,7 +3232,7 @@ static int prune_old_nets(struct ctx *ctx)
 			for (size_t p = 0; p < 256; p++) {
 				// Sanity check that no peers are used
 				if (ctx->nets[i]->peers[p]) {
-					warnx("BUG: stale entry for eid %zd in deleted net %d",
+					bug_warn("stale entry for eid %zd in deleted net %d",
 						p, net->net);
 				}
 			}
@@ -3293,13 +3307,13 @@ static int change_net_interface(struct ctx *ctx, int ifindex, uint32_t old_net)
 
 	if (new_net == old_net) {
 		// Logic below may assume they differ
-		warnx("BUG: %s called with new=old=%d", __func__, old_net);
+		bug_warn("%s called with new=old=%d", __func__, old_net);
 		return -EPROTO;
 	}
 
 	old_n = lookup_net(ctx, old_net);
 	if (!old_n) {
-		warnx("BUG: %s: Bad old net %d", __func__, old_net);
+		bug_warn("%s: Bad old net %d", __func__, old_net);
 		return -EPROTO;
 	}
 	new_n = lookup_net(ctx, new_net);
@@ -3322,13 +3336,13 @@ static int change_net_interface(struct ctx *ctx, int ifindex, uint32_t old_net)
 		}
 
 		if (peer->net != old_net) {
-			warnx("BUG: %s: Mismatch old net %d vs %d, new net %d",
+			bug_warn("%s: Mismatch old net %d vs %d, new net %d",
 				__func__, peer->net, old_net, new_net);
 			continue;
 
 		}
 		if (check_peer_struct(peer, old_n) != 0) {
-			warnx("BUG: %s: Inconsistent state", __func__);
+			bug_warn("%s: Inconsistent state", __func__);
 			return -EPROTO;
 		}
 
@@ -3382,7 +3396,7 @@ static int add_local_eid(struct ctx *ctx, uint32_t net, int eid)
 
 	rc = add_peer(ctx, &local_phys, eid, net, &peer);
 	if (rc < 0) {
-		warn("BUG: Error adding local eid %d net %d", eid, net);
+		bug_warn("Error adding local eid %d net %d", eid, net);
 		return rc;
 	}
 	peer->state = LOCAL;
@@ -3462,7 +3476,7 @@ static int add_net(struct ctx *ctx, uint32_t net_id)
 	struct net *net, **tmp;
 
 	if (lookup_net(ctx, net_id) != NULL) {
-		warnx("BUG: add_net for existing net %d", net_id);
+		bug_warn("add_net for existing net %d", net_id);
 		return -EEXIST;
 	}
 

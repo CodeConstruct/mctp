@@ -9,6 +9,7 @@
 
 #include <unistd.h>
 #include <linux/netlink.h>
+#include <err.h>
 
 #include "mctp.h"
 #include "mctp-ops.h"
@@ -51,6 +52,11 @@ static int mctp_op_close(int sd)
 	return close(sd);
 }
 
+static void mctp_bug_warn(const char* fmt, va_list args)
+{
+	vwarnx(fmt, args);
+}
+
 const struct mctp_ops mctp_ops = {
 	.mctp = {
 		.socket = mctp_op_mctp_socket,
@@ -68,6 +74,7 @@ const struct mctp_ops mctp_ops = {
 		.recvfrom = mctp_op_recvfrom,
 		.close = mctp_op_close,
 	},
+	.bug_warn = mctp_bug_warn,
 };
 
 void mctp_ops_init(void) { }

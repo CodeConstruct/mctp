@@ -8,6 +8,7 @@
 #pragma once
 
 #include <sys/socket.h>
+#include <stdarg.h>
 
 #define _GNU_SOURCE
 
@@ -26,6 +27,7 @@ struct socket_ops {
 struct mctp_ops {
 	struct socket_ops mctp;
 	struct socket_ops nl;
+	void (*bug_warn)(const char* fmt, va_list args);
 };
 
 extern const struct mctp_ops mctp_ops;
