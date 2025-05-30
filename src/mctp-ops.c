@@ -51,7 +51,7 @@ static int mctp_op_close(int sd)
 	return close(sd);
 }
 
-struct mctp_ops mctp_ops = {
+const struct mctp_ops mctp_ops = {
 	.mctp = {
 		.socket = mctp_op_mctp_socket,
 		.setsockopt = mctp_op_setsockopt,

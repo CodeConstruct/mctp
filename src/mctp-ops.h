@@ -28,6 +28,6 @@ struct mctp_ops {
 	struct socket_ops nl;
 };
 
-extern struct mctp_ops mctp_ops;
+extern const struct mctp_ops mctp_ops;
 
 void mctp_ops_init(void);
