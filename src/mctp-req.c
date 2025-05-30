@@ -157,6 +157,7 @@ int main(int argc, char ** argv)
 	}
 
 	data = NULL;
+	ifindex = 0;
 
 	for (i = 1; i < argc; i += 2) {
 		optname = argv[i];
