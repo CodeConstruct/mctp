@@ -958,7 +958,14 @@ static int cb_listen_monitor(sd_event_source *s, int sd, uint32_t revents,
 		case MCTP_NL_DEL_LINK:
 		{
 			// Local addresses have already been deleted with DEL_EID
-			rc = del_interface(c->link_userdata);
+			if (c->link_userdata) {
+				rc = del_interface(c->link_userdata);
+			} else {
+				// Would have expected to have seen it in previous
+				// MCTP_NL_ADD_LINK or setup_nets().
+				rc = -ENOENT;
+				bug_warn("delete unconfigured interface %d", c->ifindex);
+			}
 			any_error |= (rc < 0);
 		}
 		break;
