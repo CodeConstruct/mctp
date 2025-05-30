@@ -1494,6 +1494,9 @@ static void free_peers(struct ctx *ctx)
 		free(peer->message_types);
 		free(peer->uuid);
 		free(peer->path);
+		sd_bus_slot_unref(peer->slot_obmc_endpoint);
+		sd_bus_slot_unref(peer->slot_cc_endpoint);
+		sd_bus_slot_unref(peer->slot_uuid);
 		free(peer);
 	}
 
@@ -3245,6 +3248,13 @@ static int prune_old_nets(struct ctx *ctx)
 	return 0;
 }
 
+static void free_link(struct link *link) {
+	sd_bus_slot_unref(link->slot_iface);
+	sd_bus_slot_unref(link->slot_busowner);
+	free(link->path);
+	free(link);
+}
+
 // Removes remote peers associated with an old interface.
 // Note that this link has already been removed from ctx->nl */
 static int del_interface(struct link *link)
@@ -3269,15 +3279,26 @@ static int del_interface(struct link *link)
 		warnx("Failed to remove D-Bus interface of ifindex %d",
 		      link->ifindex);
 	prune_old_nets(ctx);
+	free_link(link);
 
-	sd_bus_slot_unref(link->slot_iface);
-	link->slot_iface = NULL;
-	sd_bus_slot_unref(link->slot_busowner);
-	link->slot_busowner = NULL;
-
-	free(link->path);
-	free(link);
 	return 0;
+}
+
+// For program termination cleanup
+static void free_links(struct ctx *ctx)
+{
+	size_t num;
+	int* ifs;
+
+	ifs = mctp_nl_if_list(ctx->nl, &num);
+	for (size_t i = 0; i < num; i++) {
+		struct link* link = mctp_nl_get_link_userdata(ctx->nl, ifs[i]);
+		mctp_nl_set_link_userdata(ctx->nl, ifs[i], NULL);
+		if (link) {
+			free_link(link);
+		}
+	}
+	free(ifs);
 }
 
 // Moves remote peers from old->new net.
@@ -3865,13 +3886,13 @@ int main(int argc, char **argv)
 		return 1;
 	}
 
-	sd_bus_flush(ctx->bus);
-	sd_bus_close(ctx->bus);
+	sd_bus_flush_close_unrefp(&ctx->bus);
 
-	mctp_nl_close(ctx->nl);
-
+	free_links(ctx);
 	free_peers(ctx);
 	free_nets(ctx);
+
+	mctp_nl_close(ctx->nl);
 
 	return 0;
 }
