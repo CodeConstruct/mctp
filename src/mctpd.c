@@ -1378,11 +1378,9 @@ static int add_peer(struct ctx *ctx, const dest_phys *dest, mctp_eid_t eid,
 		return -ENOMEM;
 
 	// Allocate the peer itself
-	peer = malloc(sizeof(*peer));
+	peer = calloc(1, sizeof(*peer));
 	if (!peer)
 		return -ENOMEM;
-
-	memset(peer, 0, sizeof(*peer));
 
 	// Add it to our peers array
 	tmp = realloc(ctx->peers, (ctx->num_peers + 1) * sizeof(*ctx->peers));
@@ -3501,12 +3499,11 @@ static int add_net(struct ctx *ctx, uint32_t net_id)
 		return -EEXIST;
 	}
 
-	net = malloc(sizeof(*net));
+	net = calloc(1, sizeof(*net));
 	if (!net) {
 		warn("failed to allocate net");
 		return -ENOMEM;
 	}
-	memset(net, 0, sizeof(*net));
 
 	// Initialise the new entry
 	net->net = net_id;
