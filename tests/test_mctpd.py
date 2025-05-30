@@ -656,7 +656,6 @@ async def test_add_interface(dbus, mctpd):
     )
     assert eid == static_eid
     assert new
-    print(f"routes {mctpd.system.routes}")
     assert mctpd.system.lookup_route(net, static_eid).iface == iface
 
     # Remove the netdevice
@@ -687,5 +686,3 @@ async def test_add_interface(dbus, mctpd):
     assert eid == static_eid
     assert new
     assert mctpd.system.lookup_route(net, static_eid).iface == iface
-
-    print(mctpd)
