@@ -1472,12 +1472,17 @@ static int remove_peer(struct peer *peer)
 	memmove(ctx->peers + idx, ctx->peers + idx + 1,
 		(ctx->num_peers - idx) * sizeof(struct peer *));
 
-	tmp = realloc(ctx->peers, ctx->num_peers * sizeof(struct peer *));
-	if (!tmp && ctx->num_peers) {
-		warn("%s: peer realloc(reduce!) failed", __func__);
-		// we'll re-try on next add/remove
+	if (ctx->num_peers > 0) {
+		tmp = realloc(ctx->peers, ctx->num_peers * sizeof(struct peer *));
+		if (!tmp) {
+			warn("%s: peer realloc(reduce!) failed", __func__);
+			// we'll re-try on next add/remove
+		} else {
+			ctx->peers = tmp;
+		}
 	} else {
-		ctx->peers = tmp;
+		free(ctx->peers);
+		ctx->peers = NULL;
 	}
 
 	free(peer);
