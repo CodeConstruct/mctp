@@ -21,8 +21,12 @@ async def dbus():
         yield bus
 
 @pytest.fixture
-async def mctpd(nursery, dbus, sysnet):
-    m = fake_mctpd.MctpdWrapper(dbus, sysnet)
+def config():
+    return None
+
+@pytest.fixture
+async def mctpd(nursery, dbus, sysnet, config):
+    m = fake_mctpd.MctpdWrapper(dbus, sysnet, config = config)
     await m.start_mctpd(nursery)
     yield m
     res = await m.stop_mctpd()

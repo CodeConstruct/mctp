@@ -6,6 +6,7 @@ import signal
 import socket
 import struct
 import sys
+import tempfile
 import trio
 import uuid
 
@@ -975,11 +976,12 @@ async def send_fd(sock, fd):
 
 
 class MctpdWrapper:
-    def __init__(self, bus, sysnet, binary=None):
+    def __init__(self, bus, sysnet, binary=None, config=None):
         self.bus = bus
         self.system = sysnet.system
         self.network = sysnet.network
         self.binary = binary or './test-mctpd'
+        self.config = config
         (self.sock_local, self.sock_remote) = self.socketpair()
 
     def socketpair(self):
@@ -1056,8 +1058,18 @@ class MctpdWrapper:
         # start mctpd, passing our control socket
         env = os.environ.copy()
         env['MCTP_TEST_SOCK'] = str(self.sock_remote.fileno())
+
+        if self.config:
+            config_file = tempfile.NamedTemporaryFile('w', prefix="mctp.conf.")
+            config_file.write(self.config)
+            config_file.flush()
+            command = [self.binary, '-v', '-c', config_file.name]
+        else:
+            config_file = None
+            command = [self.binary, '-v']
+
         proc = await trio.lowlevel.open_process(
-                [self.binary, '-v'], # todo: flexible paths
+                command = command,
                 pass_fds = (1, 2, self.sock_remote.fileno()),
                 env = env,
             )
@@ -1073,6 +1085,9 @@ class MctpdWrapper:
         task_status.started(proc)
 
         proc_rc = await proc.wait()
+
+        if config_file:
+            config_file.close()
 
         await send_chan.send(proc_rc)
 
