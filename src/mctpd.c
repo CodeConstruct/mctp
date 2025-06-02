@@ -3573,7 +3573,7 @@ static int add_interface(struct ctx *ctx, int ifindex)
 		return -ENOENT;
 	}
 
-	struct link *link = malloc(sizeof(*link));
+	struct link *link = calloc(1, sizeof(*link));
 	if (!link)
 		return -ENOMEM;
 
