@@ -670,6 +670,10 @@ class NLSocket(BaseSocket):
             await self._handle_getlink(msg)
         elif typ == rtnl.RTM_GETADDR:
             await self._handle_getaddr(msg)
+        elif typ == rtnl.RTM_NEWADDR:
+            await self._handle_newaddr(msg)
+        elif typ == rtnl.RTM_DELADDR:
+            await self._handle_deladdr(msg)
 
         elif typ == rtnl.RTM_GETROUTE:
             await self._handle_getroute(msg)
@@ -782,6 +786,45 @@ class NLSocket(BaseSocket):
         self._append_nlmsg_done(buf, msg)
 
         await self._send_msg(buf)
+
+    async def _handle_newaddr(self, msg):
+        # reparse as ifaddrmsg
+        msg = ifaddrmsg_mctp(msg.data)
+        msg.decode()
+
+        ifindex = msg["index"]
+        eid = msg.get_attr("IFA_LOCAL")
+
+        iface = self.system.find_interface_by_ifindex(ifindex)
+        address = System.Address(iface, eid)
+        try:
+            await self.system.add_address(address)
+        except NetlinkError as nle:
+            msg = nle.to_nlmsg()
+            msg.encode()
+            await self._send_msg(msg.data)
+            return
+        if msg['header']['flags'] & netlink.NLM_F_ACK:
+            await self._nlmsg_ack(msg)
+
+    async def _handle_deladdr(self, msg):
+        msg = ifaddrmsg_mctp(msg.data)
+        msg.decode()
+
+        ifindex = msg["index"]
+        eid = msg.get_attr("IFA_LOCAL")
+
+        iface = self.system.find_interface_by_ifindex(ifindex)
+        addr = System.Address(iface, eid)
+        try:
+            await self.system.del_address(addr)
+        except NetlinkError as nle:
+            msg = nle.to_nlmsg()
+            msg.encode()
+            await self._send_msg(msg.data)
+            return
+        if msg["header"]["flags"] & netlink.NLM_F_ACK:
+            await self._nlmsg_ack(msg)
 
     async def _notify_addr(self, addr, typ):
         msg = self._create_msg(ifaddrmsg_mctp, typ, 0)
