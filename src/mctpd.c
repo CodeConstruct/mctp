@@ -196,7 +196,7 @@ struct ctx {
 	sd_bus *bus;
 
 	// Configuration
-	const char *config_filename;
+	char *config_filename;
 
 	mctp_nl *nl;
 
@@ -3829,6 +3829,11 @@ static void setup_config_defaults(struct ctx *ctx)
 	ctx->default_role = ENDPOINT_ROLE_BUS_OWNER;
 }
 
+static void free_config(struct ctx *ctx)
+{
+	free(ctx->config_filename);
+}
+
 int main(int argc, char **argv)
 {
 	struct ctx ctxi = {0}, *ctx = &ctxi;
@@ -3900,6 +3905,7 @@ int main(int argc, char **argv)
 	free_links(ctx);
 	free_peers(ctx);
 	free_nets(ctx);
+	free_config(ctx);
 
 	mctp_nl_close(ctx->nl);
 
