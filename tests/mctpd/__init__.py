@@ -303,7 +303,7 @@ class Endpoint:
         iid = flags & 0x1f
 
         if not rq:
-            cmd = self.commands.get((0, iid), None)
+            cmd = self.commands.pop((0, iid), None)
             assert cmd is not None, "unexpected response?"
 
             await cmd.complete(data)
