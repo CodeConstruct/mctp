@@ -55,6 +55,7 @@ executable('mctp',
 
 executable('mctp-req',
     sources: ['src/mctp-req.c'] + util_sources,
+    install: true
 )
 
 executable('mctp-echo',

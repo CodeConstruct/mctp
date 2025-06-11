@@ -20,22 +20,18 @@
 
 static const int DEFAULT_NET = 1;
 static const mctp_eid_t DEFAULT_EID = 8;
-static const size_t DEFAULT_LEN = 1;
-
-// Code Construct allocation
-static const uint8_t VENDOR_TYPE_ECHO[3] = { 0xcc, 0xde, 0xf0 };
-static const uint8_t MCTP_TYPE_VENDOR_PCIE = 0x7e;
 
 /* lladdrlen != -1 to ignore ifindex/lladdr */
 static int mctp_req(unsigned int net, mctp_eid_t eid,
 	unsigned int ifindex, uint8_t *lladdr, int lladdrlen,
-	uint8_t *data, size_t len)
+	uint8_t *data, size_t len, uint8_t type)
 {
 	struct sockaddr_mctp_ext addr;
-	unsigned char *payload, *buf;
+	unsigned char *rxbuf;
 	socklen_t addrlen;
 	int rc, sd, val;
-	size_t i, buf_len;
+	size_t recvlen;
+	size_t i;
 
 	sd = socket(AF_MCTP, SOCK_DGRAM, 0);
 	if (sd < 0)
@@ -46,24 +42,8 @@ static int mctp_req(unsigned int net, mctp_eid_t eid,
 	addr.smctp_base.smctp_family = AF_MCTP;
 	addr.smctp_base.smctp_network = net;
 	addr.smctp_base.smctp_addr.s_addr = eid;
-	addr.smctp_base.smctp_type = MCTP_TYPE_VENDOR_PCIE;
+	addr.smctp_base.smctp_type = type;
 	addr.smctp_base.smctp_tag = MCTP_TAG_OWNER;
-	printf("req:  sending to (net %d, eid %d), type 0x%x\n",
-		net, eid, addr.smctp_base.smctp_type);
-
-	buf_len = len + sizeof(VENDOR_TYPE_ECHO);
-	buf = malloc(buf_len);
-	if (!buf)
-		err(EXIT_FAILURE, "malloc");
-	memcpy(buf, VENDOR_TYPE_ECHO, sizeof(VENDOR_TYPE_ECHO));
-	payload = &buf[sizeof(VENDOR_TYPE_ECHO)];
-
-	if (data) {
-		memcpy(payload, data, len);
-	} else {
-		for (i = 0; i < len; i++)
-			payload[i] = i & 0xff;
-	}
 
 	/* extended addressing */
 	if (lladdrlen != -1) {
@@ -71,9 +51,6 @@ static int mctp_req(unsigned int net, mctp_eid_t eid,
 		addr.smctp_halen = lladdrlen;
 		memcpy(addr.smctp_haddr, lladdr, lladdrlen);
 		addr.smctp_ifindex = ifindex;
-		printf("      ext ifindex %d ha[0]=0x%02x len %hhu\n",
-			addr.smctp_ifindex,
-			addr.smctp_haddr[0], addr.smctp_halen);
 		val = 1;
 		rc = setsockopt(sd, SOL_MCTP, MCTP_OPT_ADDR_EXT, &val, sizeof(val));
 		if (rc < 0)
@@ -83,20 +60,29 @@ static int mctp_req(unsigned int net, mctp_eid_t eid,
 
 
 	/* send data */
-	rc = sendto(sd, buf, buf_len, 0,
+	rc = sendto(sd, data, len, 0,
 			(struct sockaddr *)&addr, addrlen);
-	if (rc != (int)buf_len)
-		err(EXIT_FAILURE, "sendto(%zd)", buf_len);
+	if (rc != (int)len)
+		err(EXIT_FAILURE, "sendto(%zd)", len);
 
 	/* receive response */
 	addrlen = sizeof(addr);
-	rc = recvfrom(sd, buf, buf_len, MSG_TRUNC,
+	recvlen = recvfrom(sd, NULL, 0, MSG_PEEK | MSG_TRUNC,
+				   NULL, 0);
+	if (recvlen < 0)
+		err(EXIT_FAILURE, "recvfrom(MSG_PEEK)");
+
+	rxbuf = calloc(recvlen, sizeof(*rxbuf));
+	if (!rxbuf)
+		err(EXIT_FAILURE, "calloc");
+
+	rc = recvfrom(sd, rxbuf, recvlen, MSG_TRUNC,
 			(struct sockaddr *)&addr, &addrlen);
 	if (rc < 0)
 		err(EXIT_FAILURE, "recvfrom");
-	else if ((size_t)rc != buf_len)
+	else if ((size_t)rc != recvlen)
 		errx(EXIT_FAILURE, "unexpected length: got %d, exp %zd",
-				rc, buf_len);
+				rc, recvlen);
 
 	if (!(addrlen == sizeof(struct sockaddr_mctp_ext) ||
 		addrlen == sizeof(struct sockaddr_mctp)))
@@ -104,38 +90,21 @@ static int mctp_req(unsigned int net, mctp_eid_t eid,
 				addrlen, sizeof(struct sockaddr_mctp_ext),
 				sizeof(struct sockaddr_mctp));
 
-
-	printf("req:  message from (net %d, eid %d) type 0x%x len %zd\n",
-			addr.smctp_base.smctp_network, addr.smctp_base.smctp_addr.s_addr,
-			addr.smctp_base.smctp_type,
-			len);
-	if (addrlen == sizeof(struct sockaddr_mctp_ext)) {
-		printf("      ext ifindex %d ha[0]=0x%02x len %hhu\n",
-			addr.smctp_ifindex,
-			addr.smctp_haddr[0], addr.smctp_halen);
+	for (i = 0; i < recvlen; ++i) {
+		printf("0x%02x", rxbuf[i]);
+		if (i != (recvlen - 1))
+			printf(":");
 	}
 
-	if (memcmp(buf, VENDOR_TYPE_ECHO, sizeof(VENDOR_TYPE_ECHO)) != 0) {
-		errx(EXIT_FAILURE, "unexpected vendor ID");
-	}
-
-	for (i = 0; i < len; i++) {
-		uint8_t exp = data ? data[i] : i & 0xff;
-		if (payload[i] != exp)
-			errx(EXIT_FAILURE,
-				"payload mismatch at byte 0x%zx; "
-					"sent 0x%02x, received 0x%02x",
-				i, exp, buf[i]);
-	}
-
+	printf("\n");
 	return 0;
 }
 
 static void usage(void)
 {
-	fprintf(stderr, "mctp-req [eid <eid>] [net <net>] [ifindex <ifindex> lladdr <hwaddr>] [len <len>]\n");
-	fprintf(stderr, "default eid %d net %d len %zd\n",
-			DEFAULT_EID, DEFAULT_NET, DEFAULT_LEN);
+	fprintf(stderr, "mctp-req [eid <eid>] [net <net>] type <type> [ifindex <ifindex> lladdr <hwaddr>] data <data>\n");
+	fprintf(stderr, "default eid %d net %d\n",
+			DEFAULT_EID, DEFAULT_NET);
 }
 
 int main(int argc, char ** argv)
@@ -143,11 +112,12 @@ int main(int argc, char ** argv)
 	uint8_t *data, lladdr[MAX_ADDR_LEN];
 	int lladdrlen = -1, datalen = -1;
 	unsigned int net = DEFAULT_NET;
-	mctp_eid_t eid = DEFAULT_EID;
-	size_t len = DEFAULT_LEN, sz;
 	char *endp, *optname, *optval;
+	mctp_eid_t eid = DEFAULT_EID;
+	bool valid_parse, valid_type;
 	unsigned int tmp, ifindex;
-	bool valid_parse;
+	uint8_t type;
+	size_t sz;
 	int i;
 
 	if (!(argc % 2)) {
@@ -156,8 +126,14 @@ int main(int argc, char ** argv)
 		return 255;
 	}
 
-	data = NULL;
+	if (argc < 5) {
+		usage();
+		return EXIT_FAILURE;
+	}
+
 	ifindex = 0;
+	data = NULL;
+	valid_type = false;
 
 	for (i = 1; i < argc; i += 2) {
 		optname = argv[i];
@@ -174,12 +150,13 @@ int main(int argc, char ** argv)
 			if (tmp > 0xff)
 				errx(EXIT_FAILURE, "Bad net");
 			net = tmp;
+		} else if (!strcmp(optname, "type")) {
+			type = tmp;
+			if (type > 0xff)
+				errx(EXIT_FAILURE, "Bad type");
+			valid_type = true;
 		} else if (!strcmp(optname, "ifindex")) {
 			ifindex = tmp;
-		} else if (!strcmp(optname, "len")) {
-			if (tmp > 64 * 1024)
-				errx(EXIT_FAILURE, "Bad len");
-			len = tmp;
 		} else if (!strcmp(optname, "data")) {
 			sz = (strlen(optval) + 2) / 3;
 			data = malloc(sz);
@@ -207,8 +184,16 @@ int main(int argc, char ** argv)
 		}
 	}
 
-	if (data)
-		len = datalen;
+	if (!datalen || !data) {
+		printf("data is a required field\n");
+		usage();
+		return EXIT_FAILURE;
+	}
+	if (!valid_type) {
+		printf("type is a required field\n");
+		usage();
+		return EXIT_FAILURE;
+	}
 
-	return mctp_req(net, eid, ifindex, lladdr, lladdrlen, data, len);
+	return mctp_req(net, eid, ifindex, lladdr, lladdrlen, data, datalen, type);
 }
