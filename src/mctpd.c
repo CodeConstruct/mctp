@@ -1299,7 +1299,8 @@ static int endpoint_query_phys(struct ctx *ctx, const dest_phys *dest,
 }
 
 /* returns -ECONNREFUSED if the endpoint returns failure. */
-static int endpoint_send_set_endpoint_id(const struct peer *peer, mctp_eid_t *new_eid)
+static int endpoint_send_set_endpoint_id(const struct peer *peer,
+					 mctp_eid_t *new_eidp)
 {
 	struct sockaddr_mctp_ext addr;
 	struct mctp_ctrl_cmd_set_eid req = {0};
@@ -1309,6 +1310,7 @@ static int endpoint_send_set_endpoint_id(const struct peer *peer, mctp_eid_t *ne
 	size_t buf_size;
 	uint8_t iid, stat, alloc;
 	const dest_phys *dest = &peer->phys;
+	mctp_eid_t new_eid;
 
 	rc = -1;
 
@@ -1331,18 +1333,34 @@ static int endpoint_send_set_endpoint_id(const struct peer *peer, mctp_eid_t *ne
 	resp = (void*)buf;
 
 	stat = resp->status >> 4 & 0x3;
+	new_eid = resp->eid_set;
+
+	// For both accepted and rejected cases, we learn the new EID of the
+	// endpoint. If this is a valid ID, we are likely to be able to handle
+	// this, as the caller may be able to change_peer_eid() to the
+	// newly-reported eid
 	if (stat == 0x01) {
-		// changed eid
+		if (!mctp_eid_is_valid_unicast(new_eid)) {
+			warnx("%s rejected assignment eid %d, and reported invalid eid %d",
+				dest_phys_tostr(dest), peer->eid, new_eid);
+			rc = -ECONNREFUSED;
+			goto out;
+		}
 	} else if (stat == 0x00) {
-		if (resp->eid_set != peer->eid) {
+		if (!mctp_eid_is_valid_unicast(new_eid)) {
+			warnx("%s eid %d replied with invalid eid %d, but 'accepted'",
+				dest_phys_tostr(dest), peer->eid, new_eid);
+			rc = -ECONNREFUSED;
+			goto out;
+		} else if (new_eid != peer->eid) {
 			warnx("%s eid %d replied with different eid %d, but 'accepted'",
-				dest_phys_tostr(dest), peer->eid, resp->eid_set);
+				dest_phys_tostr(dest), peer->eid, new_eid);
 		}
 	} else {
 		warnx("%s unexpected status 0x%02x",
 			dest_phys_tostr(dest), resp->status);
 	}
-	*new_eid = resp->eid_set;
+	*new_eidp = new_eid;
 
 	alloc = resp->status & 0x3;
 	if (alloc != 0) {
@@ -1518,6 +1536,9 @@ static int change_peer_eid(struct peer *peer, mctp_eid_t new_eid)
 {
 	struct net *n = NULL;
 	int rc;
+
+	if (!mctp_eid_is_valid_unicast(new_eid))
+		return -EINVAL;
 
 	n = lookup_net(peer->ctx, peer->net);
 	if (!n) {

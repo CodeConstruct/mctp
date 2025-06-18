@@ -1,4 +1,7 @@
+#include <stdbool.h>
 #include <stdint.h>
+
+#include "mctp.h"
 
 #define max(a, b) ((a) > (b) ? (a) : (b))
 #define min(a, b) ((a) < (b) ? (a) : (b))
@@ -13,3 +16,4 @@ int parse_uint32(const char *str, uint32_t *out);
 int parse_int32(const char *str, int32_t *out);
 /* Returns a malloced pointer */
 char* bytes_to_uuid(const uint8_t u[16]);
+bool mctp_eid_is_valid_unicast(mctp_eid_t eid);

@@ -446,6 +446,107 @@ async def test_learn_endpoint_invalid_response_command(dbus, mctpd):
 
     assert str(ex.value) == "Request failed"
 
+""" During a SetupEndpoint's Set Endpoint ID exchange, return a response
+that indicates that the EID has been set, but report an invalid (0) EID
+in the response."""
+async def test_setup_endpoint_invalid_set_eid_response(dbus, mctpd):
+    class InvalidEndpoint(Endpoint):
+        async def handle_mctp_control(self, sock, src_addr, msg):
+            flags, opcode = msg[0:2]
+            if opcode != 1:
+                return await super().handle_mctp_control(sock, src_addr, msg)
+            dst_addr = MCTPSockAddr.for_ep_resp(self, src_addr, sock.addr_ext)
+            self.eid = msg[3]
+            msg = bytes([
+                flags & 0x1f, # Rsp
+                0x01, # opcode: Set Endpoint ID
+                0x00, # cc: success
+                0x00, # assignment accepted, no pool
+                0x00, # set EID: invalid
+                0x00, # pool size: 0
+            ])
+            await sock.send(dst_addr, msg)
+
+    iface = mctpd.system.interfaces[0]
+    ep = InvalidEndpoint(iface, bytes([0x1e]), eid = 0)
+    mctpd.network.add_endpoint(ep)
+    mctp = await mctpd_mctp_iface_obj(dbus, iface)
+
+    with pytest.raises(asyncdbus.errors.DBusError) as ex:
+        rc = await mctp.call_setup_endpoint(ep.lladdr)
+
+    assert str(ex.value) == "Endpoint returned failure to Set Endpoint ID"
+
+""" During a SetupEndpoint's Set Endpoint ID exchange, return a response
+that indicates that the EID has been set, but report a different set EID
+in the response."""
+async def test_setup_endpoint_vary_set_eid_response(dbus, mctpd):
+    class VaryEndpoint(Endpoint):
+        async def handle_mctp_control(self, sock, src_addr, msg):
+            flags, opcode = msg[0:2]
+            if opcode != 1:
+                return await super().handle_mctp_control(sock, src_addr, msg)
+            dst_addr = MCTPSockAddr.for_ep_resp(self, src_addr, sock.addr_ext)
+            self.eid = msg[3] + 1
+            msg = bytes([
+                flags & 0x1f, # Rsp
+                0x01, # opcode: Set Endpoint ID
+                0x00, # cc: success
+                0x00, # assignment accepted, no pool
+                self.eid, # set EID: valid, but not what was assigned
+                0x00, # pool size: 0
+            ])
+            await sock.send(dst_addr, msg)
+
+    iface = mctpd.system.interfaces[0]
+    ep = VaryEndpoint(iface, bytes([0x1e]))
+    mctpd.network.add_endpoint(ep)
+    mctp = await mctpd_mctp_iface_obj(dbus, iface)
+
+    (eid, _, _, _) = await mctp.call_setup_endpoint(ep.lladdr)
+
+    assert eid == ep.eid
+
+""" During a SetupEndpoint's Set Endpoint ID exchange, return a response
+that indicates that the EID has been set, but report a different set EID
+in the response, which conflicts with another endpoint"""
+async def test_setup_endpoint_conflicting_set_eid_response(dbus, mctpd):
+
+    class ConflictingEndpoint(Endpoint):
+        def __init__(self, iface, lladdr, conflict_eid):
+            super().__init__(iface, lladdr)
+            self.conflict_eid = conflict_eid
+
+        async def handle_mctp_control(self, sock, src_addr, msg):
+            flags, opcode = msg[0:2]
+            if opcode != 1:
+                return await super().handle_mctp_control(sock, src_addr, msg)
+            dst_addr = MCTPSockAddr.for_ep_resp(self, src_addr, sock.addr_ext)
+            # reject reality, use a conflicting eid
+            self.eid = self.conflict_eid
+            msg = bytes([
+                flags & 0x1f, # Rsp
+                0x01, # opcode: Set Endpoint ID
+                0x00, # cc: success
+                0x00, # assignment accepted, no pool
+                self.eid, # set EID: valid, but not what was assigned
+                0x00, # pool size: 0
+            ])
+            await sock.send(dst_addr, msg)
+
+    iface = mctpd.system.interfaces[0]
+    ep1 = mctpd.network.endpoints[0]
+    mctp = await mctpd_mctp_iface_obj(dbus, iface)
+    (eid1, _, _, _) = await mctp.call_setup_endpoint(ep1.lladdr)
+    assert eid1 == ep1.eid
+
+    ep2 = ConflictingEndpoint(iface, bytes([0x1f]), ep1.eid)
+    mctpd.network.add_endpoint(ep2)
+    with pytest.raises(asyncdbus.errors.DBusError) as ex:
+        await mctp.call_setup_endpoint(ep2.lladdr)
+
+    assert "already used" in str(ex.value)
+
 """ Ensure a response with an invalid IID is discarded """
 async def test_learn_endpoint_invalid_response_iid(dbus, mctpd):
     class InvalidIIDEndpoint(Endpoint):
