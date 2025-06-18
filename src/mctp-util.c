@@ -156,3 +156,8 @@ char* bytes_to_uuid(const uint8_t u[16])
 		u[8], u[9], u[10], u[11], u[12], u[13], u[14], u[15]);
 	return buf;
 }
+
+bool mctp_eid_is_valid_unicast(mctp_eid_t eid)
+{
+	return eid >= 8 && eid < 0xff;
+}

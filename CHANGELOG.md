@@ -31,6 +31,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
    `au.com.codecontruct.MCTP.Interface1` interface, allowing link-to-network
    lookups
 
+5. mctpd: Better handling of strange cases of Set Endpoint ID responses,
+   where the reported endpoint EID may either be different from expected,
+   or invalid
+
 ### Changed
 
 1. tests are now run with address sanitizer enabled (-fsanitize=address)
