@@ -79,6 +79,7 @@ au.com.codeconstruct.MCTP.Interface1 interface -         -            -
 .NetworkId                           property  u         1            emits-change
 .Role                                property  s         "BusOwner"   emits-change writable
 au.com.codeconstruct.MCTP.BusOwner1  interface -         -            -
+.AssignBridgeStatic                 method    ayyyy     yisbs        -
 .AssignEndpoint                      method    ay        yisb         -
 .AssignEndpointStatic                method    ayy       yisb         -
 .LearnEndpoint                       method    ay        yisb         -
@@ -147,6 +148,22 @@ endpoint.
 Like SetupEndpoint but will not assign EIDs, will only query endpoints for a
 current EID. The `new` return value is set to `false` for an already known
 endpoint, or `true` when an endpoint's EID is newly discovered.
+
+#### `.AssignBridgeStatic`: `ayyyy` → `yisbs`
+
+Similar to AssignEndpointStatic to assign static bridge eid, but also takes additional arguments:
+
+`pool-start` : start EID for allocation of bridge pool.
+
+`pool-size` : size of bridge pool needed to be allocated.
+
+It returns extra message about Allocation status.
+`AssignBridgeStatic <hwaddr> <static-EID> <pool-start> <pool-size>`
+
+This call will fail if the Bridge endpoint already has an EID, and that EID is
+different from `static-EID`, or if `static-EID` is already assigned to another
+endpoint.
+
 
 ## Network objects: `/au/com/codeconstruct/networks/<net>`
 
