@@ -126,7 +126,10 @@ busctl call au.com.codeconstruct.MCTP1 \
 
 Similar to SetupEndpoint, but will always assign an EID rather than querying for
 existing ones. Will return `new = false` when an endpoint is already known to
-`mctpd`.
+`mctpd`. If the supposed endpoint is a bridge (has pool size), this method will try to
+allocate Contiguous EIDs to the downstream endpoints. If contiguous eid is not
+availiable to be assigned in the network among dynamic pool, only Bridge's own
+eid will be assigned.
 
 #### `.AssignEndpointStatic`: `ayy` → `yisb`
 
