@@ -570,6 +570,29 @@ out:
 	return rc;
 }
 
+/* Replies to a physical address */
+static int reply_message_phys(struct ctx *ctx, int sd, const void *resp, size_t resp_len,
+	const struct sockaddr_mctp_ext *addr)
+{
+	ssize_t len;
+	struct sockaddr_mctp_ext reply_addr = *addr;
+
+	reply_addr.smctp_base.smctp_tag &= ~MCTP_TAG_OWNER;
+
+	len = mctp_ops.mctp.sendto(sd, resp, resp_len, 0,
+				   (struct sockaddr *)&reply_addr,
+				   sizeof(reply_addr));
+	if (len < 0) {
+		return -errno;
+	}
+
+	if ((size_t)len != resp_len) {
+		bug_warn("short sendto %zd, expected %zu", len, resp_len);
+		return -EPROTO;
+	}
+	return 0;
+}
+
 /* Replies to a real EID, not physical addressing */
 static int reply_message(struct ctx *ctx, int sd, const void *resp, size_t resp_len,
 	const struct sockaddr_mctp_ext *addr)
@@ -694,7 +717,8 @@ static int handle_control_get_endpoint_id(struct ctx *ctx,
 	SET_ENDPOINT_ID_TYPE(resp->eid_type, 2);
 	// TODO: medium specific information
 
-	return reply_message(ctx, sd, resp, sizeof(*resp), addr);
+	// Get Endpoint ID is typically send and reply using physical addressing.
+	return reply_message_phys(ctx, sd, resp, sizeof(*resp), addr);
 }
 
 static int handle_control_get_endpoint_uuid(struct ctx *ctx,
@@ -1566,26 +1590,25 @@ static int change_peer_eid(struct peer *peer, mctp_eid_t new_eid)
 	return 0;
 }
 
-static int peer_set_mtu(struct ctx *ctx, struct peer *peer, uint32_t mtu) {
-	const char* ifname = NULL;
+static int peer_set_mtu(struct ctx *ctx, struct peer *peer, uint32_t mtu)
+{
 	int rc;
 
-	ifname = mctp_nl_if_byindex(ctx->nl, peer->phys.ifindex);
-	if (!ifname) {
+	if (!mctp_nl_if_exists(peer->ctx->nl, peer->phys.ifindex)) {
 		bug_warn("%s: no interface for ifindex %d",
 			__func__, peer->phys.ifindex);
 		return -EPROTO;
 	}
 
-	rc = mctp_nl_route_del(ctx->nl, peer->eid, ifname);
+	rc = mctp_nl_route_del(ctx->nl, peer->eid, peer->phys.ifindex);
 	if (rc < 0 && rc != -ENOENT) {
 		warnx("%s, Failed removing existing route for eid %d %s",
-			__func__,
-			peer->phys.ifindex, ifname);
+		      __func__, peer->phys.ifindex,
+		      mctp_nl_if_byindex(ctx->nl, peer->phys.ifindex));
 		// Continue regardless, route_add will likely fail with EEXIST
 	}
 
-	rc = mctp_nl_route_add(ctx->nl, peer->eid, ifname, mtu);
+	rc = mctp_nl_route_add(ctx->nl, peer->eid, peer->phys.ifindex, mtu);
 	if (rc >= 0) {
 		peer->mtu = mtu;
 	}
@@ -2275,19 +2298,17 @@ static int peer_neigh_update(struct peer *peer, uint16_t type)
 // type is RTM_NEWROUTE or RTM_DELROUTE
 static int peer_route_update(struct peer *peer, uint16_t type)
 {
-	const char * link;
-
-	link = mctp_nl_if_byindex(peer->ctx->nl, peer->phys.ifindex);
-	if (!link) {
+	if (!mctp_nl_if_exists(peer->ctx->nl, peer->phys.ifindex)) {
 		bug_warn("%s: Unknown ifindex %d", __func__, peer->phys.ifindex);
 		return -ENODEV;
 	}
 
 	if (type == RTM_NEWROUTE) {
-		return mctp_nl_route_add(peer->ctx->nl,
-			peer->eid, link, peer->mtu);
+		return mctp_nl_route_add(peer->ctx->nl, peer->eid,
+					 peer->phys.ifindex, peer->mtu);
 	} else if (type == RTM_DELROUTE) {
-		return mctp_nl_route_del(peer->ctx->nl, peer->eid, link);
+		return mctp_nl_route_del(peer->ctx->nl, peer->eid,
+					 peer->phys.ifindex);
 	}
 
 	bug_warn("%s: bad type %d", __func__, type);

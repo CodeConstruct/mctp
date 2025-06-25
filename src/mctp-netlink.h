@@ -78,6 +78,7 @@ void mctp_nl_linkmap_dump(const mctp_nl *nl);
 uint32_t *mctp_nl_net_list(const mctp_nl *nl, size_t *ret_num_nets);
 /* Returns an allocated list of ifindex, caller to free */
 int *mctp_nl_if_list(const mctp_nl *nl, size_t *ret_num_if);
+bool mctp_nl_if_exists(const mctp_nl *nl, int ifindex);
 
 /* Get/set userdata for a link. The userdata is attached to a link
  * with index @ifindex. Userdata will also be populated into
@@ -93,10 +94,15 @@ void *mctp_nl_get_link_userdata(const mctp_nl *nl, int ifindex);
 /* Returns NULL if the link does not exist */
 void *mctp_nl_get_link_userdata_byname(const mctp_nl *nl, const char *ifname);
 
+/* MCTP addr helper */
+int mctp_nl_addr(struct mctp_nl *nl, uint8_t eid, int ifindex, int rtm_command);
+int mctp_nl_addr_add(struct mctp_nl *nl, uint8_t eid, int ifindex);
+int mctp_nl_addr_del(struct mctp_nl *nl, uint8_t eid, int ifindex);
+
 /* MCTP route helper */
-int mctp_nl_route_add(struct mctp_nl *nl, uint8_t eid, const char* ifname,
-		uint32_t mtu);
-int mctp_nl_route_del(struct mctp_nl *nl, uint8_t eid, const char* ifname);
+int mctp_nl_route_add(struct mctp_nl *nl, uint8_t eid, int ifindex,
+		      uint32_t mtu);
+int mctp_nl_route_del(struct mctp_nl *nl, uint8_t eid, int ifindex);
 
 /* Helpers */
 
