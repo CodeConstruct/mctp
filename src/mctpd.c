@@ -254,8 +254,11 @@ __attribute__((format(printf, 1, 2)))
 static void bug_warn(const char* fmt, ...) {
 	char *bug_fmt = NULL;
 	va_list ap;
+	int rc;
 
-	asprintf(&bug_fmt, "BUG: %s", fmt);
+	rc = asprintf(&bug_fmt, "BUG: %s", fmt);
+	if (rc < 0)
+		return;
 
 	va_start(ap, fmt);
 	mctp_ops.bug_warn(bug_fmt, ap);
@@ -2404,9 +2407,9 @@ static int publish_peer(struct peer *peer, bool add_route)
 	if (peer->published)
 		return 0;
 
-	asprintf(&peer->path, "%s/networks/%d/endpoints/%d",
-		 MCTP_DBUS_PATH, peer->net, peer->eid);
-	if (!peer->path)
+	rc = asprintf(&peer->path, "%s/networks/%d/endpoints/%d",
+		      MCTP_DBUS_PATH, peer->net, peer->eid);
+	if (rc < 0)
 		return -ENOMEM;
 
 	peer->published = true;
@@ -3547,6 +3550,7 @@ static int add_interface_local(struct ctx *ctx, int ifindex)
 static int add_net(struct ctx *ctx, uint32_t net_id)
 {
 	struct net *net, **tmp;
+	int rc;
 
 	if (lookup_net(ctx, net_id) != NULL) {
 		bug_warn("add_net for existing net %d", net_id);
@@ -3562,8 +3566,8 @@ static int add_net(struct ctx *ctx, uint32_t net_id)
 	// Initialise the new entry
 	net->net = net_id;
 	net->ctx = ctx;
-	asprintf(&net->path, "%s/%d", MCTP_DBUS_PATH_NETWORKS, net->net);
-	if (!net->path) {
+	rc = asprintf(&net->path, "%s/%d", MCTP_DBUS_PATH_NETWORKS, net->net);
+	if (rc < 0) {
 		warn("%s: failed to allocate net path", __func__);
 		free(net);
 		return -ENOMEM;
@@ -3624,8 +3628,8 @@ static int add_interface(struct ctx *ctx, int ifindex)
 	link->ctx = ctx;
 	/* Use the `mode` setting in conf/mctp.conf */
 	link->role = ctx->default_role;
-	asprintf(&link->path, "%s/%s", MCTP_DBUS_PATH_LINKS, ifname);
-	if (!link->path) {
+	rc = asprintf(&link->path, "%s/%s", MCTP_DBUS_PATH_LINKS, ifname);
+	if (rc < 0) {
 		rc = -ENOMEM;
 		goto err_free;
 	}
