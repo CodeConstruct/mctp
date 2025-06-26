@@ -23,5 +23,8 @@ jobs:
       - name: Build mctp
         run: meson compile -C build
 
+      - name: Check formatting
+        run: ninja -C build clang-format-check
+
       - name: Test mctp
         run: meson test -C build
