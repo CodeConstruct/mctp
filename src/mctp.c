@@ -766,8 +766,7 @@ static int cmd_addr_addremove(struct ctx *ctx, const char *cmdname,
 			      int rtm_command, int argc, const char **argv)
 {
 	const char *eidstr, *linkstr;
-	uint32_t tmp;
-	uint8_t eid;
+	mctp_eid_t eid;
 	int ifindex;
 
 	if (argc != 4) {
@@ -791,11 +790,10 @@ static int cmd_addr_addremove(struct ctx *ctx, const char *cmdname,
 		return -1;
 	}
 
-	if (parse_uint32(eidstr, &tmp) < 0 || tmp > 0xff) {
+	if (parse_eid(eidstr, &eid) < 0) {
 		warnx("invalid address %s", eidstr);
 		return -1;
 	}
-	eid = tmp & 0xff;
 
 	return mctp_nl_addr(ctx->nl, eid, ifindex, rtm_command);
 }
@@ -871,7 +869,8 @@ static int cmd_route_show(struct ctx *ctx, int argc, const char **argv)
 static int cmd_route_add(struct ctx *ctx, int argc, const char **argv)
 {
 	const char *eidstr = NULL, *linkstr = NULL;
-	uint32_t mtu = 0, eid = 0;
+	mctp_eid_t eid = 0;
+	uint32_t mtu = 0;
 	int ifindex = 0;
 
 	if (!(argc == 4 || argc == 6))
@@ -895,13 +894,8 @@ static int cmd_route_add(struct ctx *ctx, int argc, const char **argv)
 			goto err;
 	}
 
-	if (parse_uint32(eidstr, &eid) < 0)
+	if (parse_eid(eidstr, &eid) < 0)
 		goto err;
-
-	if (eid > 0xff) {
-		warnx("Bad eid");
-		goto err;
-	}
 
 	ifindex = mctp_nl_ifindex_byname(ctx->nl, linkstr);
 	if (!ifindex) {
@@ -919,9 +913,8 @@ err:
 static int cmd_route_del(struct ctx *ctx, int argc, const char **argv)
 {
 	const char *eidstr = NULL;
-	uint32_t tmp = 0;
 	int ifindex = 0;
-	uint8_t eid;
+	mctp_eid_t eid;
 
 	if (argc != 4)
 		goto err;
@@ -931,20 +924,14 @@ static int cmd_route_del(struct ctx *ctx, int argc, const char **argv)
 
 	eidstr = argv[1];
 
-	if (parse_uint32(eidstr, &tmp) < 0)
+	if (parse_eid(eidstr, &eid) < 0)
 		goto err;
 
-	if (tmp > 0xff) {
-		warnx("Bad eid");
-		goto err;
-	}
 	ifindex = mctp_nl_ifindex_byname(ctx->nl, argv[3]);
 	if (!ifindex) {
 		warnx("del: invalid device %s", argv[3]);
 		goto err;
 	}
-
-	eid = tmp & 0xff;
 
 	return mctp_nl_route_del(ctx->nl, eid, ifindex);
 
@@ -1043,8 +1030,7 @@ static int fill_neighalter_args(struct ctx *ctx,
 				const char *eidstr, const char *linkstr)
 {
 	struct rtattr *rta;
-	uint32_t tmp;
-	uint8_t eid;
+	mctp_eid_t eid;
 	int ifindex;
 	size_t rta_len;
 
@@ -1054,11 +1040,10 @@ static int fill_neighalter_args(struct ctx *ctx,
 		return -1;
 	}
 
-	if (parse_uint32(eidstr, &tmp) < 0 || tmp > 0xff) {
+	if (parse_eid(eidstr, &eid) < 0) {
 		warnx("invalid address %s", eidstr);
 		return -1;
 	}
-	eid = tmp & 0xff;
 
 	memset(msg, 0x0, sizeof(*msg));
 	msg->nh.nlmsg_flags = NLM_F_REQUEST | NLM_F_ACK;
