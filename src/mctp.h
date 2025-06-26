@@ -28,27 +28,27 @@
 
 /* MCTP serial line discipline */
 #ifndef N_MCTP
-#define N_MCTP	28
+#define N_MCTP 28
 #endif
 
 #include <stdint.h>
 
 #ifndef MCTP_NET_ANY
 
-typedef uint8_t			mctp_eid_t;
+typedef uint8_t mctp_eid_t;
 
 struct mctp_addr {
-	mctp_eid_t		s_addr;
+	mctp_eid_t s_addr;
 };
 
 struct sockaddr_mctp {
-	unsigned short int	smctp_family;
-	unsigned short		__smctp_pad0;
-	int			smctp_network;
-	struct mctp_addr	smctp_addr;
-	uint8_t			smctp_type;
-	uint8_t			smctp_tag;
-	uint8_t			__smctp_pad1;
+	unsigned short int smctp_family;
+	unsigned short __smctp_pad0;
+	int smctp_network;
+	struct mctp_addr smctp_addr;
+	uint8_t smctp_type;
+	uint8_t smctp_tag;
+	uint8_t __smctp_pad1;
 };
 
 #define MCTP_NET_ANY 0
@@ -64,14 +64,14 @@ struct sockaddr_mctp {
 /* Added in v5.16 */
 #ifndef MCTP_OPT_ADDR_EXT
 
-#define MCTP_OPT_ADDR_EXT	1
+#define MCTP_OPT_ADDR_EXT 1
 
 struct sockaddr_mctp_ext {
-	struct sockaddr_mctp	smctp_base;
-	int			smctp_ifindex;
-	uint8_t			smctp_halen;
-	uint8_t			__smctp_pad0[3];
-	unsigned char		smctp_haddr[MAX_ADDR_LEN];
+	struct sockaddr_mctp smctp_base;
+	int smctp_ifindex;
+	uint8_t smctp_halen;
+	uint8_t __smctp_pad0[3];
+	unsigned char smctp_haddr[MAX_ADDR_LEN];
 };
 
 #endif /* MCTP_OPT_ADDR_EXT */

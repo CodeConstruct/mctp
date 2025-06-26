@@ -61,47 +61,42 @@ int main(void)
 		}
 
 		addrlen = sizeof(addr);
-		len = recvfrom(sd, buf, buflen, 0,
-				(struct sockaddr *)&addr, &addrlen);
+		len = recvfrom(sd, buf, buflen, 0, (struct sockaddr *)&addr,
+			       &addrlen);
 		if (len < 0) {
 			warn("recvfrom");
 			continue;
 		}
 
 		if (addrlen != sizeof(addr)) {
-			warnx("unknown address length %d, exp %zd",
-				addrlen, sizeof(addr));
+			warnx("unknown address length %d, exp %zd", addrlen,
+			      sizeof(addr));
 			continue;
 		}
 
 		if (len < (ssize_t)sizeof(VENDOR_TYPE_ECHO)) {
 			warnx("echo: short message from (net %d, eid %d), tag %d, type 0x%x: len %zd.\n",
-				addr.smctp_network, addr.smctp_addr.s_addr,
-				addr.smctp_tag,
-				addr.smctp_type,
-				len);
+			      addr.smctp_network, addr.smctp_addr.s_addr,
+			      addr.smctp_tag, addr.smctp_type, len);
 			continue;
 		}
 
-		if (memcmp(buf, VENDOR_TYPE_ECHO, sizeof(VENDOR_TYPE_ECHO)) != 0) {
+		if (memcmp(buf, VENDOR_TYPE_ECHO, sizeof(VENDOR_TYPE_ECHO)) !=
+		    0) {
 			warnx("echo: unexpected vendor ID from (net %d, eid %d), tag %d, type 0x%x, len %zd.\n",
-				addr.smctp_network, addr.smctp_addr.s_addr,
-				addr.smctp_tag,
-				addr.smctp_type,
-				len);
+			      addr.smctp_network, addr.smctp_addr.s_addr,
+			      addr.smctp_tag, addr.smctp_type, len);
 			continue;
 		}
 
 		printf("echo: message from (net %d, eid %d), tag %d, type 0x%x: len %zd, responding\n",
-				addr.smctp_network, addr.smctp_addr.s_addr,
-				addr.smctp_tag,
-				addr.smctp_type,
-				len);
+		       addr.smctp_network, addr.smctp_addr.s_addr,
+		       addr.smctp_tag, addr.smctp_type, len);
 
 		addr.smctp_tag &= ~MCTP_TAG_OWNER;
 
-		rc = sendto(sd, buf, len, 0,
-				(struct sockaddr *)&addr, sizeof(addr));
+		rc = sendto(sd, buf, len, 0, (struct sockaddr *)&addr,
+			    sizeof(addr));
 
 		if (rc != (int)len) {
 			warn("sendto");
