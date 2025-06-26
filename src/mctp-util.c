@@ -135,6 +135,20 @@ int parse_int32(const char *str, int32_t *out)
 	return 0;
 }
 
+int parse_eid(const char *str, mctp_eid_t *eid)
+{
+	uint32_t tmp;
+
+	if (parse_uint32(str, &tmp) < 0)
+		return -1;
+
+	if (tmp > 0xff)
+		return -1;
+
+	*eid = tmp;
+	return 0;
+}
+
 /* Returns a malloced pointer */
 char *bytes_to_uuid(const uint8_t u[16])
 {
