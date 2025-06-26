@@ -2758,6 +2758,7 @@ err:
 	return rc;
 }
 
+// clang-format off
 static const sd_bus_vtable bus_link_owner_vtable[] = {
 	SD_BUS_VTABLE_START(0),
 
@@ -2808,6 +2809,7 @@ static const sd_bus_vtable bus_link_owner_vtable[] = {
 	SD_BUS_VTABLE_END,
 
 };
+// clang-format on
 
 static int bus_endpoint_get_prop(sd_bus *bus,
 		const char *path, const char *interface, const char *property,
@@ -2966,6 +2968,7 @@ out:
 	return rc;
 }
 
+// clang-format off
 static const sd_bus_vtable bus_endpoint_obmc_vtable[] = {
 	SD_BUS_VTABLE_START(0),
 	SD_BUS_PROPERTY("NetworkId",
@@ -3063,6 +3066,7 @@ static const sd_bus_vtable bus_network_vtable[] = {
 			SD_BUS_VTABLE_PROPERTY_CONST),
 	SD_BUS_VTABLE_END
 };
+// clang-format on
 
 static int emit_endpoint_added(const struct peer *peer) {
 	const char *path = NULL;

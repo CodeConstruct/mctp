@@ -1208,12 +1208,14 @@ struct command {
 	int (*fn)(struct ctx *, int, const char **);
 	bool hidden;
 } commands[] = {
+	// clang-format off
 	{ "link", cmd_link, 0 },
 	{ "address", cmd_addr, 0 },
 	{ "route", cmd_route, 0 },
 	{ "neighbour", cmd_neigh, 0 },
 	{ "monitor", cmd_monitor, 0 },
 	{ "help", cmd_help, 0 },
+	// clang-format on
 };
 
 static int cmd_help(struct ctx * ctx, int argc, const char** argv)
