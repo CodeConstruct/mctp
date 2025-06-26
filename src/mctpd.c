@@ -53,7 +53,7 @@
 #define CC_MCTP_DBUS_NETWORK_INTERFACE "au.com.codeconstruct.MCTP.Network1"
 
 // an arbitrary constant for use with sd_id128_get_machine_app_specific()
-static const char* mctpd_appid = "67369c05-4b97-4b7e-be72-65cfd8639f10";
+static const char *mctpd_appid = "67369c05-4b97-4b7e-be72-65cfd8639f10";
 
 static const char *conf_file_default = MCTPD_CONF_FILE_DEFAULT;
 
@@ -63,7 +63,7 @@ static mctp_eid_t eid_alloc_max = 0xfe;
 // arbitrary sanity
 static size_t MAX_PEER_SIZE = 1000000;
 
-static const uint8_t RQDI_REQ = 1<<7;
+static const uint8_t RQDI_REQ = 1 << 7;
 static const uint8_t RQDI_RESP = 0x0;
 static const uint8_t RQDI_IID_MASK = 0x1f;
 
@@ -238,8 +238,7 @@ static int peer_neigh_update(struct peer *peer, uint16_t type);
 
 static int add_interface_local(struct ctx *ctx, int ifindex);
 static int del_interface(struct link *link);
-static int change_net_interface(struct ctx *ctx, int ifindex,
-				uint32_t old_net);
+static int change_net_interface(struct ctx *ctx, int ifindex, uint32_t old_net);
 static int add_local_eid(struct ctx *ctx, uint32_t net, int eid);
 static int del_local_eid(struct ctx *ctx, uint32_t net, int eid);
 static int add_net(struct ctx *ctx, uint32_t net);
@@ -250,8 +249,8 @@ static const sd_bus_vtable bus_endpoint_obmc_vtable[];
 static const sd_bus_vtable bus_endpoint_cc_vtable[];
 static const sd_bus_vtable bus_endpoint_uuid_vtable[];
 
-__attribute__((format(printf, 1, 2)))
-static void bug_warn(const char* fmt, ...) {
+__attribute__((format(printf, 1, 2))) static void bug_warn(const char *fmt, ...)
+{
 	char *bug_fmt = NULL;
 	va_list ap;
 	int rc;
@@ -267,7 +266,8 @@ static void bug_warn(const char* fmt, ...) {
 	free(bug_fmt);
 }
 
-mctp_eid_t local_addr(const struct ctx *ctx, int ifindex) {
+mctp_eid_t local_addr(const struct ctx *ctx, int ifindex)
+{
 	mctp_eid_t *eids, ret = 0;
 	size_t num;
 
@@ -278,7 +278,7 @@ mctp_eid_t local_addr(const struct ctx *ctx, int ifindex) {
 	return ret;
 }
 
-static void* dfree(void* ptr);
+static void *dfree(void *ptr);
 
 static struct net *lookup_net(struct ctx *ctx, uint32_t net)
 {
@@ -289,11 +289,11 @@ static struct net *lookup_net(struct ctx *ctx, uint32_t net)
 	return NULL;
 }
 
-static bool match_phys(const dest_phys *d1, const dest_phys *d2) {
-	return d1->ifindex == d2->ifindex &&
-		d1->hwaddr_len == d2->hwaddr_len &&
-		(d2->hwaddr_len == 0
-			|| !memcmp(d1->hwaddr, d2->hwaddr, d1->hwaddr_len));
+static bool match_phys(const dest_phys *d1, const dest_phys *d2)
+{
+	return d1->ifindex == d2->ifindex && d1->hwaddr_len == d2->hwaddr_len &&
+	       (d2->hwaddr_len == 0 ||
+		!memcmp(d1->hwaddr, d2->hwaddr, d1->hwaddr_len));
 }
 
 static struct peer *find_peer_by_phys(struct ctx *ctx, const dest_phys *dest)
@@ -318,9 +318,8 @@ static struct peer *find_peer_by_addr(struct ctx *ctx, mctp_eid_t eid,
 	return NULL;
 }
 
-static int find_local_eids_by_net(struct net *net,
-                                  size_t* local_eid_cnt,
-                                  mctp_eid_t *ret_eids)
+static int find_local_eids_by_net(struct net *net, size_t *local_eid_cnt,
+				  mctp_eid_t *ret_eids)
 {
 	size_t local_count = 0;
 	struct peer *peer;
@@ -341,24 +340,25 @@ static int find_local_eids_by_net(struct net *net,
 }
 
 /* Returns a deferred free pointer */
-static const char* dest_phys_tostr(const dest_phys *dest)
+static const char *dest_phys_tostr(const dest_phys *dest)
 {
-	char hex[MAX_ADDR_LEN*4];
-	char* buf;
+	char hex[MAX_ADDR_LEN * 4];
+	char *buf;
 	size_t l = 50 + sizeof(hex);
 	buf = malloc(l);
 	if (!buf) {
 		return "Out of memory";
 	}
 	write_hex_addr(dest->hwaddr, dest->hwaddr_len, hex, sizeof(hex));
-	snprintf(buf, l, "physaddr if %d hw len %zu 0x%s", dest->ifindex, dest->hwaddr_len, hex);
+	snprintf(buf, l, "physaddr if %d hw len %zu 0x%s", dest->ifindex,
+		 dest->hwaddr_len, hex);
 	return dfree(buf);
 }
 
-static const char* ext_addr_tostr(const struct sockaddr_mctp_ext *addr)
+static const char *ext_addr_tostr(const struct sockaddr_mctp_ext *addr)
 {
-	char hex[MAX_ADDR_LEN*4];
-	char* buf;
+	char hex[MAX_ADDR_LEN * 4];
+	char *buf;
 	size_t l = 256;
 	buf = malloc(l);
 	if (!buf) {
@@ -366,17 +366,16 @@ static const char* ext_addr_tostr(const struct sockaddr_mctp_ext *addr)
 	}
 
 	write_hex_addr(addr->smctp_haddr, addr->smctp_halen, hex, sizeof(hex));
-	snprintf(buf, l,
-		 "sockaddr_mctp_ext eid %d net %u type 0x%02x if %d hw len %hhu 0x%s",
+	snprintf(
+		buf, l,
+		"sockaddr_mctp_ext eid %d net %u type 0x%02x if %d hw len %hhu 0x%s",
 		addr->smctp_base.smctp_addr.s_addr,
-		addr->smctp_base.smctp_network,
-		addr->smctp_base.smctp_type,
-		addr->smctp_ifindex,
-		addr->smctp_halen, hex);
+		addr->smctp_base.smctp_network, addr->smctp_base.smctp_type,
+		addr->smctp_ifindex, addr->smctp_halen, hex);
 	return dfree(buf);
 }
 
-static const char* peer_tostr(const struct peer *peer)
+static const char *peer_tostr(const struct peer *peer)
 {
 	size_t l = 300;
 	char *str = NULL;
@@ -385,13 +384,12 @@ static const char* peer_tostr(const struct peer *peer)
 	if (!str) {
 		return "Out of memory";
 	}
-	snprintf(str, l, "peer eid %d net %u phys %s state %d",
-		peer->eid, peer->net, dest_phys_tostr(&peer->phys),
-		peer->state);
+	snprintf(str, l, "peer eid %d net %u phys %s state %d", peer->eid,
+		 peer->net, dest_phys_tostr(&peer->phys), peer->state);
 	return dfree(str);
 }
 
-static const char* peer_tostr_short(const struct peer *peer)
+static const char *peer_tostr_short(const struct peer *peer)
 {
 	size_t l = 30;
 	char *str = NULL;
@@ -412,7 +410,7 @@ static int defer_free_handler(sd_event_source *s, void *userdata)
 }
 
 /* Returns ptr, frees it on the next default event loop cycle (defer)*/
-static void* dfree(void* ptr)
+static void *dfree(void *ptr)
 {
 	sd_event *e = NULL;
 	int rc;
@@ -436,13 +434,15 @@ out:
 	return ptr;
 }
 
-static int cb_exit_loop_io(sd_event_source *s, int fd, uint32_t revents, void *userdata)
+static int cb_exit_loop_io(sd_event_source *s, int fd, uint32_t revents,
+			   void *userdata)
 {
 	sd_event_exit(sd_event_source_get_event(s), 0);
 	return 0;
 }
 
-static int cb_exit_loop_timeout(sd_event_source *s, uint64_t usec, void *userdata)
+static int cb_exit_loop_timeout(sd_event_source *s, uint64_t usec,
+				void *userdata)
 {
 	sd_event_exit(sd_event_source_get_event(s), -ETIMEDOUT);
 	return 0;
@@ -460,8 +460,8 @@ static int wait_fd_timeout(int fd, short events, uint64_t timeout_usec)
 	if (rc < 0)
 		goto out;
 
-	rc = sd_event_add_time_relative(ev, NULL, CLOCK_MONOTONIC,
-		timeout_usec, 0, cb_exit_loop_timeout, NULL);
+	rc = sd_event_add_time_relative(ev, NULL, CLOCK_MONOTONIC, timeout_usec,
+					0, cb_exit_loop_timeout, NULL);
 	if (rc < 0)
 		goto out;
 
@@ -480,7 +480,6 @@ out:
 
 static const char *path_from_peer(const struct peer *peer)
 {
-
 	if (!peer->published) {
 		bug_warn("%s on peer %s", __func__, peer_tostr(peer));
 		return NULL;
@@ -493,7 +492,8 @@ static int get_role(const char *mode, struct role *role)
 	unsigned int i;
 
 	for (i = 0; i < ARRAY_SIZE(roles); i++) {
-		if (roles[i].dbus_val && (strcmp(roles[i].dbus_val, mode) == 0)) {
+		if (roles[i].dbus_val &&
+		    (strcmp(roles[i].dbus_val, mode) == 0)) {
 			memcpy(role, &roles[i], sizeof(struct role));
 			return 0;
 		}
@@ -504,17 +504,18 @@ static int get_role(const char *mode, struct role *role)
 
 /* Returns the message from a socket.
    ret_buf is allocated, should be freed by the caller */
-static int read_message(struct ctx *ctx, int sd, uint8_t **ret_buf, size_t *ret_buf_size,
-		struct sockaddr_mctp_ext *ret_addr)
+static int read_message(struct ctx *ctx, int sd, uint8_t **ret_buf,
+			size_t *ret_buf_size,
+			struct sockaddr_mctp_ext *ret_addr)
 {
 	int rc;
 	socklen_t addrlen;
 	ssize_t len;
-	uint8_t* buf = NULL;
+	uint8_t *buf = NULL;
 	size_t buf_size;
 
-	len = mctp_ops.mctp.recvfrom(sd, NULL, 0, MSG_PEEK | MSG_TRUNC,
-				     NULL, 0);
+	len = mctp_ops.mctp.recvfrom(sd, NULL, 0, MSG_PEEK | MSG_TRUNC, NULL,
+				     0);
 	if (len < 0) {
 		rc = -errno;
 		goto out;
@@ -537,8 +538,7 @@ static int read_message(struct ctx *ctx, int sd, uint8_t **ret_buf, size_t *ret_
 	addrlen = sizeof(struct sockaddr_mctp_ext);
 	memset(ret_addr, 0x0, addrlen);
 	len = mctp_ops.mctp.recvfrom(sd, buf, buf_size, MSG_TRUNC,
-				     (struct sockaddr *)ret_addr,
-		&addrlen);
+				     (struct sockaddr *)ret_addr, &addrlen);
 	if (len < 0) {
 		rc = -errno;
 		goto out;
@@ -556,8 +556,7 @@ static int read_message(struct ctx *ctx, int sd, uint8_t **ret_buf, size_t *ret_
 
 	if (ctx->verbose) {
 		warnx("read_message got from %s len %zu",
-			ext_addr_tostr(ret_addr),
-			buf_size);
+		      ext_addr_tostr(ret_addr), buf_size);
 	}
 
 	*ret_buf = buf;
@@ -574,8 +573,9 @@ out:
 }
 
 /* Replies to a physical address */
-static int reply_message_phys(struct ctx *ctx, int sd, const void *resp, size_t resp_len,
-	const struct sockaddr_mctp_ext *addr)
+static int reply_message_phys(struct ctx *ctx, int sd, const void *resp,
+			      size_t resp_len,
+			      const struct sockaddr_mctp_ext *addr)
 {
 	ssize_t len;
 	struct sockaddr_mctp_ext reply_addr = *addr;
@@ -597,8 +597,8 @@ static int reply_message_phys(struct ctx *ctx, int sd, const void *resp, size_t 
 }
 
 /* Replies to a real EID, not physical addressing */
-static int reply_message(struct ctx *ctx, int sd, const void *resp, size_t resp_len,
-	const struct sockaddr_mctp_ext *addr)
+static int reply_message(struct ctx *ctx, int sd, const void *resp,
+			 size_t resp_len, const struct sockaddr_mctp_ext *addr)
 {
 	ssize_t len;
 	struct sockaddr_mctp reply_addr;
@@ -607,9 +607,9 @@ static int reply_message(struct ctx *ctx, int sd, const void *resp, size_t resp_
 	reply_addr.smctp_tag &= ~MCTP_TAG_OWNER;
 
 	if (reply_addr.smctp_addr.s_addr == 0 ||
-		 reply_addr.smctp_addr.s_addr == 0xff) {
+	    reply_addr.smctp_addr.s_addr == 0xff) {
 		bug_warn("reply_message can't take EID %d",
-			reply_addr.smctp_addr.s_addr);
+			 reply_addr.smctp_addr.s_addr);
 		return -EPROTO;
 	}
 
@@ -628,19 +628,20 @@ static int reply_message(struct ctx *ctx, int sd, const void *resp, size_t resp_
 }
 
 // Handles new Incoming Set Endpoint ID request
-static int handle_control_set_endpoint_id(struct ctx *ctx,
-	int sd, struct sockaddr_mctp_ext *addr,
-	const uint8_t *buf, const size_t buf_size)
+static int handle_control_set_endpoint_id(struct ctx *ctx, int sd,
+					  struct sockaddr_mctp_ext *addr,
+					  const uint8_t *buf,
+					  const size_t buf_size)
 {
 	struct mctp_ctrl_cmd_set_eid *req = NULL;
-	struct mctp_ctrl_resp_set_eid respi = {0}, *resp = &respi;
+	struct mctp_ctrl_resp_set_eid respi = { 0 }, *resp = &respi;
 	size_t resp_len;
 
 	if (buf_size < sizeof(*req)) {
 		warnx("short Set Endpoint ID message");
 		return -ENOMSG;
 	}
-	req = (void*)buf;
+	req = (void *)buf;
 
 	resp->ctrl_hdr.command_code = req->ctrl_hdr.command_code;
 	resp->ctrl_hdr.rq_dgram_inst = RQDI_RESP;
@@ -655,15 +656,16 @@ static int handle_control_set_endpoint_id(struct ctx *ctx,
 	return reply_message(ctx, sd, resp, resp_len, addr);
 }
 
-static int handle_control_get_version_support(struct ctx *ctx,
-	int sd, const struct sockaddr_mctp_ext *addr,
-	const uint8_t *buf, const size_t buf_size)
+static int
+handle_control_get_version_support(struct ctx *ctx, int sd,
+				   const struct sockaddr_mctp_ext *addr,
+				   const uint8_t *buf, const size_t buf_size)
 {
 	struct mctp_ctrl_cmd_get_mctp_ver_support *req = NULL;
 	struct mctp_ctrl_resp_get_mctp_ver_support *resp = NULL;
 	uint32_t *versions = NULL;
 	// space for 4 versions
-	uint8_t respbuf[sizeof(*resp) + 4*sizeof(*versions)];
+	uint8_t respbuf[sizeof(*resp) + 4 * sizeof(*versions)];
 	size_t resp_len;
 
 	if (buf_size < sizeof(struct mctp_ctrl_cmd_get_mctp_ver_support)) {
@@ -671,25 +673,25 @@ static int handle_control_get_version_support(struct ctx *ctx,
 		return -ENOMSG;
 	}
 
-	req = (void*)buf;
-	resp = (void*)respbuf;
-	versions = (void*)(resp+1);
+	req = (void *)buf;
+	resp = (void *)respbuf;
+	versions = (void *)(resp + 1);
 	switch (req->msg_type_number) {
-		case 0xff: // Base Protocol
-		case 0x00: // Control protocol
-			// from DSP0236 1.3.1  section 12.6.2. Big endian.
-			versions[0] = htonl(0xF1F0FF00);
-			versions[1] = htonl(0xF1F1FF00);
-			versions[2] = htonl(0xF1F2FF00);
-			versions[3] = htonl(0xF1F3F100);
-			resp->number_of_entries = 4;
-			resp->completion_code = 0x00;
-			resp_len = sizeof(*resp) + 4*sizeof(*versions);
-			break;
-		default:
-			// Unsupported message type
-			resp->completion_code = 0x80;
-			resp_len = sizeof(*resp);
+	case 0xff: // Base Protocol
+	case 0x00: // Control protocol
+		// from DSP0236 1.3.1  section 12.6.2. Big endian.
+		versions[0] = htonl(0xF1F0FF00);
+		versions[1] = htonl(0xF1F1FF00);
+		versions[2] = htonl(0xF1F2FF00);
+		versions[3] = htonl(0xF1F3F100);
+		resp->number_of_entries = 4;
+		resp->completion_code = 0x00;
+		resp_len = sizeof(*resp) + 4 * sizeof(*versions);
+		break;
+	default:
+		// Unsupported message type
+		resp->completion_code = 0x80;
+		resp_len = sizeof(*resp);
 	}
 
 	resp->ctrl_hdr.command_code = req->ctrl_hdr.command_code;
@@ -697,19 +699,20 @@ static int handle_control_get_version_support(struct ctx *ctx,
 	return reply_message(ctx, sd, resp, resp_len, addr);
 }
 
-static int handle_control_get_endpoint_id(struct ctx *ctx,
-	int sd, const struct sockaddr_mctp_ext *addr,
-	const uint8_t *buf, const size_t buf_size)
+static int handle_control_get_endpoint_id(struct ctx *ctx, int sd,
+					  const struct sockaddr_mctp_ext *addr,
+					  const uint8_t *buf,
+					  const size_t buf_size)
 {
 	struct mctp_ctrl_cmd_get_eid *req = NULL;
-	struct mctp_ctrl_resp_get_eid respi = {0}, *resp = &respi;
+	struct mctp_ctrl_resp_get_eid respi = { 0 }, *resp = &respi;
 
 	if (buf_size < sizeof(*req)) {
 		warnx("short Get Endpoint ID message");
 		return -ENOMSG;
 	}
 
-	req = (void*)buf;
+	req = (void *)buf;
 	resp->ctrl_hdr.command_code = req->ctrl_hdr.command_code;
 	resp->ctrl_hdr.rq_dgram_inst = RQDI_RESP;
 
@@ -724,31 +727,33 @@ static int handle_control_get_endpoint_id(struct ctx *ctx,
 	return reply_message_phys(ctx, sd, resp, sizeof(*resp), addr);
 }
 
-static int handle_control_get_endpoint_uuid(struct ctx *ctx,
-	int sd, const struct sockaddr_mctp_ext *addr,
-	const uint8_t *buf, const size_t buf_size)
+static int
+handle_control_get_endpoint_uuid(struct ctx *ctx, int sd,
+				 const struct sockaddr_mctp_ext *addr,
+				 const uint8_t *buf, const size_t buf_size)
 {
-	struct mctp_ctrl_cmd_get_uuid *req = NULL;;
-	struct mctp_ctrl_resp_get_uuid respi = {0}, *resp = &respi;
+	struct mctp_ctrl_cmd_get_uuid *req = NULL;
+	;
+	struct mctp_ctrl_resp_get_uuid respi = { 0 }, *resp = &respi;
 
 	if (buf_size < sizeof(*req)) {
 		warnx("short Get Endpoint UUID message");
 		return -ENOMSG;
 	}
 
-	req = (void*)buf;
+	req = (void *)buf;
 	resp->ctrl_hdr.command_code = req->ctrl_hdr.command_code;
 	resp->ctrl_hdr.rq_dgram_inst = RQDI_RESP;
 	memcpy(resp->uuid, ctx->uuid, sizeof(resp->uuid));
 	return reply_message(ctx, sd, resp, sizeof(*resp), addr);
 }
 
-
-static int handle_control_get_message_type_support(struct ctx *ctx,
-	int sd, const struct sockaddr_mctp_ext *addr,
+static int handle_control_get_message_type_support(
+	struct ctx *ctx, int sd, const struct sockaddr_mctp_ext *addr,
 	const uint8_t *buf, const size_t buf_size)
 {
-	struct mctp_ctrl_cmd_get_msg_type_support *req = NULL;;
+	struct mctp_ctrl_cmd_get_msg_type_support *req = NULL;
+	;
 	struct mctp_ctrl_resp_get_msg_type_support *resp = NULL;
 	uint8_t resp_buf[sizeof(*resp) + 1];
 	size_t resp_len;
@@ -758,22 +763,23 @@ static int handle_control_get_message_type_support(struct ctx *ctx,
 		return -ENOMSG;
 	}
 
-	req = (void*)buf;
-	resp = (void*)resp_buf;
+	req = (void *)buf;
+	resp = (void *)resp_buf;
 	resp->ctrl_hdr.command_code = req->ctrl_hdr.command_code;
 	resp->ctrl_hdr.rq_dgram_inst = RQDI_RESP;
 
 	// Only control messages supported
 	resp->msg_type_count = 1;
-	*((uint8_t*)(resp+1)) = MCTP_CTRL_HDR_MSG_TYPE;
+	*((uint8_t *)(resp + 1)) = MCTP_CTRL_HDR_MSG_TYPE;
 	resp_len = sizeof(*resp) + resp->msg_type_count;
 
 	return reply_message(ctx, sd, resp, resp_len, addr);
 }
 
-static int handle_control_resolve_endpoint_id(struct ctx *ctx,
-	int sd, const struct sockaddr_mctp_ext *addr,
-	const uint8_t *buf, const size_t buf_size)
+static int
+handle_control_resolve_endpoint_id(struct ctx *ctx, int sd,
+				   const struct sockaddr_mctp_ext *addr,
+				   const uint8_t *buf, const size_t buf_size)
 {
 	struct mctp_ctrl_cmd_resolve_endpoint_id *req = NULL;
 	struct mctp_ctrl_resp_resolve_endpoint_id *resp = NULL;
@@ -786,45 +792,44 @@ static int handle_control_resolve_endpoint_id(struct ctx *ctx,
 		return -ENOMSG;
 	}
 
-	req = (void*)buf;
-	resp = (void*)resp_buf;
+	req = (void *)buf;
+	resp = (void *)resp_buf;
 	memset(resp, 0x0, sizeof(*resp));
 	resp->ctrl_hdr.command_code = req->ctrl_hdr.command_code;
 	resp->ctrl_hdr.rq_dgram_inst = RQDI_RESP;
 
-	peer = find_peer_by_addr(ctx, req->eid,
-		addr->smctp_base.smctp_network);
+	peer = find_peer_by_addr(ctx, req->eid, addr->smctp_base.smctp_network);
 	if (!peer) {
 		resp->completion_code = 1;
 		resp_len = sizeof(*resp);
 	} else {
 		// TODO: bridging
 		resp->eid = req->eid;
-		memcpy((void*)(resp+1),
-			peer->phys.hwaddr, peer->phys.hwaddr_len);
+		memcpy((void *)(resp + 1), peer->phys.hwaddr,
+		       peer->phys.hwaddr_len);
 		resp_len = sizeof(*resp) + peer->phys.hwaddr_len;
 	}
 
 	return reply_message(ctx, sd, resp, resp_len, addr);
 }
 
-static int handle_control_unsupported(struct ctx *ctx,
-	int sd, const struct sockaddr_mctp_ext *addr,
-	const uint8_t *buf, const size_t buf_size)
+static int handle_control_unsupported(struct ctx *ctx, int sd,
+				      const struct sockaddr_mctp_ext *addr,
+				      const uint8_t *buf, const size_t buf_size)
 {
 	struct mctp_ctrl_msg_hdr *req = NULL;
 	struct mctp_ctrl_generic {
 		struct mctp_ctrl_msg_hdr ctrl_hdr;
 		uint8_t completion_code;
 	} __attribute__((__packed__));
-	struct mctp_ctrl_generic respi = {0}, *resp = &respi;
+	struct mctp_ctrl_generic respi = { 0 }, *resp = &respi;
 
 	if (buf_size < sizeof(*req)) {
 		warnx("short unsupported control message");
 		return -ENOMSG;
 	}
 
-	req = (void*)buf;
+	req = (void *)buf;
 	resp->ctrl_hdr.command_code = req->command_code;
 	resp->ctrl_hdr.rq_dgram_inst = RQDI_RESP;
 	resp->completion_code = MCTP_CTRL_CC_ERROR_UNSUPPORTED_CMD;
@@ -832,9 +837,9 @@ static int handle_control_unsupported(struct ctx *ctx,
 }
 
 static int cb_listen_control_msg(sd_event_source *s, int sd, uint32_t revents,
-	void *userdata)
+				 void *userdata)
 {
-	struct sockaddr_mctp_ext addr = {0};
+	struct sockaddr_mctp_ext addr = { 0 };
 	struct ctx *ctx = userdata;
 	uint8_t *buf = NULL;
 	size_t buf_size;
@@ -855,56 +860,55 @@ static int cb_listen_control_msg(sd_event_source *s, int sd, uint32_t revents,
 	}
 
 	if (buf_size < sizeof(struct mctp_ctrl_msg_hdr)) {
-		warnx("Short message %zu bytes from %s",
-			buf_size, ext_addr_tostr(&addr));
+		warnx("Short message %zu bytes from %s", buf_size,
+		      ext_addr_tostr(&addr));
 		rc = -EINVAL;
 		goto out;
 	}
 
-	ctrl_msg = (void*)buf;
+	ctrl_msg = (void *)buf;
 	if (ctx->verbose) {
 		warnx("Got control request command code %hhd",
-			ctrl_msg->command_code);
+		      ctrl_msg->command_code);
 	}
 	switch (ctrl_msg->command_code) {
-		case MCTP_CTRL_CMD_GET_VERSION_SUPPORT:
-			rc = handle_control_get_version_support(ctx,
-				sd, &addr, buf, buf_size);
-			break;
-		case MCTP_CTRL_CMD_SET_ENDPOINT_ID:
-			rc = handle_control_set_endpoint_id(ctx,
-				sd, &addr, buf, buf_size);
-			break;
-		case MCTP_CTRL_CMD_GET_ENDPOINT_ID:
-			rc = handle_control_get_endpoint_id(ctx,
-				sd, &addr, buf, buf_size);
-			break;
-		case MCTP_CTRL_CMD_GET_ENDPOINT_UUID:
-			rc = handle_control_get_endpoint_uuid(ctx,
-				sd, &addr, buf, buf_size);
-			break;
-		case MCTP_CTRL_CMD_GET_MESSAGE_TYPE_SUPPORT:
-			rc = handle_control_get_message_type_support(ctx,
-				sd, &addr, buf, buf_size);
-			break;
-		case MCTP_CTRL_CMD_RESOLVE_ENDPOINT_ID:
-			rc = handle_control_resolve_endpoint_id(ctx,
-				sd, &addr, buf, buf_size);
-			break;
-		default:
-			if (ctx->verbose) {
-				warnx("Ignoring unsupported command code 0x%02x",
-					ctrl_msg->command_code);
-				rc = -ENOTSUP;
-			}
-			rc = handle_control_unsupported(ctx,
-				sd, &addr, buf, buf_size);
+	case MCTP_CTRL_CMD_GET_VERSION_SUPPORT:
+		rc = handle_control_get_version_support(ctx, sd, &addr, buf,
+							buf_size);
+		break;
+	case MCTP_CTRL_CMD_SET_ENDPOINT_ID:
+		rc = handle_control_set_endpoint_id(ctx, sd, &addr, buf,
+						    buf_size);
+		break;
+	case MCTP_CTRL_CMD_GET_ENDPOINT_ID:
+		rc = handle_control_get_endpoint_id(ctx, sd, &addr, buf,
+						    buf_size);
+		break;
+	case MCTP_CTRL_CMD_GET_ENDPOINT_UUID:
+		rc = handle_control_get_endpoint_uuid(ctx, sd, &addr, buf,
+						      buf_size);
+		break;
+	case MCTP_CTRL_CMD_GET_MESSAGE_TYPE_SUPPORT:
+		rc = handle_control_get_message_type_support(ctx, sd, &addr,
+							     buf, buf_size);
+		break;
+	case MCTP_CTRL_CMD_RESOLVE_ENDPOINT_ID:
+		rc = handle_control_resolve_endpoint_id(ctx, sd, &addr, buf,
+							buf_size);
+		break;
+	default:
+		if (ctx->verbose) {
+			warnx("Ignoring unsupported command code 0x%02x",
+			      ctrl_msg->command_code);
+			rc = -ENOTSUP;
+		}
+		rc = handle_control_unsupported(ctx, sd, &addr, buf, buf_size);
 	}
 
 	if (ctx->verbose && rc < 0) {
 		warnx("Error handling command code %02x from %s: %s",
-			ctrl_msg->command_code, ext_addr_tostr(&addr),
-			strerror(-rc));
+		      ctrl_msg->command_code, ext_addr_tostr(&addr),
+		      strerror(-rc));
 	}
 
 out:
@@ -938,8 +942,8 @@ static int listen_control_msg(struct ctx *ctx, uint32_t net)
 	}
 
 	val = 1;
-	rc = mctp_ops.mctp.setsockopt(sd, SOL_MCTP, MCTP_OPT_ADDR_EXT,
-				      &val, sizeof(val));
+	rc = mctp_ops.mctp.setsockopt(sd, SOL_MCTP, MCTP_OPT_ADDR_EXT, &val,
+				      sizeof(val));
 	if (rc < 0) {
 		rc = -errno;
 		warn("Kernel does not support MCTP extended addressing");
@@ -947,7 +951,7 @@ static int listen_control_msg(struct ctx *ctx, uint32_t net)
 	}
 
 	rc = sd_event_add_io(ctx->event, NULL, sd, EPOLLIN,
-		cb_listen_control_msg, ctx);
+			     cb_listen_control_msg, ctx);
 	return rc;
 out:
 	if (rc < 0) {
@@ -957,7 +961,7 @@ out:
 }
 
 static int cb_listen_monitor(sd_event_source *s, int sd, uint32_t revents,
-	void *userdata)
+			     void *userdata)
 {
 	struct ctx *ctx = userdata;
 	mctp_nl_change *changes = NULL;
@@ -968,22 +972,19 @@ static int cb_listen_monitor(sd_event_source *s, int sd, uint32_t revents,
 	rc = mctp_nl_handle_monitor(ctx->nl, &changes, &num_changes);
 	if (rc < 0) {
 		warnx("Error handling update from netlink, link state may now be outdated. %s",
-			strerror(-rc));
+		      strerror(-rc));
 		return rc;
 	}
 
 	for (size_t i = 0; i < num_changes; i++) {
 		struct mctp_nl_change *c = &changes[i];
 		switch (c->op) {
-		case MCTP_NL_ADD_LINK:
-		{
+		case MCTP_NL_ADD_LINK: {
 			rc = add_interface_local(ctx, c->ifindex);
 			any_error |= (rc < 0);
-		}
-		break;
+		} break;
 
-		case MCTP_NL_DEL_LINK:
-		{
+		case MCTP_NL_DEL_LINK: {
 			// Local addresses have already been deleted with DEL_EID
 			if (c->link_userdata) {
 				rc = del_interface(c->link_userdata);
@@ -991,14 +992,13 @@ static int cb_listen_monitor(sd_event_source *s, int sd, uint32_t revents,
 				// Would have expected to have seen it in previous
 				// MCTP_NL_ADD_LINK or setup_nets().
 				rc = -ENOENT;
-				bug_warn("delete unconfigured interface %d", c->ifindex);
+				bug_warn("delete unconfigured interface %d",
+					 c->ifindex);
 			}
 			any_error |= (rc < 0);
-		}
-		break;
+		} break;
 
-		case MCTP_NL_CHANGE_NET:
-		{
+		case MCTP_NL_CHANGE_NET: {
 			// Local addresses have already been deleted with DEL_EID
 			rc = add_interface_local(ctx, c->ifindex);
 			any_error |= (rc < 0);
@@ -1007,30 +1007,22 @@ static int cb_listen_monitor(sd_event_source *s, int sd, uint32_t revents,
 			rc = change_net_interface(ctx, c->ifindex, c->old_net);
 			any_error |= (rc < 0);
 
-		}
-		break;
+		} break;
 
-		case MCTP_NL_ADD_EID:
-		{
-			uint32_t net = mctp_nl_net_byindex(ctx->nl,
-							   c->ifindex);
+		case MCTP_NL_ADD_EID: {
+			uint32_t net = mctp_nl_net_byindex(ctx->nl, c->ifindex);
 			rc = add_local_eid(ctx, net, c->eid);
 			any_error |= (rc < 0);
-		}
-		break;
+		} break;
 
-		case MCTP_NL_DEL_EID:
-		{
+		case MCTP_NL_DEL_EID: {
 			rc = del_local_eid(ctx, c->old_net, c->eid);
 			any_error |= (rc < 0);
-		}
-		break;
+		} break;
 
-		case MCTP_NL_CHANGE_UP:
-		{
+		case MCTP_NL_CHANGE_UP: {
 			// 'up' state is currently unused
-		}
-		break;
+		} break;
 		}
 	}
 
@@ -1053,8 +1045,8 @@ static int listen_monitor(struct ctx *ctx)
 		return sd;
 	}
 
-	rc = sd_event_add_io(ctx->event, NULL, sd, EPOLLIN,
-		cb_listen_monitor, ctx);
+	rc = sd_event_add_io(ctx->event, NULL, sd, EPOLLIN, cb_listen_monitor,
+			     ctx);
 	return rc;
 }
 
@@ -1122,8 +1114,8 @@ static const char *peer_cmd_prefix(const char *peer, uint8_t cmd)
 {
 	static char pfx_str[64];
 
-	snprintf(pfx_str, sizeof(pfx_str), "[peer %s, cmd %s]",
-		 peer, command_str(cmd));
+	snprintf(pfx_str, sizeof(pfx_str), "[peer %s, cmd %s]", peer,
+		 command_str(cmd));
 
 	return pfx_str;
 }
@@ -1131,9 +1123,9 @@ static const char *peer_cmd_prefix(const char *peer, uint8_t cmd)
 /* Common checks for responses: that we have enough data for a response,
  * the expected IID and opcode, and that the response indicated success.
  */
-static int mctp_ctrl_validate_response(uint8_t *buf, size_t rsp_size, size_t
-				       exp_size, const char *peer, uint8_t iid,
-				       uint8_t cmd)
+static int mctp_ctrl_validate_response(uint8_t *buf, size_t rsp_size,
+				       size_t exp_size, const char *peer,
+				       uint8_t iid, uint8_t cmd)
 {
 	struct mctp_ctrl_resp *rsp;
 
@@ -1178,16 +1170,17 @@ static int mctp_ctrl_validate_response(uint8_t *buf, size_t rsp_size, size_t
  * resp buffer is allocated, caller to free.
  * Extended addressing is used optionally, depending on ext_addr arg. */
 static int endpoint_query_addr(struct ctx *ctx,
-	const struct sockaddr_mctp_ext *req_addr, bool ext_addr,
-	const void* req, size_t req_len,
-	uint8_t **resp, size_t *resp_len, struct sockaddr_mctp_ext *resp_addr)
+			       const struct sockaddr_mctp_ext *req_addr,
+			       bool ext_addr, const void *req, size_t req_len,
+			       uint8_t **resp, size_t *resp_len,
+			       struct sockaddr_mctp_ext *resp_addr)
 {
 	size_t req_addr_len;
 	int sd = -1, val;
 	ssize_t rc;
 	size_t buf_size;
 
-	uint8_t* buf = NULL;
+	uint8_t *buf = NULL;
 
 	*resp = NULL;
 	*resp_len = 0;
@@ -1201,8 +1194,8 @@ static int endpoint_query_addr(struct ctx *ctx,
 
 	// We want extended addressing on all received messages
 	val = 1;
-	rc = mctp_ops.mctp.setsockopt(sd, SOL_MCTP, MCTP_OPT_ADDR_EXT,
-				       &val, sizeof(val));
+	rc = mctp_ops.mctp.setsockopt(sd, SOL_MCTP, MCTP_OPT_ADDR_EXT, &val,
+				      sizeof(val));
 	if (rc < 0) {
 		rc = -errno;
 		warn("Kernel does not support MCTP extended addressing");
@@ -1226,8 +1219,7 @@ static int endpoint_query_addr(struct ctx *ctx,
 		rc = -errno;
 		if (ctx->verbose) {
 			warnx("%s: sendto(%s) %zu bytes failed. %s", __func__,
-				ext_addr_tostr(req_addr), req_len,
-				strerror(-rc));
+			      ext_addr_tostr(req_addr), req_len, strerror(-rc));
 		}
 		goto out;
 	}
@@ -1241,7 +1233,7 @@ static int endpoint_query_addr(struct ctx *ctx,
 	if (rc < 0) {
 		if (rc == -ETIMEDOUT && ctx->verbose) {
 			warnx("%s: receive timed out from %s", __func__,
-				ext_addr_tostr(req_addr));
+			      ext_addr_tostr(req_addr));
 		}
 		goto out;
 	}
@@ -1251,11 +1243,12 @@ static int endpoint_query_addr(struct ctx *ctx,
 		goto out;
 	}
 
-	if (resp_addr->smctp_base.smctp_type != req_addr->smctp_base.smctp_type) {
+	if (resp_addr->smctp_base.smctp_type !=
+	    req_addr->smctp_base.smctp_type) {
 		warnx("Mismatching response type %d for request type %d. dest %s",
-			resp_addr->smctp_base.smctp_type,
-			req_addr->smctp_base.smctp_type,
-			ext_addr_tostr(req_addr));
+		      resp_addr->smctp_base.smctp_type,
+		      req_addr->smctp_base.smctp_type,
+		      ext_addr_tostr(req_addr));
 		rc = -ENOMSG;
 	}
 
@@ -1274,11 +1267,12 @@ out:
 
 /* Queries an endpoint peer. Addressing is standard eid/net.
  */
-static int endpoint_query_peer(const struct peer *peer,
-	uint8_t req_type, const void* req, size_t req_len,
-	uint8_t **resp, size_t *resp_len, struct sockaddr_mctp_ext *resp_addr)
+static int endpoint_query_peer(const struct peer *peer, uint8_t req_type,
+			       const void *req, size_t req_len, uint8_t **resp,
+			       size_t *resp_len,
+			       struct sockaddr_mctp_ext *resp_addr)
 {
-	struct sockaddr_mctp_ext addr = {0};
+	struct sockaddr_mctp_ext addr = { 0 };
 
 	if (peer->state != REMOTE) {
 		bug_warn("%s bad peer %s", __func__, peer_tostr(peer));
@@ -1292,17 +1286,18 @@ static int endpoint_query_peer(const struct peer *peer,
 	addr.smctp_base.smctp_type = req_type;
 	addr.smctp_base.smctp_tag = MCTP_TAG_OWNER;
 
-	return endpoint_query_addr(peer->ctx, &addr, false, req, req_len,
-		resp, resp_len, resp_addr);
+	return endpoint_query_addr(peer->ctx, &addr, false, req, req_len, resp,
+				   resp_len, resp_addr);
 }
 
 /* Queries an endpoint using physical addressing, null EID.
  */
 static int endpoint_query_phys(struct ctx *ctx, const dest_phys *dest,
-	uint8_t req_type, const void* req, size_t req_len,
-	uint8_t **resp, size_t *resp_len, struct sockaddr_mctp_ext *resp_addr)
+			       uint8_t req_type, const void *req,
+			       size_t req_len, uint8_t **resp, size_t *resp_len,
+			       struct sockaddr_mctp_ext *resp_addr)
 {
-	struct sockaddr_mctp_ext addr = {0};
+	struct sockaddr_mctp_ext addr = { 0 };
 
 	addr.smctp_base.smctp_family = AF_MCTP;
 	addr.smctp_base.smctp_network = 0;
@@ -1321,8 +1316,8 @@ static int endpoint_query_phys(struct ctx *ctx, const dest_phys *dest,
 	addr.smctp_base.smctp_type = req_type;
 	addr.smctp_base.smctp_tag = MCTP_TAG_OWNER;
 
-	return endpoint_query_addr(ctx, &addr, true, req, req_len,
-		resp, resp_len, resp_addr);
+	return endpoint_query_addr(ctx, &addr, true, req, req_len, resp,
+				   resp_len, resp_addr);
 }
 
 /* returns -ECONNREFUSED if the endpoint returns failure. */
@@ -1330,10 +1325,10 @@ static int endpoint_send_set_endpoint_id(const struct peer *peer,
 					 mctp_eid_t *new_eidp)
 {
 	struct sockaddr_mctp_ext addr;
-	struct mctp_ctrl_cmd_set_eid req = {0};
+	struct mctp_ctrl_cmd_set_eid req = { 0 };
 	struct mctp_ctrl_resp_set_eid *resp = NULL;
 	int rc;
-	uint8_t* buf = NULL;
+	uint8_t *buf = NULL;
 	size_t buf_size;
 	uint8_t iid, stat, alloc;
 	const dest_phys *dest = &peer->phys;
@@ -1344,20 +1339,21 @@ static int endpoint_send_set_endpoint_id(const struct peer *peer,
 	iid = mctp_next_iid(peer->ctx);
 	req.ctrl_hdr.rq_dgram_inst = RQDI_REQ | iid;
 	req.ctrl_hdr.command_code = MCTP_CTRL_CMD_SET_ENDPOINT_ID;
-	req.operation = mctp_ctrl_cmd_set_eid_set_eid; // TODO: do we want Force?
+	req.operation =
+		mctp_ctrl_cmd_set_eid_set_eid; // TODO: do we want Force?
 	req.eid = peer->eid;
 	rc = endpoint_query_phys(peer->ctx, dest, MCTP_CTRL_HDR_MSG_TYPE, &req,
-		sizeof(req), &buf, &buf_size, &addr);
+				 sizeof(req), &buf, &buf_size, &addr);
 	if (rc < 0)
 		goto out;
 
 	rc = mctp_ctrl_validate_response(buf, buf_size, sizeof(*resp),
-					 dest_phys_tostr(dest),
-					 iid, MCTP_CTRL_CMD_SET_ENDPOINT_ID);
+					 dest_phys_tostr(dest), iid,
+					 MCTP_CTRL_CMD_SET_ENDPOINT_ID);
 	if (rc)
 		goto out;
 
-	resp = (void*)buf;
+	resp = (void *)buf;
 
 	stat = resp->status >> 4 & 0x3;
 	new_eid = resp->eid_set;
@@ -1369,23 +1365,23 @@ static int endpoint_send_set_endpoint_id(const struct peer *peer,
 	if (stat == 0x01) {
 		if (!mctp_eid_is_valid_unicast(new_eid)) {
 			warnx("%s rejected assignment eid %d, and reported invalid eid %d",
-				dest_phys_tostr(dest), peer->eid, new_eid);
+			      dest_phys_tostr(dest), peer->eid, new_eid);
 			rc = -ECONNREFUSED;
 			goto out;
 		}
 	} else if (stat == 0x00) {
 		if (!mctp_eid_is_valid_unicast(new_eid)) {
 			warnx("%s eid %d replied with invalid eid %d, but 'accepted'",
-				dest_phys_tostr(dest), peer->eid, new_eid);
+			      dest_phys_tostr(dest), peer->eid, new_eid);
 			rc = -ECONNREFUSED;
 			goto out;
 		} else if (new_eid != peer->eid) {
 			warnx("%s eid %d replied with different eid %d, but 'accepted'",
-				dest_phys_tostr(dest), peer->eid, new_eid);
+			      dest_phys_tostr(dest), peer->eid, new_eid);
 		}
 	} else {
-		warnx("%s unexpected status 0x%02x",
-			dest_phys_tostr(dest), resp->status);
+		warnx("%s unexpected status 0x%02x", dest_phys_tostr(dest),
+		      resp->status);
 	}
 	*new_eidp = new_eid;
 
@@ -1393,7 +1389,7 @@ static int endpoint_send_set_endpoint_id(const struct peer *peer,
 	if (alloc != 0) {
 		// TODO for bridges
 		warnx("%s requested allocation pool, unimplemented",
-			dest_phys_tostr(dest));
+		      dest_phys_tostr(dest));
 	}
 
 	rc = 0;
@@ -1402,11 +1398,10 @@ out:
 	return rc;
 }
 
-
 /* Returns the newly added peer.
  * Error is -EEXISTS if it exists */
 static int add_peer(struct ctx *ctx, const dest_phys *dest, mctp_eid_t eid,
-	uint32_t net, struct peer **ret_peer)
+		    uint32_t net, struct peer **ret_peer)
 {
 	struct peer *peer, **tmp;
 	struct net *n;
@@ -1459,8 +1454,8 @@ static int add_peer(struct ctx *ctx, const dest_phys *dest, mctp_eid_t eid,
 static int check_peer_struct(const struct peer *peer, const struct net *n)
 {
 	if (n->net != peer->net) {
-		bug_warn("Mismatching net %d vs peer net %u",
-		      n->net, peer->net);
+		bug_warn("Mismatching net %d vs peer net %u", n->net,
+			 peer->net);
 		return -1;
 	}
 
@@ -1496,10 +1491,12 @@ static int remove_peer(struct peer *peer)
 	if (peer->degraded) {
 		int rc;
 
-		rc = sd_event_source_set_enabled(peer->recovery.source, SD_EVENT_OFF);
+		rc = sd_event_source_set_enabled(peer->recovery.source,
+						 SD_EVENT_OFF);
 		if (rc < 0) {
 			/* XXX: Fix caller assumptions? */
-			warnx("Failed to stop recovery timer while removing peer: %d", rc);
+			warnx("Failed to stop recovery timer while removing peer: %d",
+			      rc);
 		}
 		sd_event_source_unref(peer->recovery.source);
 	}
@@ -1514,8 +1511,8 @@ static int remove_peer(struct peer *peer)
 	}
 
 	if (idx == ctx->num_peers) {
-		bug_warn("peer net %u, eid %d not found on remove!",
-		      peer->net, peer->eid);
+		bug_warn("peer net %u, eid %d not found on remove!", peer->net,
+			 peer->eid);
 		return -EPROTO;
 	}
 
@@ -1525,7 +1522,8 @@ static int remove_peer(struct peer *peer)
 		(ctx->num_peers - idx) * sizeof(struct peer *));
 
 	if (ctx->num_peers > 0) {
-		tmp = realloc(ctx->peers, ctx->num_peers * sizeof(struct peer *));
+		tmp = realloc(ctx->peers,
+			      ctx->num_peers * sizeof(struct peer *));
 		if (!tmp) {
 			warn("%s: peer realloc(reduce!) failed", __func__);
 			// we'll re-try on next add/remove
@@ -1598,8 +1596,8 @@ static int peer_set_mtu(struct ctx *ctx, struct peer *peer, uint32_t mtu)
 	int rc;
 
 	if (!mctp_nl_if_exists(peer->ctx->nl, peer->phys.ifindex)) {
-		bug_warn("%s: no interface for ifindex %d",
-			__func__, peer->phys.ifindex);
+		bug_warn("%s: no interface for ifindex %d", __func__,
+			 peer->phys.ifindex);
 		return -EPROTO;
 	}
 
@@ -1618,8 +1616,9 @@ static int peer_set_mtu(struct ctx *ctx, struct peer *peer, uint32_t mtu)
 	return rc;
 }
 
-static int endpoint_assign_eid(struct ctx *ctx, sd_bus_error *berr, const dest_phys *dest,
-	struct peer **ret_peer, mctp_eid_t static_eid)
+static int endpoint_assign_eid(struct ctx *ctx, sd_bus_error *berr,
+			       const dest_phys *dest, struct peer **ret_peer,
+			       mctp_eid_t static_eid)
 {
 	mctp_eid_t e, new_eid;
 	struct net *n = NULL;
@@ -1656,16 +1655,18 @@ static int endpoint_assign_eid(struct ctx *ctx, sd_bus_error *berr, const dest_p
 			break;
 		}
 		if (e > eid_alloc_max) {
-			warnx("Ran out of EIDs for net %d, allocating %s", net, dest_phys_tostr(dest));
+			warnx("Ran out of EIDs for net %d, allocating %s", net,
+			      dest_phys_tostr(dest));
 			sd_bus_error_setf(berr, SD_BUS_ERROR_FAILED,
-				"Ran out of EIDs");
+					  "Ran out of EIDs");
 			return -EADDRNOTAVAIL;
 		}
 	}
 
 	rc = endpoint_send_set_endpoint_id(peer, &new_eid);
 	if (rc == -ECONNREFUSED)
-		sd_bus_error_setf(berr, SD_BUS_ERROR_FAILED,
+		sd_bus_error_setf(
+			berr, SD_BUS_ERROR_FAILED,
 			"Endpoint returned failure to Set Endpoint ID");
 	if (rc < 0) {
 		remove_peer(peer);
@@ -1675,7 +1676,8 @@ static int endpoint_assign_eid(struct ctx *ctx, sd_bus_error *berr, const dest_p
 	if (new_eid != peer->eid) {
 		rc = change_peer_eid(peer, new_eid);
 		if (rc == -EEXIST) {
-			sd_bus_error_setf(berr, SD_BUS_ERROR_FAILED,
+			sd_bus_error_setf(
+				berr, SD_BUS_ERROR_FAILED,
 				"Endpoint requested EID %d instead of assigned %d, already used",
 				new_eid, peer->eid);
 		}
@@ -1696,59 +1698,62 @@ static int endpoint_assign_eid(struct ctx *ctx, sd_bus_error *berr, const dest_p
 /* Populates a sd_bus_error based on mctpd's convention for error codes.
  * Does nothing if berr is already set.
  */
-static void set_berr(struct ctx *ctx, int errcode, sd_bus_error *berr) {
+static void set_berr(struct ctx *ctx, int errcode, sd_bus_error *berr)
+{
 	bool existing = false;
 
 	if (sd_bus_error_is_set(berr)) {
 		existing = true;
-	} else switch (errcode) {
+	} else
+		switch (errcode) {
 		case -ETIMEDOUT:
 			sd_bus_error_setf(berr, SD_BUS_ERROR_FAILED,
-				"MCTP Endpoint did not respond");
+					  "MCTP Endpoint did not respond");
 			break;
 		case -ECONNREFUSED:
 			// MCTP_CTRL_CC_ERROR or others
 			sd_bus_error_setf(berr, SD_BUS_ERROR_FAILED,
-				"MCTP Endpoint replied with failure");
+					  "MCTP Endpoint replied with failure");
 			break;
 		case -EBUSY:
 			// MCTP_CTRL_CC_ERROR_NOT_READY
 			sd_bus_error_setf(berr, SD_BUS_ERROR_FAILED,
-				"MCTP Endpoint busy");
+					  "MCTP Endpoint busy");
 			break;
 		case -ENOTSUP:
 			// MCTP_CTRL_CC_ERROR_UNSUPPORTED_CMD
 			sd_bus_error_setf(berr, SD_BUS_ERROR_FAILED,
-				"Endpoint replied 'unsupported'");
+					  "Endpoint replied 'unsupported'");
 			break;
 		case -EPROTO:
 			// BUG
 			sd_bus_error_setf(berr, SD_BUS_ERROR_FAILED,
-				"Internal error");
+					  "Internal error");
 			break;
 		default:
 			if (errcode < 0)
 				sd_bus_error_setf(berr, SD_BUS_ERROR_FAILED,
-					"Request failed");
+						  "Request failed");
 			break;
-	}
+		}
 
 	if (ctx->verbose && sd_bus_error_is_set(berr)) {
 		if (existing) {
 			warnx("Returning existing dbus error '%s'. ignored errcode=%d (%s)",
-				berr->message, errcode, strerror(-errcode));
+			      berr->message, errcode, strerror(-errcode));
 		} else {
 			warnx("Returning dbus error '%s', errcode=%d (%s)",
-				berr->message, errcode, strerror(-errcode));
+			      berr->message, errcode, strerror(-errcode));
 		}
 	}
 }
 
 static int query_get_endpoint_id(struct ctx *ctx, const dest_phys *dest,
-	mctp_eid_t *ret_eid, uint8_t *ret_ep_type, uint8_t *ret_media_spec)
+				 mctp_eid_t *ret_eid, uint8_t *ret_ep_type,
+				 uint8_t *ret_media_spec)
 {
 	struct sockaddr_mctp_ext addr;
-	struct mctp_ctrl_cmd_get_eid req = {0};
+	struct mctp_ctrl_cmd_get_eid req = { 0 };
 	struct mctp_ctrl_resp_get_eid *resp = NULL;
 	uint8_t *buf = NULL;
 	size_t buf_size;
@@ -1760,13 +1765,13 @@ static int query_get_endpoint_id(struct ctx *ctx, const dest_phys *dest,
 	req.ctrl_hdr.rq_dgram_inst = RQDI_REQ | iid;
 	req.ctrl_hdr.command_code = MCTP_CTRL_CMD_GET_ENDPOINT_ID;
 	rc = endpoint_query_phys(ctx, dest, MCTP_CTRL_HDR_MSG_TYPE, &req,
-		sizeof(req), &buf, &buf_size, &addr);
+				 sizeof(req), &buf, &buf_size, &addr);
 	if (rc < 0)
 		goto out;
 
 	rc = mctp_ctrl_validate_response(buf, buf_size, sizeof(*resp),
-					 dest_phys_tostr(dest),
-					 iid, MCTP_CTRL_CMD_GET_ENDPOINT_ID);
+					 dest_phys_tostr(dest), iid,
+					 MCTP_CTRL_CMD_GET_ENDPOINT_ID);
 	if (rc)
 		goto out;
 
@@ -1785,7 +1790,8 @@ out:
  * Returns negative error code on failure.
  */
 static int get_endpoint_peer(struct ctx *ctx, sd_bus_error *berr,
-	const dest_phys *dest, struct peer **ret_peer, mctp_eid_t *ret_cur_eid)
+			     const dest_phys *dest, struct peer **ret_peer,
+			     mctp_eid_t *ret_cur_eid)
 {
 	mctp_eid_t eid;
 	uint8_t ep_type, medium_spec;
@@ -1845,11 +1851,12 @@ static int get_endpoint_peer(struct ctx *ctx, sd_bus_error *berr,
 	return 0;
 }
 
-static int query_get_peer_msgtypes(struct peer *peer) {
+static int query_get_peer_msgtypes(struct peer *peer)
+{
 	struct sockaddr_mctp_ext addr;
 	struct mctp_ctrl_cmd_get_msg_type_support req;
 	struct mctp_ctrl_resp_get_msg_type_support *resp = NULL;
-	uint8_t* buf = NULL;
+	uint8_t *buf = NULL;
 	size_t buf_size, expect_size;
 	uint8_t iid;
 	int rc;
@@ -1862,23 +1869,23 @@ static int query_get_peer_msgtypes(struct peer *peer) {
 	req.ctrl_hdr.rq_dgram_inst = RQDI_REQ | iid;
 	req.ctrl_hdr.command_code = MCTP_CTRL_CMD_GET_MESSAGE_TYPE_SUPPORT;
 
-	rc = endpoint_query_peer(peer, MCTP_CTRL_HDR_MSG_TYPE,
-		&req, sizeof(req), &buf, &buf_size, &addr);
+	rc = endpoint_query_peer(peer, MCTP_CTRL_HDR_MSG_TYPE, &req,
+				 sizeof(req), &buf, &buf_size, &addr);
 	if (rc < 0)
 		goto out;
 
-	rc = mctp_ctrl_validate_response(buf, buf_size, sizeof(*resp),
-					 peer_tostr_short(peer), iid,
-					 MCTP_CTRL_CMD_GET_MESSAGE_TYPE_SUPPORT);
+	rc = mctp_ctrl_validate_response(
+		buf, buf_size, sizeof(*resp), peer_tostr_short(peer), iid,
+		MCTP_CTRL_CMD_GET_MESSAGE_TYPE_SUPPORT);
 	if (rc)
 		goto out;
 
-	resp = (void*)buf;
+	resp = (void *)buf;
 	expect_size = sizeof(*resp) + resp->msg_type_count;
 	if (buf_size != expect_size) {
 		warnx("%s: bad reply length. got %zu, expected %zu, %d entries. dest %s",
-			__func__, buf_size, expect_size, resp->msg_type_count,
-			peer_tostr(peer));
+		      __func__, buf_size, expect_size, resp->msg_type_count,
+		      peer_tostr(peer));
 		rc = -ENOMSG;
 		goto out;
 	}
@@ -1889,7 +1896,7 @@ static int query_get_peer_msgtypes(struct peer *peer) {
 		goto out;
 	}
 	peer->num_message_types = resp->msg_type_count;
-	memcpy(peer->message_types, (void*)(resp+1), resp->msg_type_count);
+	memcpy(peer->message_types, (void *)(resp + 1), resp->msg_type_count);
 	rc = 0;
 out:
 	free(buf);
@@ -1907,13 +1914,13 @@ static int peer_set_uuid(struct peer *peer, const uint8_t uuid[16])
 	return 0;
 }
 
-static int
-query_get_peer_uuid_by_phys(struct ctx *ctx, const dest_phys *dest, uint8_t uuid[16])
+static int query_get_peer_uuid_by_phys(struct ctx *ctx, const dest_phys *dest,
+				       uint8_t uuid[16])
 {
 	struct sockaddr_mctp_ext addr;
 	struct mctp_ctrl_cmd_get_uuid req;
 	struct mctp_ctrl_resp_get_uuid *resp = NULL;
-	uint8_t* buf = NULL;
+	uint8_t *buf = NULL;
 	size_t buf_size;
 	uint8_t iid;
 	int rc;
@@ -1922,18 +1929,18 @@ query_get_peer_uuid_by_phys(struct ctx *ctx, const dest_phys *dest, uint8_t uuid
 	req.ctrl_hdr.rq_dgram_inst = RQDI_REQ | iid;
 	req.ctrl_hdr.command_code = MCTP_CTRL_CMD_GET_ENDPOINT_UUID;
 
-	rc = endpoint_query_phys(ctx, dest, MCTP_CTRL_HDR_MSG_TYPE,
-		&req, sizeof(req), &buf, &buf_size, &addr);
+	rc = endpoint_query_phys(ctx, dest, MCTP_CTRL_HDR_MSG_TYPE, &req,
+				 sizeof(req), &buf, &buf_size, &addr);
 	if (rc < 0)
 		goto out;
 
 	rc = mctp_ctrl_validate_response(buf, buf_size, sizeof(*resp),
-					 dest_phys_tostr(dest),
-					 iid, MCTP_CTRL_CMD_GET_ENDPOINT_UUID);
+					 dest_phys_tostr(dest), iid,
+					 MCTP_CTRL_CMD_GET_ENDPOINT_UUID);
 	if (rc)
 		goto out;
 
-	resp = (void*)buf;
+	resp = (void *)buf;
 	memcpy(uuid, resp->uuid, 16);
 
 out:
@@ -1941,17 +1948,19 @@ out:
 	return rc;
 }
 
-static int query_get_peer_uuid(struct peer *peer) {
+static int query_get_peer_uuid(struct peer *peer)
+{
 	struct sockaddr_mctp_ext addr;
 	struct mctp_ctrl_cmd_get_uuid req;
 	struct mctp_ctrl_resp_get_uuid *resp = NULL;
-	uint8_t* buf = NULL;
+	uint8_t *buf = NULL;
 	size_t buf_size;
 	uint8_t iid;
 	int rc;
 
 	if (peer->state != REMOTE) {
-		warnx("%s: Wrong state for peer %s", __func__, peer_tostr(peer));
+		warnx("%s: Wrong state for peer %s", __func__,
+		      peer_tostr(peer));
 		return -EPROTO;
 	}
 
@@ -1959,18 +1968,18 @@ static int query_get_peer_uuid(struct peer *peer) {
 	req.ctrl_hdr.rq_dgram_inst = RQDI_REQ | iid;
 	req.ctrl_hdr.command_code = MCTP_CTRL_CMD_GET_ENDPOINT_UUID;
 
-	rc = endpoint_query_peer(peer, MCTP_CTRL_HDR_MSG_TYPE,
-		&req, sizeof(req), &buf, &buf_size, &addr);
+	rc = endpoint_query_peer(peer, MCTP_CTRL_HDR_MSG_TYPE, &req,
+				 sizeof(req), &buf, &buf_size, &addr);
 	if (rc < 0)
 		goto out;
 
 	rc = mctp_ctrl_validate_response(buf, buf_size, sizeof(*resp),
-					 peer_tostr_short(peer),
-					 iid, MCTP_CTRL_CMD_GET_ENDPOINT_UUID);
+					 peer_tostr_short(peer), iid,
+					 MCTP_CTRL_CMD_GET_ENDPOINT_UUID);
 	if (rc)
 		goto out;
 
-	resp = (void*)buf;
+	resp = (void *)buf;
 
 	rc = peer_set_uuid(peer, resp->uuid);
 	if (rc < 0)
@@ -1999,10 +2008,10 @@ static int validate_dest_phys(struct ctx *ctx, const dest_phys *dest)
 	return 0;
 }
 
-static int message_read_hwaddr(sd_bus_message *call, dest_phys* dest)
+static int message_read_hwaddr(sd_bus_message *call, dest_phys *dest)
 {
 	int rc;
-	const void* msg_hwaddr = NULL;
+	const void *msg_hwaddr = NULL;
 	size_t msg_hwaddr_len;
 
 	rc = sd_bus_message_read_array(call, 'y', &msg_hwaddr, &msg_hwaddr_len);
@@ -2020,9 +2029,10 @@ static int message_read_hwaddr(sd_bus_message *call, dest_phys* dest)
 /* SetupEndpoint method tries the following in order:
   - request Get Endpoint ID to add to the known table, return that
   - request Set Endpoint ID, return that */
-static int method_setup_endpoint(sd_bus_message *call, void *data, sd_bus_error *berr)
+static int method_setup_endpoint(sd_bus_message *call, void *data,
+				 sd_bus_error *berr)
 {
-	dest_phys desti = {0}, *dest = &desti;
+	dest_phys desti = { 0 }, *dest = &desti;
 	const char *peer_path = NULL;
 	struct link *link = data;
 	struct ctx *ctx = link->ctx;
@@ -2032,7 +2042,7 @@ static int method_setup_endpoint(sd_bus_message *call, void *data, sd_bus_error 
 	dest->ifindex = link->ifindex;
 	if (dest->ifindex <= 0)
 		return sd_bus_error_setf(berr, SD_BUS_ERROR_INVALID_ARGS,
-			"Unknown MCTP interface");
+					 "Unknown MCTP interface");
 
 	rc = message_read_hwaddr(call, dest);
 	if (rc < 0)
@@ -2041,7 +2051,7 @@ static int method_setup_endpoint(sd_bus_message *call, void *data, sd_bus_error 
 	rc = validate_dest_phys(ctx, dest);
 	if (rc < 0)
 		return sd_bus_error_setf(berr, SD_BUS_ERROR_INVALID_ARGS,
-			"Bad physaddr");
+					 "Bad physaddr");
 
 	/* Get Endpoint ID */
 	rc = get_endpoint_peer(ctx, berr, dest, &peer, NULL);
@@ -2053,8 +2063,8 @@ static int method_setup_endpoint(sd_bus_message *call, void *data, sd_bus_error 
 		peer_path = path_from_peer(peer);
 		if (!peer_path)
 			goto err;
-		return sd_bus_reply_method_return(call, "yisb",
-			peer->eid, peer->net, peer_path, 0);
+		return sd_bus_reply_method_return(call, "yisb", peer->eid,
+						  peer->net, peer_path, 0);
 	} else if (rc == -EEXIST) {
 		// EEXISTS is OK, we will assign a new eid instead.
 	} else if (rc < 0) {
@@ -2073,15 +2083,16 @@ static int method_setup_endpoint(sd_bus_message *call, void *data, sd_bus_error 
 	if (ctx->verbose)
 		fprintf(stderr, "%s returning from endpoint_assign_eid %s\n",
 			__func__, peer_tostr(peer));
-	return sd_bus_reply_method_return(call, "yisb",
-		peer->eid, peer->net, peer_path, 1);
+	return sd_bus_reply_method_return(call, "yisb", peer->eid, peer->net,
+					  peer_path, 1);
 
 err:
 	set_berr(ctx, rc, berr);
 	return rc;
 }
 
-static int method_assign_endpoint(sd_bus_message *call, void *data, sd_bus_error *berr)
+static int method_assign_endpoint(sd_bus_message *call, void *data,
+				  sd_bus_error *berr)
 {
 	dest_phys desti, *dest = &desti;
 	const char *peer_path = NULL;
@@ -2093,7 +2104,7 @@ static int method_assign_endpoint(sd_bus_message *call, void *data, sd_bus_error
 	dest->ifindex = link->ifindex;
 	if (dest->ifindex <= 0)
 		return sd_bus_error_setf(berr, SD_BUS_ERROR_INVALID_ARGS,
-			"Unknown MCTP interface");
+					 "Unknown MCTP interface");
 
 	rc = message_read_hwaddr(call, dest);
 	if (rc < 0)
@@ -2102,7 +2113,7 @@ static int method_assign_endpoint(sd_bus_message *call, void *data, sd_bus_error
 	rc = validate_dest_phys(ctx, dest);
 	if (rc < 0)
 		return sd_bus_error_setf(berr, SD_BUS_ERROR_INVALID_ARGS,
-			"Bad physaddr");
+					 "Bad physaddr");
 
 	peer = find_peer_by_phys(ctx, dest);
 	if (peer) {
@@ -2111,8 +2122,8 @@ static int method_assign_endpoint(sd_bus_message *call, void *data, sd_bus_error
 		if (!peer_path)
 			goto err;
 
-		return sd_bus_reply_method_return(call, "yisb",
-			peer->eid, peer->net, peer_path, 0);
+		return sd_bus_reply_method_return(call, "yisb", peer->eid,
+						  peer->net, peer_path, 0);
 	}
 
 	rc = endpoint_assign_eid(ctx, berr, dest, &peer, 0);
@@ -2123,8 +2134,8 @@ static int method_assign_endpoint(sd_bus_message *call, void *data, sd_bus_error
 	if (!peer_path)
 		goto err;
 
-	return sd_bus_reply_method_return(call, "yisb",
-		peer->eid, peer->net, peer_path, 1);
+	return sd_bus_reply_method_return(call, "yisb", peer->eid, peer->net,
+					  peer_path, 1);
 err:
 	set_berr(ctx, rc, berr);
 	return rc;
@@ -2144,7 +2155,7 @@ static int method_assign_endpoint_static(sd_bus_message *call, void *data,
 	dest->ifindex = link->ifindex;
 	if (dest->ifindex <= 0)
 		return sd_bus_error_setf(berr, SD_BUS_ERROR_INVALID_ARGS,
-			"Unknown MCTP interface");
+					 "Unknown MCTP interface");
 
 	rc = message_read_hwaddr(call, dest);
 	if (rc < 0)
@@ -2157,12 +2168,13 @@ static int method_assign_endpoint_static(sd_bus_message *call, void *data,
 	rc = validate_dest_phys(ctx, dest);
 	if (rc < 0)
 		return sd_bus_error_setf(berr, SD_BUS_ERROR_INVALID_ARGS,
-			"Bad physaddr");
+					 "Bad physaddr");
 
 	peer = find_peer_by_phys(ctx, dest);
 	if (peer) {
 		if (peer->eid != eid) {
-			return sd_bus_error_setf(berr, SD_BUS_ERROR_INVALID_ARGS,
+			return sd_bus_error_setf(
+				berr, SD_BUS_ERROR_INVALID_ARGS,
 				"Already assigned a different EID");
 		}
 
@@ -2171,8 +2183,8 @@ static int method_assign_endpoint_static(sd_bus_message *call, void *data,
 		if (!peer_path)
 			goto err;
 
-		return sd_bus_reply_method_return(call, "yisb",
-			peer->eid, peer->net, peer_path, 0);
+		return sd_bus_reply_method_return(call, "yisb", peer->eid,
+						  peer->net, peer_path, 0);
 	} else {
 		uint32_t netid;
 
@@ -2180,8 +2192,9 @@ static int method_assign_endpoint_static(sd_bus_message *call, void *data,
 		netid = mctp_nl_net_byindex(ctx->nl, dest->ifindex);
 		peer = find_peer_by_addr(ctx, eid, netid);
 		if (peer) {
-			return sd_bus_error_setf(berr, SD_BUS_ERROR_INVALID_ARGS,
-				"Address in use");
+			return sd_bus_error_setf(berr,
+						 SD_BUS_ERROR_INVALID_ARGS,
+						 "Address in use");
 		}
 	}
 
@@ -2194,14 +2207,15 @@ static int method_assign_endpoint_static(sd_bus_message *call, void *data,
 	if (!peer_path)
 		goto err;
 
-	return sd_bus_reply_method_return(call, "yisb",
-		peer->eid, peer->net, peer_path, 1);
+	return sd_bus_reply_method_return(call, "yisb", peer->eid, peer->net,
+					  peer_path, 1);
 err:
 	set_berr(ctx, rc, berr);
 	return rc;
 }
 
-static int method_learn_endpoint(sd_bus_message *call, void *data, sd_bus_error *berr)
+static int method_learn_endpoint(sd_bus_message *call, void *data,
+				 sd_bus_error *berr)
 {
 	int rc;
 	const char *peer_path = NULL;
@@ -2214,7 +2228,7 @@ static int method_learn_endpoint(sd_bus_message *call, void *data, sd_bus_error 
 	dest->ifindex = link->ifindex;
 	if (dest->ifindex <= 0)
 		return sd_bus_error_setf(berr, SD_BUS_ERROR_INVALID_ARGS,
-			"Unknown MCTP interface");
+					 "Unknown MCTP interface");
 
 	rc = message_read_hwaddr(call, dest);
 	if (rc < 0)
@@ -2223,15 +2237,15 @@ static int method_learn_endpoint(sd_bus_message *call, void *data, sd_bus_error 
 	rc = validate_dest_phys(ctx, dest);
 	if (rc < 0)
 		return sd_bus_error_setf(berr, SD_BUS_ERROR_INVALID_ARGS,
-			"Bad physaddr");
+					 "Bad physaddr");
 
 	rc = get_endpoint_peer(ctx, berr, dest, &peer, &eid);
 	if (rc == -EEXIST) {
 		/* We have a conflict with an existing endpoint, so can't
 		 * learn; recovery would requre a Set Endpoint ID. */
-		return sd_bus_error_setf(berr, SD_BUS_ERROR_FILE_EXISTS,
-					 "Endpoint claimed EID %d which is already used",
-					 eid);
+		return sd_bus_error_setf(
+			berr, SD_BUS_ERROR_FILE_EXISTS,
+			"Endpoint claimed EID %d which is already used", eid);
 	}
 	if (rc < 0)
 		goto err;
@@ -2242,7 +2256,7 @@ static int method_learn_endpoint(sd_bus_message *call, void *data, sd_bus_error 
 	if (!peer_path)
 		goto err;
 	return sd_bus_reply_method_return(call, "yisb", peer->eid, peer->net,
-		peer_path, 1);
+					  peer_path, 1);
 err:
 	set_berr(ctx, rc, berr);
 	return rc;
@@ -2260,7 +2274,7 @@ static int query_peer_properties(struct peer *peer)
 		// Warn here, it's a mandatory command code.
 		// It might be too noisy if some devices don't implement it.
 		warnx("Error getting endpoint types for %s. Ignoring error %d %s",
-			peer_tostr(peer), rc, strerror(-rc));
+		      peer_tostr(peer), rc, strerror(-rc));
 		rc = 0;
 	}
 
@@ -2268,7 +2282,7 @@ static int query_peer_properties(struct peer *peer)
 	if (rc < 0) {
 		if (peer->ctx->verbose)
 			warnx("Error getting UUID for %s. Ignoring error %d %s",
-				peer_tostr(peer), rc, strerror(-rc));
+			      peer_tostr(peer), rc, strerror(-rc));
 		rc = 0;
 	}
 
@@ -2279,22 +2293,23 @@ static int query_peer_properties(struct peer *peer)
 static int peer_neigh_update(struct peer *peer, uint16_t type)
 {
 	struct {
-		struct nlmsghdr		nh;
-		struct ndmsg		ndmsg;
-		uint8_t			rta_buff[RTA_SPACE(1) + RTA_SPACE(MAX_ADDR_LEN)];
-	} msg = {0};
+		struct nlmsghdr nh;
+		struct ndmsg ndmsg;
+		uint8_t rta_buff[RTA_SPACE(1) + RTA_SPACE(MAX_ADDR_LEN)];
+	} msg = { 0 };
 	size_t rta_len = sizeof(msg.rta_buff);
-	struct rtattr *rta = (void*)msg.rta_buff;
+	struct rtattr *rta = (void *)msg.rta_buff;
 
 	msg.nh.nlmsg_type = type;
 	msg.nh.nlmsg_flags = NLM_F_REQUEST | NLM_F_ACK;
 	msg.ndmsg.ndm_ifindex = peer->phys.ifindex;
 	msg.ndmsg.ndm_family = AF_MCTP;
 	msg.nh.nlmsg_len = NLMSG_LENGTH(sizeof(msg.ndmsg));
-	msg.nh.nlmsg_len += mctp_put_rtnlmsg_attr(&rta, &rta_len,
-		NDA_DST, &peer->eid, sizeof(peer->eid));
-	msg.nh.nlmsg_len += mctp_put_rtnlmsg_attr(&rta, &rta_len,
-		NDA_LLADDR, peer->phys.hwaddr, peer->phys.hwaddr_len);
+	msg.nh.nlmsg_len += mctp_put_rtnlmsg_attr(
+		&rta, &rta_len, NDA_DST, &peer->eid, sizeof(peer->eid));
+	msg.nh.nlmsg_len += mctp_put_rtnlmsg_attr(&rta, &rta_len, NDA_LLADDR,
+						  peer->phys.hwaddr,
+						  peer->phys.hwaddr_len);
 	return mctp_nl_send(peer->ctx->nl, &msg.nh);
 }
 
@@ -2302,7 +2317,8 @@ static int peer_neigh_update(struct peer *peer, uint16_t type)
 static int peer_route_update(struct peer *peer, uint16_t type)
 {
 	if (!mctp_nl_if_exists(peer->ctx->nl, peer->phys.ifindex)) {
-		bug_warn("%s: Unknown ifindex %d", __func__, peer->phys.ifindex);
+		bug_warn("%s: Unknown ifindex %d", __func__,
+			 peer->phys.ifindex);
 		return -ENODEV;
 	}
 
@@ -2347,7 +2363,8 @@ static void add_peer_neigh(struct peer *peer)
 	size_t if_hwaddr_len;
 	int rc;
 
-	rc = mctp_nl_hwaddr_len_byindex(peer->ctx->nl, peer->phys.ifindex, &if_hwaddr_len);
+	rc = mctp_nl_hwaddr_len_byindex(peer->ctx->nl, peer->phys.ifindex,
+					&if_hwaddr_len);
 	if (rc) {
 		warnx("Missing neigh ifindex %d", peer->phys.ifindex);
 		return;
@@ -2365,7 +2382,7 @@ static void add_peer_neigh(struct peer *peer)
 	rc = peer_neigh_update(peer, RTM_NEWNEIGH);
 	if (rc < 0 && rc != -EEXIST) {
 		warnx("Failed adding neigh for %s: %s", peer_tostr(peer),
-			strerror(-rc));
+		      strerror(-rc));
 	} else {
 		peer->have_neigh = true;
 	}
@@ -2389,7 +2406,7 @@ static void add_peer_route(struct peer *peer)
 	rc = peer_route_update(peer, RTM_NEWROUTE);
 	if (rc < 0 && rc != -EEXIST) {
 		warnx("Failed adding route for %s: %s", peer_tostr(peer),
-			strerror(-rc));
+		      strerror(-rc));
 	} else {
 		peer->have_route = true;
 	}
@@ -2436,16 +2453,18 @@ static int publish_peer(struct peer *peer, bool add_route)
 }
 
 /* removes route, neigh, dbus entry for the peer */
-static int unpublish_peer(struct peer *peer) {
+static int unpublish_peer(struct peer *peer)
+{
 	int rc;
 	if (peer->have_neigh) {
 		if (peer->ctx->verbose) {
-			fprintf(stderr, "Deleting neigh to %s\n", peer_tostr(peer));
+			fprintf(stderr, "Deleting neigh to %s\n",
+				peer_tostr(peer));
 		}
 		rc = peer_neigh_update(peer, RTM_DELNEIGH);
 		if (rc < 0) {
 			warnx("Failed removing neigh for %s: %s",
-				peer_tostr(peer), strerror(-rc));
+			      peer_tostr(peer), strerror(-rc));
 		} else {
 			peer->have_neigh = false;
 		}
@@ -2453,12 +2472,13 @@ static int unpublish_peer(struct peer *peer) {
 
 	if (peer->have_route) {
 		if (peer->ctx->verbose) {
-			fprintf(stderr, "Deleting route to %s\n", peer_tostr(peer));
+			fprintf(stderr, "Deleting route to %s\n",
+				peer_tostr(peer));
 		}
 		rc = peer_route_update(peer, RTM_DELROUTE);
 		if (rc < 0) {
 			warnx("Failed removing route for %s: %s",
-				peer_tostr(peer), strerror(-rc));
+			      peer_tostr(peer), strerror(-rc));
 		} else {
 			peer->have_route = false;
 		}
@@ -2479,7 +2499,7 @@ static int unpublish_peer(struct peer *peer) {
 }
 
 static int method_endpoint_remove(sd_bus_message *call, void *data,
-	sd_bus_error *berr)
+				  sd_bus_error *berr)
 {
 	struct peer *peer = data;
 	int rc;
@@ -2487,7 +2507,7 @@ static int method_endpoint_remove(sd_bus_message *call, void *data,
 
 	if (peer->state == LOCAL)
 		return sd_bus_error_setf(berr, SD_BUS_ERROR_FAILED,
-			"Cannot remove mctpd-local endpoint");
+					 "Cannot remove mctpd-local endpoint");
 	if (!peer->published) {
 		rc = -EPROTO;
 		goto out;
@@ -2514,8 +2534,8 @@ out:
 	(MCTP_I2C_TSYM_MT1_MAX_US + 2 * MCTP_I2C_TSYM_MT3_MAX_US)
 #define MCTP_I2C_TSYM_MT2_MAX_MS MCTP_I2C_TSYM_MT4_MIN_US
 
-static int
-peer_endpoint_recover(sd_event_source *s, uint64_t usec, void *userdata)
+static int peer_endpoint_recover(sd_event_source *s, uint64_t usec,
+				 void *userdata)
 {
 	struct peer *peer = userdata;
 	struct ctx *ctx = peer->ctx;
@@ -2540,7 +2560,8 @@ peer_endpoint_recover(sd_event_source *s, uint64_t usec, void *userdata)
 	 * of DSP0236 v1.3.1.
 	 */
 	rc = query_get_endpoint_id(ctx, &peer->phys, &peer->recovery.eid,
-		&peer->recovery.endpoint_type, &peer->recovery.medium_spec);
+				   &peer->recovery.endpoint_type,
+				   &peer->recovery.medium_spec);
 	if (rc < 0) {
 		goto reschedule;
 	}
@@ -2558,25 +2579,29 @@ peer_endpoint_recover(sd_event_source *s, uint64_t usec, void *userdata)
 	 * EID for the exchanged device, given it is responsive.
 	 */
 	if (peer->recovery.eid != peer->eid) {
-		static const uint8_t nil_uuid[16] = {0};
+		static const uint8_t nil_uuid[16] = { 0 };
 		bool uuid_matches_peer = false;
 		bool uuid_matches_nil = false;
-		uint8_t uuid[16] = {0};
+		uint8_t uuid[16] = { 0 };
 		mctp_eid_t new_eid;
 
 		rc = query_get_peer_uuid_by_phys(ctx, &peer->phys, uuid);
 		if (!rc && peer->uuid) {
-			static_assert(sizeof(uuid) == sizeof(nil_uuid), "Unsynchronized UUID sizes");
-			uuid_matches_peer = memcmp(uuid, peer->uuid, sizeof(uuid)) == 0;
-			uuid_matches_nil = memcmp(uuid, nil_uuid, sizeof(uuid)) == 0;
+			static_assert(sizeof(uuid) == sizeof(nil_uuid),
+				      "Unsynchronized UUID sizes");
+			uuid_matches_peer =
+				memcmp(uuid, peer->uuid, sizeof(uuid)) == 0;
+			uuid_matches_nil =
+				memcmp(uuid, nil_uuid, sizeof(uuid)) == 0;
 		}
 
 		if (rc || !uuid_matches_peer ||
-				(uuid_matches_nil && !MCTPD_RECOVER_NIL_UUID)) {
+		    (uuid_matches_nil && !MCTPD_RECOVER_NIL_UUID)) {
 			/* It's not known to be the same device, allocate a new EID */
 			dest_phys phys = peer->phys;
 
-			assert(sd_event_source_get_enabled(peer->recovery.source, NULL) == 0);
+			assert(sd_event_source_get_enabled(
+				       peer->recovery.source, NULL) == 0);
 			remove_peer(peer);
 			/*
 			 * The representation of the old peer is now gone. Set up the new peer,
@@ -2607,7 +2632,8 @@ peer_endpoint_recover(sd_event_source *s, uint64_t usec, void *userdata)
 		goto reschedule;
 
 	rc = sd_bus_emit_properties_changed(ctx->bus, peer_path,
-		CC_MCTP_DBUS_IFACE_ENDPOINT, "Connectivity", NULL);
+					    CC_MCTP_DBUS_IFACE_ENDPOINT,
+					    "Connectivity", NULL);
 	if (rc < 0) {
 		goto reschedule;
 	}
@@ -2623,22 +2649,24 @@ peer_endpoint_recover(sd_event_source *s, uint64_t usec, void *userdata)
 reschedule:
 	if (peer->recovery.npolls > 0) {
 		rc = sd_event_source_set_time_relative(peer->recovery.source,
-			peer->recovery.delay);
+						       peer->recovery.delay);
 		if (rc >= 0) {
-			rc = sd_event_source_set_enabled(peer->recovery.source, SD_EVENT_ONESHOT);
+			rc = sd_event_source_set_enabled(peer->recovery.source,
+							 SD_EVENT_ONESHOT);
 		}
 	}
 	if (rc < 0) {
 reclaim:
 		/* Recovery unsuccessful, clean up the peer */
-		assert(sd_event_source_get_enabled(peer->recovery.source, NULL) == 0);
+		assert(sd_event_source_get_enabled(peer->recovery.source,
+						   NULL) == 0);
 		remove_peer(peer);
 	}
 	return rc < 0 ? rc : 0;
 }
 
 static int method_endpoint_recover(sd_bus_message *call, void *data,
-	sd_bus_error *berr)
+				   sd_bus_error *berr)
 {
 	struct peer *peer;
 	bool previously;
@@ -2656,19 +2684,20 @@ static int method_endpoint_recover(sd_bus_message *call, void *data,
 		peer->recovery.npolls = MCTP_I2C_TSYM_MN1_MIN + 1;
 		peer->recovery.delay =
 			(MCTP_I2C_TSYM_TRECLAIM_MIN_US / 2) - ctx->mctp_timeout;
-		rc = sd_event_add_time_relative(ctx->event, &peer->recovery.source,
-			CLOCK_MONOTONIC, 0, ctx->mctp_timeout, peer_endpoint_recover, peer);
+		rc = sd_event_add_time_relative(
+			ctx->event, &peer->recovery.source, CLOCK_MONOTONIC, 0,
+			ctx->mctp_timeout, peer_endpoint_recover, peer);
 		if (rc < 0) {
 			goto out;
 		}
 
 		peer->degraded = true;
 
-		rc = sd_bus_emit_properties_changed(sd_bus_message_get_bus(call),
-				sd_bus_message_get_path(call),
-				sd_bus_message_get_interface(call),
-				"Connectivity",
-				NULL);
+		rc = sd_bus_emit_properties_changed(
+			sd_bus_message_get_bus(call),
+			sd_bus_message_get_path(call),
+			sd_bus_message_get_interface(call), "Connectivity",
+			NULL);
 		if (rc < 0) {
 			goto out;
 		}
@@ -2680,7 +2709,8 @@ out:
 	if (rc < 0 && !previously) {
 		if (peer->degraded) {
 			/* Cleanup the timer if it was setup successfully. */
-			sd_event_source_set_enabled(peer->recovery.source, SD_EVENT_OFF);
+			sd_event_source_set_enabled(peer->recovery.source,
+						    SD_EVENT_OFF);
 			sd_event_source_unref(peer->recovery.source);
 		}
 		peer->degraded = previously;
@@ -2693,7 +2723,7 @@ out:
 }
 
 static int method_endpoint_set_mtu(sd_bus_message *call, void *data,
-	sd_bus_error *berr)
+				   sd_bus_error *berr)
 {
 	struct peer *peer = data;
 	struct ctx *ctx = peer->ctx;
@@ -2702,7 +2732,7 @@ static int method_endpoint_set_mtu(sd_bus_message *call, void *data,
 
 	if (peer->state == LOCAL)
 		return sd_bus_error_setf(berr, SD_BUS_ERROR_FAILED,
-			"Cannot set local endpoint MTU");
+					 "Cannot set local endpoint MTU");
 
 	rc = sd_bus_message_read(call, "u", &mtu);
 	if (rc < 0)
@@ -2811,9 +2841,10 @@ static const sd_bus_vtable bus_link_owner_vtable[] = {
 };
 // clang-format on
 
-static int bus_endpoint_get_prop(sd_bus *bus,
-		const char *path, const char *interface, const char *property,
-		sd_bus_message *reply, void *userdata, sd_bus_error *berr)
+static int bus_endpoint_get_prop(sd_bus *bus, const char *path,
+				 const char *interface, const char *property,
+				 sd_bus_message *reply, void *userdata,
+				 sd_bus_error *berr)
 {
 	struct peer *peer = userdata;
 	int rc;
@@ -2824,23 +2855,27 @@ static int bus_endpoint_get_prop(sd_bus *bus,
 		rc = sd_bus_message_append(reply, "y", peer->eid);
 	} else if (strcmp(property, "SupportedMessageTypes") == 0) {
 		rc = sd_bus_message_append_array(reply, 'y',
-			peer->message_types, peer->num_message_types);
+						 peer->message_types,
+						 peer->num_message_types);
 	} else if (strcmp(property, "UUID") == 0 && peer->uuid) {
 		const char *s = dfree(bytes_to_uuid(peer->uuid));
 		rc = sd_bus_message_append(reply, "s", s);
 	} else if (strcmp(property, "Connectivity") == 0) {
-		rc = sd_bus_message_append(reply, "s", peer->degraded ? "Degraded" : "Available");
+		rc = sd_bus_message_append(
+			reply, "s", peer->degraded ? "Degraded" : "Available");
 	} else {
-		warnx("Unknown property '%s' for %s iface %s", property, path, interface);
+		warnx("Unknown property '%s' for %s iface %s", property, path,
+		      interface);
 		rc = -ENOENT;
 	}
 
 	return rc;
 }
 
-static int bus_network_get_prop(sd_bus *bus,
-		const char *path, const char *interface, const char *property,
-		sd_bus_message *reply, void *userdata, sd_bus_error *berr)
+static int bus_network_get_prop(sd_bus *bus, const char *path,
+				const char *interface, const char *property,
+				sd_bus_message *reply, void *userdata,
+				sd_bus_error *berr)
 {
 	struct net *net = userdata;
 	int rc = -ENOENT;
@@ -2859,21 +2894,24 @@ static int bus_network_get_prop(sd_bus *bus,
 	return rc;
 }
 
-static int bus_link_get_prop(sd_bus *bus,
-		const char *path, const char *interface, const char *property,
-		sd_bus_message *reply, void *userdata, sd_bus_error *berr)
+static int bus_link_get_prop(sd_bus *bus, const char *path,
+			     const char *interface, const char *property,
+			     sd_bus_message *reply, void *userdata,
+			     sd_bus_error *berr)
 {
 	struct link *link = userdata;
 	int rc = 0;
 
 	if (link->published && strcmp(property, "Role") == 0) {
-		rc = sd_bus_message_append(reply, "s", roles[link->role].dbus_val);
+		rc = sd_bus_message_append(reply, "s",
+					   roles[link->role].dbus_val);
 	} else if (strcmp(property, "NetworkId") == 0) {
-		uint32_t  net = mctp_nl_net_byindex(link->ctx->nl, link->ifindex);
+		uint32_t net =
+			mctp_nl_net_byindex(link->ctx->nl, link->ifindex);
 		rc = sd_bus_message_append_basic(reply, 'u', &net);
 	} else {
 		sd_bus_error_setf(berr, SD_BUS_ERROR_INVALID_ARGS,
-				"Unknown property.");
+				  "Unknown property.");
 		rc = -ENOENT;
 	}
 
@@ -2881,9 +2919,10 @@ static int bus_link_get_prop(sd_bus *bus,
 	return rc;
 }
 
-static int bus_link_set_prop(sd_bus *bus,
-		const char *path, const char *interface, const char *property,
-		sd_bus_message *value, void *userdata, sd_bus_error *berr)
+static int bus_link_set_prop(sd_bus *bus, const char *path,
+			     const char *interface, const char *property,
+			     sd_bus_message *value, void *userdata,
+			     sd_bus_error *berr)
 {
 	struct link *link = userdata;
 	struct ctx *ctx = link->ctx;
@@ -2892,29 +2931,31 @@ static int bus_link_set_prop(sd_bus *bus,
 	int rc = -1;
 
 	if (strcmp(property, "Role") != 0) {
-		warnx("Unknown property '%s' for %s iface %s", property, path, interface);
+		warnx("Unknown property '%s' for %s iface %s", property, path,
+		      interface);
 		rc = -ENOENT;
 		goto out;
 	}
 
 	if (link->role != ENDPOINT_ROLE_UNKNOWN) {
 		sd_bus_error_setf(berr, SD_BUS_ERROR_INVALID_ARGS,
-					"Role is already set.");
+				  "Role is already set.");
 		rc = -ENOENT;
 		goto out;
 	}
 
 	rc = sd_bus_message_read(value, "s", &state);
 	if (rc < 0) {
-		sd_bus_error_setf(berr, SD_BUS_ERROR_INVALID_ARGS,
-				"Unknown Role. Only Support BusOwner/EndPoint.");
+		sd_bus_error_setf(
+			berr, SD_BUS_ERROR_INVALID_ARGS,
+			"Unknown Role. Only Support BusOwner/EndPoint.");
 		goto out;
 	}
 
 	rc = get_role(state, &role);
 	if (rc < 0) {
 		warnx("Invalid property value '%s' for property '%s' from interface '%s' on object '%s'",
-			state, property, interface, path);
+		      state, property, interface, path);
 		rc = -EINVAL;
 		goto out;
 	}
@@ -2925,13 +2966,10 @@ out:
 	return rc;
 }
 
-__attribute__((unused))
-static int bus_endpoint_set_prop(sd_bus *bus, const char *path,
-                                 const char *interface,
-                                 const char *property,
-                                 sd_bus_message *value,
-                                 void *userdata,
-                                 sd_bus_error *ret_error)
+__attribute__((unused)) static int
+bus_endpoint_set_prop(sd_bus *bus, const char *path, const char *interface,
+		      const char *property, sd_bus_message *value,
+		      void *userdata, sd_bus_error *ret_error)
 {
 	struct peer *peer = userdata;
 	const char *connectivity;
@@ -2950,17 +2988,17 @@ static int bus_endpoint_set_prop(sd_bus *bus, const char *path,
 			peer->degraded = true;
 		} else {
 			warnx("Invalid property value '%s' for property '%s' from interface '%s' on object '%s'",
-				connectivity, property, interface, path);
+			      connectivity, property, interface, path);
 			rc = -EINVAL;
 			goto out;
 		}
-		if (previously != peer->degraded)
-		{
-			rc = sd_bus_emit_properties_changed(bus, path, interface, "Connectivity", NULL);
+		if (previously != peer->degraded) {
+			rc = sd_bus_emit_properties_changed(
+				bus, path, interface, "Connectivity", NULL);
 		}
 	} else {
-		warnx("Unknown property '%s' in interface '%s' on object '%s'", property,
-			interface, path);
+		warnx("Unknown property '%s' in interface '%s' on object '%s'",
+		      property, interface, path);
 		rc = -ENOENT;
 	}
 out:
@@ -3068,7 +3106,8 @@ static const sd_bus_vtable bus_network_vtable[] = {
 };
 // clang-format on
 
-static int emit_endpoint_added(const struct peer *peer) {
+static int emit_endpoint_added(const struct peer *peer)
+{
 	const char *path = NULL;
 	int rc;
 
@@ -3085,7 +3124,8 @@ static int emit_endpoint_added(const struct peer *peer) {
 	return rc;
 }
 
-static int emit_endpoint_removed(const struct peer *peer) {
+static int emit_endpoint_removed(const struct peer *peer)
+{
 	const char *path = NULL;
 	int rc;
 
@@ -3107,7 +3147,7 @@ static int emit_net_added(struct ctx *ctx, struct net *net)
 	int rc;
 
 	if (ctx->verbose)
-		warnx("emitting net add: %s",  net->path);
+		warnx("emitting net add: %s", net->path);
 
 	rc = sd_bus_emit_object_added(ctx->bus, net->path);
 	if (rc < 0)
@@ -3134,7 +3174,7 @@ static int emit_net_removed(struct ctx *ctx, struct net *net)
 	int rc;
 
 	if (ctx->verbose)
-		warnx("emitting net remove: %s",  net->path);
+		warnx("emitting net remove: %s", net->path);
 
 	rc = sd_bus_emit_object_removed(ctx->bus, net->path);
 	if (rc < 0)
@@ -3202,7 +3242,7 @@ static int setup_bus(struct ctx *ctx)
 	}
 
 	rc = sd_bus_attach_event(ctx->bus, ctx->event,
-		SD_EVENT_PRIORITY_NORMAL);
+				 SD_EVENT_PRIORITY_NORMAL);
 	if (rc < 0) {
 		warnx("Failed attach to event loop");
 		goto out;
@@ -3219,7 +3259,6 @@ out:
 	return rc;
 }
 
-
 int request_dbus(struct ctx *ctx)
 {
 	int rc;
@@ -3232,7 +3271,6 @@ int request_dbus(struct ctx *ctx)
 
 	return 0;
 }
-
 
 // Deletes one local EID.
 static int del_local_eid(struct ctx *ctx, uint32_t net, int eid)
@@ -3247,20 +3285,22 @@ static int del_local_eid(struct ctx *ctx, uint32_t net, int eid)
 	}
 
 	if (peer->state != LOCAL) {
-		bug_warn("local eid %d net %d to delete is incorrect", eid, net);
+		bug_warn("local eid %d net %d to delete is incorrect", eid,
+			 net);
 		return -EPROTO;
 	}
 
 	peer->local_count--;
 	if (peer->local_count < 0) {
-		bug_warn("local eid %d net %d bad refcount %d",
-			eid, net, peer->local_count);
+		bug_warn("local eid %d net %d bad refcount %d", eid, net,
+			 peer->local_count);
 	}
 
 	rc = 0;
 	if (peer->local_count <= 0) {
 		if (ctx->verbose) {
-			fprintf(stderr, "Removing local eid %d net %d\n", eid, net);
+			fprintf(stderr, "Removing local eid %d net %d\n", eid,
+				net);
 		}
 
 		rc = remove_peer(peer);
@@ -3294,7 +3334,8 @@ static int prune_old_nets(struct ctx *ctx)
 			for (size_t p = 0; p < 256; p++) {
 				// Sanity check that no peers are used
 				if (ctx->nets[i]->peers[p]) {
-					bug_warn("stale entry for eid %zd in deleted net %d",
+					bug_warn(
+						"stale entry for eid %zd in deleted net %d",
 						p, net->net);
 				}
 			}
@@ -3307,7 +3348,8 @@ static int prune_old_nets(struct ctx *ctx)
 	return 0;
 }
 
-static void free_link(struct link *link) {
+static void free_link(struct link *link)
+{
 	sd_bus_slot_unref(link->slot_iface);
 	sd_bus_slot_unref(link->slot_busowner);
 	free(link->path);
@@ -3347,11 +3389,11 @@ static int del_interface(struct link *link)
 static void free_links(struct ctx *ctx)
 {
 	size_t num;
-	int* ifs;
+	int *ifs;
 
 	ifs = mctp_nl_if_list(ctx->nl, &num);
 	for (size_t i = 0; i < num; i++) {
-		struct link* link = mctp_nl_get_link_userdata(ctx->nl, ifs[i]);
+		struct link *link = mctp_nl_get_link_userdata(ctx->nl, ifs[i]);
 		mctp_nl_set_link_userdata(ctx->nl, ifs[i], NULL);
 		if (link) {
 			free_link(link);
@@ -3370,8 +3412,8 @@ static int change_net_interface(struct ctx *ctx, int ifindex, uint32_t old_net)
 
 	if (ctx->verbose) {
 		fprintf(stderr, "Moving interface #%d %s from net %d -> %d\n",
-			ifindex, mctp_nl_if_byindex(ctx->nl, ifindex),
-			old_net, new_net);
+			ifindex, mctp_nl_if_byindex(ctx->nl, ifindex), old_net,
+			new_net);
 	}
 
 	link = mctp_nl_get_link_userdata(ctx->nl, ifindex);
@@ -3417,9 +3459,8 @@ static int change_net_interface(struct ctx *ctx, int ifindex, uint32_t old_net)
 
 		if (peer->net != old_net) {
 			bug_warn("%s: Mismatch old net %d vs %d, new net %d",
-				__func__, peer->net, old_net, new_net);
+				 __func__, peer->net, old_net, new_net);
 			continue;
-
 		}
 		if (check_peer_struct(peer, old_n) != 0) {
 			bug_warn("%s: Inconsistent state", __func__);
@@ -3429,7 +3470,7 @@ static int change_net_interface(struct ctx *ctx, int ifindex, uint32_t old_net)
 		if (new_n->peers[peer->eid]) {
 			// Conflict, drop it
 			warnx("EID %d already exists moving net %d->%d, dropping it",
-				peer->eid, old_net, new_net);
+			      peer->eid, old_net, new_net);
 			remove_peer(peer);
 			continue;
 		}
@@ -3468,8 +3509,7 @@ static int add_local_eid(struct ctx *ctx, uint32_t net, int eid)
 			return 0;
 		} else {
 			// TODO: remove the peer and add a new local one.
-			warnx("Local eid %d net %d already exists?",
-				eid, net);
+			warnx("Local eid %d net %d already exists?", eid, net);
 			return -EPROTO;
 		}
 	}
@@ -3483,8 +3523,7 @@ static int add_local_eid(struct ctx *ctx, uint32_t net, int eid)
 	peer->local_count = 1;
 	rc = peer_set_uuid(peer, ctx->uuid);
 	if (rc < 0) {
-		warnx("Failed setting local UUID: %s",
-			strerror(-rc));
+		warnx("Failed setting local UUID: %s", strerror(-rc));
 	}
 
 	// Only advertise supporting control messages
@@ -3501,7 +3540,6 @@ static int add_local_eid(struct ctx *ctx, uint32_t net, int eid)
 		warnx("Error publishing local eid %d net %d", eid, net);
 	}
 	return 0;
-
 }
 
 // Adds peers for local EIDs on an interface
@@ -3514,13 +3552,13 @@ static int add_interface_local(struct ctx *ctx, int ifindex)
 	int rc;
 
 	if (ctx->verbose) {
-		fprintf(stderr, "Adding interface #%d %s\n",
-			ifindex, mctp_nl_if_byindex(ctx->nl, ifindex));
+		fprintf(stderr, "Adding interface #%d %s\n", ifindex,
+			mctp_nl_if_byindex(ctx->nl, ifindex));
 	}
 
 	if (!mctp_nl_up_byindex(ctx->nl, ifindex))
 		warnx("Warning, interface %s is down",
-			mctp_nl_if_byindex(ctx->nl, ifindex));
+		      mctp_nl_if_byindex(ctx->nl, ifindex));
 
 	net = mctp_nl_net_byindex(ctx->nl, ifindex);
 	if (net == 0) {
@@ -3577,7 +3615,7 @@ static int add_net(struct ctx *ctx, uint32_t net_id)
 		return -ENOMEM;
 	}
 
-	tmp = realloc(ctx->nets, sizeof(struct net *) * (ctx->num_nets+1));
+	tmp = realloc(ctx->nets, sizeof(struct net *) * (ctx->num_nets + 1));
 	if (!tmp) {
 		warnx("Out of memory");
 		return -ENOMEM;
@@ -3644,15 +3682,15 @@ static int add_interface(struct ctx *ctx, int ifindex)
 		goto err_free;
 	}
 
-	sd_bus_add_object_vtable(link->ctx->bus, &link->slot_iface,
-				 link->path, CC_MCTP_DBUS_IFACE_INTERFACE,
-				 bus_link_vtable, link);
+	sd_bus_add_object_vtable(link->ctx->bus, &link->slot_iface, link->path,
+				 CC_MCTP_DBUS_IFACE_INTERFACE, bus_link_vtable,
+				 link);
 
 	if (link->role == ENDPOINT_ROLE_BUS_OWNER) {
 		sd_bus_add_object_vtable(link->ctx->bus, &link->slot_busowner,
-					 link->path, CC_MCTP_DBUS_IFACE_BUSOWNER,
+					 link->path,
+					 CC_MCTP_DBUS_IFACE_BUSOWNER,
 					 bus_link_owner_vtable, link);
-
 	}
 
 	link->published = true;
@@ -3765,7 +3803,7 @@ static int fill_uuid(struct ctx *ctx)
 {
 	int rc;
 	sd_id128_t appid;
-	sd_id128_t *u = (void*)ctx->uuid;
+	sd_id128_t *u = (void *)ctx->uuid;
 
 	rc = sd_id128_from_string(mctpd_appid, &appid);
 	if (rc < 0) {
@@ -3886,7 +3924,7 @@ static void free_config(struct ctx *ctx)
 
 int main(int argc, char **argv)
 {
-	struct ctx ctxi = {0}, *ctx = &ctxi;
+	struct ctx ctxi = { 0 }, *ctx = &ctxi;
 	int rc;
 
 	setlinebuf(stdout);
@@ -3923,7 +3961,7 @@ int main(int argc, char **argv)
 	rc = listen_monitor(ctx);
 	if (rc < 0) {
 		warnx("Error monitoring netlink updates. State changes will be ignored. (%s)",
-			strerror(-rc));
+		      strerror(-rc));
 	}
 
 	rc = setup_nets(ctx);

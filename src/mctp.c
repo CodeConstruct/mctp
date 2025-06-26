@@ -36,12 +36,12 @@
 #include "mctp-ops.h"
 
 struct ctx {
-	mctp_nl			*nl;
-	bool			verbose;
-	const char* 		top_cmd; // main() argv[0]
+	mctp_nl *nl;
+	bool verbose;
+	const char *top_cmd; // main() argv[0]
 };
 
-typedef int (*display_fn_t)(struct ctx *ctx, void* msg, size_t len);
+typedef int (*display_fn_t)(struct ctx *ctx, void *msg, size_t len);
 
 enum attrgroup {
 	RTA_GROUP_IFLA,
@@ -145,8 +145,8 @@ static struct {
 	const char **names;
 } attrnames[] = {
 	[RTA_GROUP_IFLA] = { ARRAY_SIZE(ifla_attrnames), ifla_attrnames },
-	[RTA_GROUP_IFA]  = { ARRAY_SIZE(ifa_attrnames), ifa_attrnames },
-	[RTA_GROUP_NDA]  = { ARRAY_SIZE(nda_attrnames), nda_attrnames },
+	[RTA_GROUP_IFA] = { ARRAY_SIZE(ifa_attrnames), ifa_attrnames },
+	[RTA_GROUP_NDA] = { ARRAY_SIZE(nda_attrnames), nda_attrnames },
 };
 
 static const char *rtattr_name(enum attrgroup group, unsigned int type)
@@ -158,22 +158,23 @@ static const char *rtattr_name(enum attrgroup group, unsigned int type)
 	return attrnames[group].names[type];
 }
 
-static void dump_rtnlmsg_attrs(enum attrgroup group,
-		struct rtattr *rta, size_t len)
+static void dump_rtnlmsg_attrs(enum attrgroup group, struct rtattr *rta,
+			       size_t len)
 {
 	for (; RTA_OK(rta, len); rta = RTA_NEXT(rta, len)) {
 		printf("attr %s (0x%x)\n", rtattr_name(group, rta->rta_type),
-				rta->rta_type);
+		       rta->rta_type);
 		mctp_hexdump(RTA_DATA(rta), RTA_PAYLOAD(rta), "  ");
 	}
 }
 
-static int display_ifinfo(struct ctx *ctx, void *p, size_t len) {
+static int display_ifinfo(struct ctx *ctx, void *p, size_t len)
+{
 	struct ifinfomsg *msg = p;
 	size_t rta_len, nest_len, mctp_len;
 	struct rtattr *rta, *rt_nest, *rt_mctp;
-	char* name;
-	const char* updown;
+	char *name;
+	const char *updown;
 	uint8_t *addr;
 	size_t name_len, addr_len;
 	uint32_t mtu = 0;
@@ -200,21 +201,23 @@ static int display_ifinfo(struct ctx *ctx, void *p, size_t len) {
 	rt_mctp = NULL;
 	rt_nest = mctp_get_rtnlmsg_attr(IFLA_AF_SPEC, rta, rta_len, &nest_len);
 	if (rt_nest) {
-		rt_mctp = mctp_get_rtnlmsg_attr(AF_MCTP, rt_nest, nest_len, &mctp_len);
+		rt_mctp = mctp_get_rtnlmsg_attr(AF_MCTP, rt_nest, nest_len,
+						&mctp_len);
 	}
 	if (!rt_mctp) {
 		// Ignore other interfaces
 		return 0;
 	}
-	if (!mctp_get_rtnlmsg_attr_u32(IFLA_MCTP_NET, rt_mctp, mctp_len, &net)) {
+	if (!mctp_get_rtnlmsg_attr_u32(IFLA_MCTP_NET, rt_mctp, mctp_len,
+				       &net)) {
 		warnx("No network attribute from %*s", (int)name_len, name);
 	}
 
 	updown = msg->ifi_flags & IFF_UP ? "up" : "down";
 	// not sure if will be NULL terminated, handle either
 	name_len = strnlen(name, name_len);
-	printf("dev %*s index %d address ",
-		(int)name_len, name, msg->ifi_index);
+	printf("dev %*s index %d address ", (int)name_len, name,
+	       msg->ifi_index);
 	if (addr_len == 1) {
 		// make it clear that it is hex not decimal
 		printf("0x");
@@ -227,7 +230,8 @@ static int display_ifinfo(struct ctx *ctx, void *p, size_t len) {
 	return 0;
 }
 
-static void dump_rtnlmsg_ifinfo(struct ctx *ctx, struct ifinfomsg *msg, size_t len)
+static void dump_rtnlmsg_ifinfo(struct ctx *ctx, struct ifinfomsg *msg,
+				size_t len)
 {
 	if (len < sizeof(*msg)) {
 		printf("not enough data for an ifinfomsg\n");
@@ -241,11 +245,12 @@ static void dump_rtnlmsg_ifinfo(struct ctx *ctx, struct ifinfomsg *msg, size_t l
 	printf("  index:  %d\n", msg->ifi_index);
 	printf("  flags:  0x%08x\n", msg->ifi_flags);
 
-	dump_rtnlmsg_attrs(RTA_GROUP_IFLA,
-			(void *)(msg + 1), len - sizeof(*msg));
+	dump_rtnlmsg_attrs(RTA_GROUP_IFLA, (void *)(msg + 1),
+			   len - sizeof(*msg));
 }
 
-static int display_ifaddr(struct ctx *ctx, void *p, size_t len) {
+static int display_ifaddr(struct ctx *ctx, void *p, size_t len)
+{
 	struct ifaddrmsg *msg = p;
 	size_t rta_len;
 	struct rtattr *rta;
@@ -261,13 +266,14 @@ static int display_ifaddr(struct ctx *ctx, void *p, size_t len) {
 	eid = 0;
 	mctp_get_rtnlmsg_attr_u8(IFA_LOCAL, rta, rta_len, &eid);
 	printf("eid %d net %u dev %s\n", eid,
-		mctp_nl_net_byindex(ctx->nl, msg->ifa_index),
-		mctp_nl_if_byindex(ctx->nl, msg->ifa_index));
+	       mctp_nl_net_byindex(ctx->nl, msg->ifa_index),
+	       mctp_nl_if_byindex(ctx->nl, msg->ifa_index));
 
 	return 0;
 }
 
-static void dump_rtnlmsg_ifaddr(struct ctx *ctx, struct ifaddrmsg *msg, size_t len)
+static void dump_rtnlmsg_ifaddr(struct ctx *ctx, struct ifaddrmsg *msg,
+				size_t len)
 {
 	if (len < sizeof(*msg)) {
 		printf("not enough data for an ifaddrmsg\n");
@@ -282,8 +288,8 @@ static void dump_rtnlmsg_ifaddr(struct ctx *ctx, struct ifaddrmsg *msg, size_t l
 	printf("  scope:  %d\n", msg->ifa_scope);
 	printf("  index:  %d\n", msg->ifa_index);
 
-	dump_rtnlmsg_attrs(RTA_GROUP_IFA,
-			(void *)(msg + 1), len - sizeof(*msg));
+	dump_rtnlmsg_attrs(RTA_GROUP_IFA, (void *)(msg + 1),
+			   len - sizeof(*msg));
 }
 
 static int display_neighbour(struct ctx *ctx, void *p, size_t len)
@@ -306,8 +312,8 @@ static int display_neighbour(struct ctx *ctx, void *p, size_t len)
 	mctp_get_rtnlmsg_attr_u8(NDA_DST, rta, rta_len, &eid);
 	lladdr = mctp_get_rtnlmsg_attr(NDA_LLADDR, rta, rta_len, &lladdr_len);
 	printf("eid %d net %u dev %s lladdr 0x", eid,
-		mctp_nl_net_byindex(ctx->nl, msg->ndm_ifindex),
-		mctp_nl_if_byindex(ctx->nl, msg->ndm_ifindex));
+	       mctp_nl_net_byindex(ctx->nl, msg->ndm_ifindex),
+	       mctp_nl_if_byindex(ctx->nl, msg->ndm_ifindex));
 	if (lladdr && lladdr_len)
 		print_hex_addr(lladdr, lladdr_len);
 	else
@@ -316,7 +322,8 @@ static int display_neighbour(struct ctx *ctx, void *p, size_t len)
 	return 0;
 }
 
-static void dump_rtnlmsg_neighbour(struct ctx *ctx, struct ndmsg *msg, size_t len)
+static void dump_rtnlmsg_neighbour(struct ctx *ctx, struct ndmsg *msg,
+				   size_t len)
 {
 	if (len < sizeof(*msg)) {
 		printf("not enough data for a ndmsg\n");
@@ -331,8 +338,8 @@ static void dump_rtnlmsg_neighbour(struct ctx *ctx, struct ndmsg *msg, size_t le
 	printf("  flags:   0x%08x\n", msg->ndm_flags);
 	printf("  type:    %d\n", msg->ndm_type);
 
-	dump_rtnlmsg_attrs(RTA_GROUP_NDA,
-			(void *)(msg + 1), len - sizeof(*msg));
+	dump_rtnlmsg_attrs(RTA_GROUP_NDA, (void *)(msg + 1),
+			   len - sizeof(*msg));
 }
 
 static int display_route(struct ctx *ctx, void *p, size_t len)
@@ -362,9 +369,9 @@ static int display_route(struct ctx *ctx, void *p, size_t len)
 	}
 	net = mctp_nl_net_byindex(ctx->nl, ifindex);
 
-	printf("eid min %d max %d net %d dev %s mtu %d\n",
-		dst, dst + msg->rtm_dst_len,
-		net, mctp_nl_if_byindex(ctx->nl, ifindex), mtu);
+	printf("eid min %d max %d net %d dev %s mtu %d\n", dst,
+	       dst + msg->rtm_dst_len, net,
+	       mctp_nl_if_byindex(ctx->nl, ifindex), mtu);
 	return 0;
 }
 
@@ -447,7 +454,7 @@ static void dump_rtnlmsgs(struct ctx *ctx, struct nlmsghdr *msg, size_t len)
 
 // Calls pretty printing display_ function for wanted message type
 void display_rtnlmsgs(struct ctx *ctx, struct nlmsghdr *msg, size_t len,
-	int want_type, display_fn_t display_fn)
+		      int want_type, display_fn_t display_fn)
 
 {
 	if (ctx->verbose) {
@@ -459,17 +466,20 @@ void display_rtnlmsgs(struct ctx *ctx, struct nlmsghdr *msg, size_t len,
 	for (; NLMSG_OK(msg, len); msg = NLMSG_NEXT(msg, len)) {
 		if (msg->nlmsg_type == want_type) {
 			display_fn(ctx, NLMSG_DATA(msg), NLMSG_PAYLOAD(msg, 0));
-		} else switch (msg->nlmsg_type) {
+		} else
+			switch (msg->nlmsg_type) {
 			case NLMSG_NOOP:
 			case NLMSG_DONE:
 				break;
 			case NLMSG_ERROR:
-				mctp_display_nlmsg_error(ctx->nl, NLMSG_DATA(msg), NLMSG_PAYLOAD(msg, 0));
+				mctp_display_nlmsg_error(ctx->nl,
+							 NLMSG_DATA(msg),
+							 NLMSG_PAYLOAD(msg, 0));
 				break;
 			default:
 				printf("unknown nlmsg type\n");
 				mctp_hexdump(msg, sizeof(msg), "    ");
-		}
+			}
 	}
 }
 
@@ -477,9 +487,9 @@ static int cmd_link_show(struct ctx *ctx, int argc, const char **argv)
 {
 	struct nlmsghdr *resp;
 	struct {
-		struct nlmsghdr		nh;
-		struct ifinfomsg	ifmsg;
-	} msg = {0};
+		struct nlmsghdr nh;
+		struct ifinfomsg ifmsg;
+	} msg = { 0 };
 	const char *linkstr = NULL;
 	int ifindex;
 	size_t len;
@@ -519,13 +529,14 @@ static int cmd_link_show(struct ctx *ctx, int argc, const char **argv)
 }
 
 static int do_link_set(struct ctx *ctx, int ifindex, bool have_updown, bool up,
-		uint32_t mtu, bool have_net, uint32_t net) {
+		       uint32_t mtu, bool have_net, uint32_t net)
+{
 	struct {
-		struct nlmsghdr		nh;
-		struct ifinfomsg	ifmsg;
+		struct nlmsghdr nh;
+		struct ifinfomsg ifmsg;
 		/* Space for all attributes */
-		uint8_t			rta_buff[200];
-	} msg = {0};
+		uint8_t rta_buff[200];
+	} msg = { 0 };
 	struct rtattr *rta;
 	size_t rta_len;
 
@@ -535,7 +546,7 @@ static int do_link_set(struct ctx *ctx, int ifindex, bool have_updown, bool up,
 
 	msg.nh.nlmsg_len = NLMSG_LENGTH(sizeof(msg.ifmsg));
 	rta_len = sizeof(msg.rta_buff);
-	rta = (void*)msg.rta_buff;
+	rta = (void *)msg.rta_buff;
 
 	if (have_updown) {
 		msg.ifmsg.ifi_change |= IFF_UP;
@@ -544,8 +555,8 @@ static int do_link_set(struct ctx *ctx, int ifindex, bool have_updown, bool up,
 	}
 
 	if (mtu)
-		msg.nh.nlmsg_len += mctp_put_rtnlmsg_attr(&rta, &rta_len,
-			IFLA_MTU, &mtu, sizeof(mtu));
+		msg.nh.nlmsg_len += mctp_put_rtnlmsg_attr(
+			&rta, &rta_len, IFLA_MTU, &mtu, sizeof(mtu));
 
 	if (have_net) {
 		/* Nested
@@ -558,24 +569,28 @@ static int do_link_set(struct ctx *ctx, int ifindex, bool have_updown, bool up,
 		size_t rta_len1, rta_len2, space1, space2;
 		uint8_t buff1[100], buff2[100];
 
-		rta2 = (void*)buff2;
+		rta2 = (void *)buff2;
 		rta_len2 = sizeof(buff2);
 		space2 = 0;
 		if (have_net)
 			space2 += mctp_put_rtnlmsg_attr(&rta2, &rta_len2,
-				IFLA_MCTP_NET, &net, sizeof(net));
-		rta1 = (void*)buff1;
+							IFLA_MCTP_NET, &net,
+							sizeof(net));
+		rta1 = (void *)buff1;
 		rta_len1 = sizeof(buff1);
 		space1 = mctp_put_rtnlmsg_attr(&rta1, &rta_len1,
-			AF_MCTP|NLA_F_NESTED, buff2, space2);
-		msg.nh.nlmsg_len += mctp_put_rtnlmsg_attr(&rta, &rta_len,
-			IFLA_AF_SPEC|NLA_F_NESTED, buff1, space1);
+					       AF_MCTP | NLA_F_NESTED, buff2,
+					       space2);
+		msg.nh.nlmsg_len += mctp_put_rtnlmsg_attr(
+			&rta, &rta_len, IFLA_AF_SPEC | NLA_F_NESTED, buff1,
+			space1);
 	}
 
 	return mctp_nl_send(ctx->nl, &msg.nh);
 }
 
-static int cmd_link_set(struct ctx *ctx, int argc, const char **argv) {
+static int cmd_link_set(struct ctx *ctx, int argc, const char **argv)
+{
 	bool have_updown = false, up = false, have_net = false;
 	int i;
 	int ifindex;
@@ -638,7 +653,6 @@ static int cmd_link_set(struct ctx *ctx, int argc, const char **argv) {
 	}
 
 	return do_link_set(ctx, ifindex, have_updown, up, mtu, have_net, net);
-
 }
 
 static int cmd_link_serial(struct ctx *ctx, int argc, const char **argv)
@@ -648,7 +662,7 @@ static int cmd_link_serial(struct ctx *ctx, int argc, const char **argv)
 
 	if (argc != 2) {
 		fprintf(stderr, "%s link serial: no device specified\n",
-				ctx->top_cmd);
+			ctx->top_cmd);
 		return 255;
 	}
 
@@ -666,17 +680,19 @@ static int cmd_link_serial(struct ctx *ctx, int argc, const char **argv)
 
 	pause();
 
-        return 0;
+	return 0;
 }
 
 static int cmd_link(struct ctx *ctx, int argc, const char **argv)
 {
-	const char* subcmd;
+	const char *subcmd;
 
 	if (argc == 2 && !strcmp(argv[1], "help")) {
 		fprintf(stderr, "%s link\n", ctx->top_cmd);
 		fprintf(stderr, "%s link show [ifname]\n", ctx->top_cmd);
-		fprintf(stderr, "%s link set <ifname> [up|down] [mtu <mtu>] [network <net>] [bus-owner <physaddr>]\n", ctx->top_cmd);
+		fprintf(stderr,
+			"%s link set <ifname> [up|down] [mtu <mtu>] [network <net>] [bus-owner <physaddr>]\n",
+			ctx->top_cmd);
 		fprintf(stderr, "%s link serial <device>\n", ctx->top_cmd);
 		return 255;
 	}
@@ -706,11 +722,11 @@ static int cmd_addr_show(struct ctx *ctx, int argc, const char **argv)
 {
 	struct nlmsghdr *resp;
 	struct {
-		struct nlmsghdr		nh;
-		struct ifaddrmsg	ifmsg;
-		struct rtattr		rta;
-		char			ifname[16];
-	} msg = {0};
+		struct nlmsghdr nh;
+		struct ifaddrmsg ifmsg;
+		struct rtattr rta;
+		char ifname[16];
+	} msg = { 0 };
 	const char *ifname = NULL;
 	int ifindex = 0;
 	size_t len;
@@ -741,12 +757,10 @@ static int cmd_addr_show(struct ctx *ctx, int argc, const char **argv)
 	return 0;
 }
 
-
 // cmdname is for error messages.
 // rtm_command is RTM_NEWADDR or RTM_DELADDR
-static int cmd_addr_addremove(struct ctx *ctx,
-	const char* cmdname, int rtm_command,
-	int argc, const char **argv)
+static int cmd_addr_addremove(struct ctx *ctx, const char *cmdname,
+			      int rtm_command, int argc, const char **argv)
 {
 	const char *eidstr, *linkstr;
 	uint32_t tmp;
@@ -795,12 +809,14 @@ static int cmd_addr_remove(struct ctx *ctx, int argc, const char **argv)
 
 static int cmd_addr(struct ctx *ctx, int argc, const char **argv)
 {
-	const char* subcmd;
+	const char *subcmd;
 	if (argc == 2 && !strcmp(argv[1], "help")) {
 		fprintf(stderr, "%s address\n", ctx->top_cmd);
 		fprintf(stderr, "%s address show [IFNAME]\n", ctx->top_cmd);
-		fprintf(stderr, "%s address add <eid> dev <IFNAME>\n", ctx->top_cmd);
-		fprintf(stderr, "%s address del <eid> dev <IFNAME>\n", ctx->top_cmd);
+		fprintf(stderr, "%s address add <eid> dev <IFNAME>\n",
+			ctx->top_cmd);
+		fprintf(stderr, "%s address del <eid> dev <IFNAME>\n",
+			ctx->top_cmd);
 		return 255;
 	}
 
@@ -826,10 +842,10 @@ static int cmd_route_show(struct ctx *ctx, int argc, const char **argv)
 {
 	struct nlmsghdr *resp;
 	struct {
-		struct nlmsghdr		nh;
-		struct rtmsg		rtmsg;
+		struct nlmsghdr nh;
+		struct rtmsg rtmsg;
 		// struct rtattr		rta;
-	} msg = {0};
+	} msg = { 0 };
 	size_t len;
 	int rc;
 
@@ -848,7 +864,6 @@ static int cmd_route_show(struct ctx *ctx, int argc, const char **argv)
 	free(resp);
 	return 0;
 }
-
 
 static int cmd_route_add(struct ctx *ctx, int argc, const char **argv)
 {
@@ -939,11 +954,13 @@ static int cmd_route_del(struct ctx *ctx, int argc, const char **argv)
 
 static int cmd_route(struct ctx *ctx, int argc, const char **argv)
 {
-	const char* subcmd;
+	const char *subcmd;
 	if (argc == 2 && !strcmp(argv[1], "help")) {
 		fprintf(stderr, "%s route\n", ctx->top_cmd);
-		fprintf(stderr, "%s route show [net <network>]\n", ctx->top_cmd);
-		fprintf(stderr, "%s route add <eid> via <dev> [mtu <mtu>]\n", ctx->top_cmd);
+		fprintf(stderr, "%s route show [net <network>]\n",
+			ctx->top_cmd);
+		fprintf(stderr, "%s route add <eid> via <dev> [mtu <mtu>]\n",
+			ctx->top_cmd);
 		fprintf(stderr, "%s route del <eid> via <dev>\n", ctx->top_cmd);
 		return 255;
 	}
@@ -970,10 +987,10 @@ static int cmd_neigh_show(struct ctx *ctx, int argc, const char **argv)
 {
 	struct nlmsghdr *resp;
 	struct {
-		struct nlmsghdr		nh;
-		struct ndmsg		ndmsg;
-	} msg = {0};
-	const char* linkstr = NULL;
+		struct nlmsghdr nh;
+		struct ndmsg ndmsg;
+	} msg = { 0 };
+	const char *linkstr = NULL;
 	int ifindex = 0;
 	size_t len;
 	int rc;
@@ -1014,15 +1031,16 @@ static int cmd_neigh_show(struct ctx *ctx, int argc, const char **argv)
 }
 
 struct mctp_neighalter_msg {
-	struct nlmsghdr		nh;
-	struct ndmsg		ndmsg;
-	uint8_t			rta_buff[RTA_SPACE(1) + RTA_SPACE(MAX_ADDR_LEN)];
+	struct nlmsghdr nh;
+	struct ndmsg ndmsg;
+	uint8_t rta_buff[RTA_SPACE(1) + RTA_SPACE(MAX_ADDR_LEN)];
 };
 
 static int fill_neighalter_args(struct ctx *ctx,
-		struct mctp_neighalter_msg *msg,
-		struct rtattr **prta, size_t *prta_len,
-		const char *eidstr, const char *linkstr) {
+				struct mctp_neighalter_msg *msg,
+				struct rtattr **prta, size_t *prta_len,
+				const char *eidstr, const char *linkstr)
+{
 	struct rtattr *rta;
 	uint32_t tmp;
 	uint8_t eid;
@@ -1048,11 +1066,10 @@ static int fill_neighalter_args(struct ctx *ctx,
 
 	msg->nh.nlmsg_len = NLMSG_LENGTH(sizeof(msg->ndmsg));
 	rta_len = sizeof(msg->rta_buff);
-	rta = (void*)msg->rta_buff;
+	rta = (void *)msg->rta_buff;
 
-	msg->nh.nlmsg_len += mctp_put_rtnlmsg_attr(&rta, &rta_len,
-		NDA_DST, &eid, sizeof(eid));
-
+	msg->nh.nlmsg_len += mctp_put_rtnlmsg_attr(&rta, &rta_len, NDA_DST,
+						   &eid, sizeof(eid));
 
 	if (prta)
 		*prta = rta;
@@ -1097,15 +1114,14 @@ static int cmd_neigh_add(struct ctx *ctx, int argc, const char **argv)
 		return rc;
 	}
 
-	rc = fill_neighalter_args(ctx, &msg, &rta, &rta_len,
-		eidstr, linkstr);
+	rc = fill_neighalter_args(ctx, &msg, &rta, &rta_len, eidstr, linkstr);
 	if (rc) {
 		return -1;
 	}
 
 	msg.nh.nlmsg_type = RTM_NEWNEIGH;
-	msg.nh.nlmsg_len += mctp_put_rtnlmsg_attr(&rta, &rta_len,
-		NDA_LLADDR, llbuf, llbuf_len);
+	msg.nh.nlmsg_len += mctp_put_rtnlmsg_attr(&rta, &rta_len, NDA_LLADDR,
+						  llbuf, llbuf_len);
 	return mctp_nl_send(ctx->nl, &msg.nh);
 }
 
@@ -1131,8 +1147,7 @@ static int cmd_neigh_del(struct ctx *ctx, int argc, const char **argv)
 	eidstr = argv[1];
 	linkstr = argv[3];
 
-	rc = fill_neighalter_args(ctx, &msg, NULL, NULL,
-		eidstr, linkstr);
+	rc = fill_neighalter_args(ctx, &msg, NULL, NULL, eidstr, linkstr);
 	if (rc) {
 		return -1;
 	}
@@ -1141,14 +1156,20 @@ static int cmd_neigh_del(struct ctx *ctx, int argc, const char **argv)
 	return mctp_nl_send(ctx->nl, &msg.nh);
 }
 
-static int cmd_neigh(struct ctx *ctx, int argc, const char **argv) {
-	const char* subcmd;
+static int cmd_neigh(struct ctx *ctx, int argc, const char **argv)
+{
+	const char *subcmd;
 	if (argc == 2 && !strcmp(argv[1], "help")) {
 		fprintf(stderr, "%s neigh\n", ctx->top_cmd);
-		fprintf(stderr, "%s neigh show [dev <network>]\n", ctx->top_cmd);
-		fprintf(stderr, "%s neigh add <eid> dev <device> lladdr <physaddr>\n", ctx->top_cmd);
-		fprintf(stderr, "        <physaddr> syntax is for example \"1d\" or \"aa:bb:cc:11:22:33\"\n");
-		fprintf(stderr, "%s neigh del <eid> dev <device>\n", ctx->top_cmd);
+		fprintf(stderr, "%s neigh show [dev <network>]\n",
+			ctx->top_cmd);
+		fprintf(stderr,
+			"%s neigh add <eid> dev <device> lladdr <physaddr>\n",
+			ctx->top_cmd);
+		fprintf(stderr,
+			"        <physaddr> syntax is for example \"1d\" or \"aa:bb:cc:11:22:33\"\n");
+		fprintf(stderr, "%s neigh del <eid> dev <device>\n",
+			ctx->top_cmd);
 		return 255;
 	}
 
@@ -1162,7 +1183,7 @@ static int cmd_neigh(struct ctx *ctx, int argc, const char **argv) {
 	if (!strcmp(subcmd, "show"))
 		return cmd_neigh_show(ctx, argc, argv);
 	else if (!strcmp(subcmd, "add"))
-	 	return cmd_neigh_add(ctx, argc, argv);
+		return cmd_neigh_add(ctx, argc, argv);
 	else if (!strcmp(subcmd, "del"))
 		return cmd_neigh_del(ctx, argc, argv);
 
@@ -1170,7 +1191,8 @@ static int cmd_neigh(struct ctx *ctx, int argc, const char **argv) {
 	return -1;
 }
 
-static int cmd_monitor(struct ctx *ctx, int argc, const char **argv) {
+static int cmd_monitor(struct ctx *ctx, int argc, const char **argv)
+{
 	int rc, sd;
 
 	if (argc == 2 && !strcmp(argv[1], "help")) {
@@ -1201,7 +1223,7 @@ static int cmd_monitor(struct ctx *ctx, int argc, const char **argv) {
 	return 0;
 }
 
-static int cmd_help(struct ctx * ctx, int argc, const char** argv);
+static int cmd_help(struct ctx *ctx, int argc, const char **argv);
 
 struct command {
 	const char *name;
@@ -1218,13 +1240,13 @@ struct command {
 	// clang-format on
 };
 
-static int cmd_help(struct ctx * ctx, int argc, const char** argv)
+static int cmd_help(struct ctx *ctx, int argc, const char **argv)
 {
 	struct command *cm;
 	size_t i;
 	for (i = 0, cm = commands; i < ARRAY_SIZE(commands); i++, cm++) {
 		if (!cm->hidden && cm->fn != cmd_help) {
-			const char * help_args[] = { cm->name, "help" };
+			const char *help_args[] = { cm->name, "help" };
 			cm->fn(ctx, 2, help_args);
 			fprintf(stderr, "\n");
 		}
@@ -1233,12 +1255,14 @@ static int cmd_help(struct ctx * ctx, int argc, const char** argv)
 	return 255;
 }
 
-static void print_usage(const char* top_cmd) {
+static void print_usage(const char *top_cmd)
+{
 	fprintf(stderr, "usage: %s <command> [args]\n", top_cmd);
 	fprintf(stderr, "Commands: ");
 	for (size_t i = 0; i < ARRAY_SIZE(commands); i++) {
 		if (!commands[i].hidden) {
-			fprintf(stderr, "%s%s", (i>0 ? ", " : ""), commands[i].name);
+			fprintf(stderr, "%s%s", (i > 0 ? ", " : ""),
+				commands[i].name);
 		}
 	}
 	fprintf(stderr, "\n");
@@ -1252,7 +1276,7 @@ struct option options[] = {
 
 int main(int argc, char **argv)
 {
-	struct ctx _ctx = {0}, *ctx = &_ctx;
+	struct ctx _ctx = { 0 }, *ctx = &_ctx;
 	const char *cmdname = NULL;
 	struct command *cmd = NULL;
 	unsigned int i;
@@ -1284,7 +1308,7 @@ int main(int argc, char **argv)
 	argc -= optind - 1;
 	argv += optind - 1;
 
-	if (argc < 2 || !strcmp(argv[1], "") ) {
+	if (argc < 2 || !strcmp(argv[1], "")) {
 		print_usage(ctx->top_cmd);
 		return 255;
 	}
@@ -1311,10 +1335,9 @@ int main(int argc, char **argv)
 	argc--;
 	argv++;
 
-	rc = cmd->fn(ctx, argc, (const char**)argv);
+	rc = cmd->fn(ctx, argc, (const char **)argv);
 
 	mctp_nl_close(ctx->nl);
 
 	return rc ? EXIT_FAILURE : EXIT_SUCCESS;
 }
-

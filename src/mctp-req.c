@@ -27,9 +27,8 @@ static const uint8_t VENDOR_TYPE_ECHO[3] = { 0xcc, 0xde, 0xf0 };
 static const uint8_t MCTP_TYPE_VENDOR_PCIE = 0x7e;
 
 /* lladdrlen != -1 to ignore ifindex/lladdr */
-static int mctp_req(unsigned int net, mctp_eid_t eid,
-	unsigned int ifindex, uint8_t *lladdr, int lladdrlen,
-	uint8_t *data, size_t len)
+static int mctp_req(unsigned int net, mctp_eid_t eid, unsigned int ifindex,
+		    uint8_t *lladdr, int lladdrlen, uint8_t *data, size_t len)
 {
 	struct sockaddr_mctp_ext addr;
 	unsigned char *payload, *buf;
@@ -48,8 +47,8 @@ static int mctp_req(unsigned int net, mctp_eid_t eid,
 	addr.smctp_base.smctp_addr.s_addr = eid;
 	addr.smctp_base.smctp_type = MCTP_TYPE_VENDOR_PCIE;
 	addr.smctp_base.smctp_tag = MCTP_TAG_OWNER;
-	printf("req:  sending to (net %d, eid %d), type 0x%x\n",
-		net, eid, addr.smctp_base.smctp_type);
+	printf("req:  sending to (net %d, eid %d), type 0x%x\n", net, eid,
+	       addr.smctp_base.smctp_type);
 
 	buf_len = len + sizeof(VENDOR_TYPE_ECHO);
 	buf = malloc(buf_len);
@@ -72,47 +71,45 @@ static int mctp_req(unsigned int net, mctp_eid_t eid,
 		memcpy(addr.smctp_haddr, lladdr, lladdrlen);
 		addr.smctp_ifindex = ifindex;
 		printf("      ext ifindex %d ha[0]=0x%02x len %hhu\n",
-			addr.smctp_ifindex,
-			addr.smctp_haddr[0], addr.smctp_halen);
+		       addr.smctp_ifindex, addr.smctp_haddr[0],
+		       addr.smctp_halen);
 		val = 1;
-		rc = setsockopt(sd, SOL_MCTP, MCTP_OPT_ADDR_EXT, &val, sizeof(val));
+		rc = setsockopt(sd, SOL_MCTP, MCTP_OPT_ADDR_EXT, &val,
+				sizeof(val));
 		if (rc < 0)
 			errx(EXIT_FAILURE,
-				"Kernel does not support MCTP extended addressing");
+			     "Kernel does not support MCTP extended addressing");
 	}
 
-
 	/* send data */
-	rc = sendto(sd, buf, buf_len, 0,
-			(struct sockaddr *)&addr, addrlen);
+	rc = sendto(sd, buf, buf_len, 0, (struct sockaddr *)&addr, addrlen);
 	if (rc != (int)buf_len)
 		err(EXIT_FAILURE, "sendto(%zd)", buf_len);
 
 	/* receive response */
 	addrlen = sizeof(addr);
-	rc = recvfrom(sd, buf, buf_len, MSG_TRUNC,
-			(struct sockaddr *)&addr, &addrlen);
+	rc = recvfrom(sd, buf, buf_len, MSG_TRUNC, (struct sockaddr *)&addr,
+		      &addrlen);
 	if (rc < 0)
 		err(EXIT_FAILURE, "recvfrom");
 	else if ((size_t)rc != buf_len)
-		errx(EXIT_FAILURE, "unexpected length: got %d, exp %zd",
-				rc, buf_len);
+		errx(EXIT_FAILURE, "unexpected length: got %d, exp %zd", rc,
+		     buf_len);
 
 	if (!(addrlen == sizeof(struct sockaddr_mctp_ext) ||
-		addrlen == sizeof(struct sockaddr_mctp)))
-		errx(EXIT_FAILURE, "unknown recv address length %d, exp %zu or %zu)",
-				addrlen, sizeof(struct sockaddr_mctp_ext),
-				sizeof(struct sockaddr_mctp));
-
+	      addrlen == sizeof(struct sockaddr_mctp)))
+		errx(EXIT_FAILURE,
+		     "unknown recv address length %d, exp %zu or %zu)", addrlen,
+		     sizeof(struct sockaddr_mctp_ext),
+		     sizeof(struct sockaddr_mctp));
 
 	printf("req:  message from (net %d, eid %d) type 0x%x len %zd\n",
-			addr.smctp_base.smctp_network, addr.smctp_base.smctp_addr.s_addr,
-			addr.smctp_base.smctp_type,
-			len);
+	       addr.smctp_base.smctp_network, addr.smctp_base.smctp_addr.s_addr,
+	       addr.smctp_base.smctp_type, len);
 	if (addrlen == sizeof(struct sockaddr_mctp_ext)) {
 		printf("      ext ifindex %d ha[0]=0x%02x len %hhu\n",
-			addr.smctp_ifindex,
-			addr.smctp_haddr[0], addr.smctp_halen);
+		       addr.smctp_ifindex, addr.smctp_haddr[0],
+		       addr.smctp_halen);
 	}
 
 	if (memcmp(buf, VENDOR_TYPE_ECHO, sizeof(VENDOR_TYPE_ECHO)) != 0) {
@@ -123,9 +120,9 @@ static int mctp_req(unsigned int net, mctp_eid_t eid,
 		uint8_t exp = data ? data[i] : i & 0xff;
 		if (payload[i] != exp)
 			errx(EXIT_FAILURE,
-				"payload mismatch at byte 0x%zx; "
-					"sent 0x%02x, received 0x%02x",
-				i, exp, buf[i]);
+			     "payload mismatch at byte 0x%zx; "
+			     "sent 0x%02x, received 0x%02x",
+			     i, exp, buf[i]);
 	}
 
 	return 0;
@@ -133,12 +130,13 @@ static int mctp_req(unsigned int net, mctp_eid_t eid,
 
 static void usage(void)
 {
-	fprintf(stderr, "mctp-req [eid <eid>] [net <net>] [ifindex <ifindex> lladdr <hwaddr>] [len <len>]\n");
-	fprintf(stderr, "default eid %d net %d len %zd\n",
-			DEFAULT_EID, DEFAULT_NET, DEFAULT_LEN);
+	fprintf(stderr,
+		"mctp-req [eid <eid>] [net <net>] [ifindex <ifindex> lladdr <hwaddr>] [len <len>]\n");
+	fprintf(stderr, "default eid %d net %d len %zd\n", DEFAULT_EID,
+		DEFAULT_NET, DEFAULT_LEN);
 }
 
-int main(int argc, char ** argv)
+int main(int argc, char **argv)
 {
 	uint8_t *data, lladdr[MAX_ADDR_LEN];
 	int lladdrlen = -1, datalen = -1;
@@ -151,7 +149,7 @@ int main(int argc, char ** argv)
 	int i;
 
 	if (!(argc % 2)) {
-		warnx("extra argument %s", argv[argc-1]);
+		warnx("extra argument %s", argv[argc - 1]);
 		usage();
 		return 255;
 	}
@@ -161,7 +159,7 @@ int main(int argc, char ** argv)
 
 	for (i = 1; i < argc; i += 2) {
 		optname = argv[i];
-		optval = argv[i+1];
+		optval = argv[i + 1];
 
 		tmp = strtoul(optval, &endp, 0);
 		valid_parse = (endp != optval);
@@ -202,8 +200,8 @@ int main(int argc, char ** argv)
 
 		// Handle bad integer etc.
 		if (!valid_parse) {
-			errx(EXIT_FAILURE, "invalid %s value %s",
-					optname, optval);
+			errx(EXIT_FAILURE, "invalid %s value %s", optname,
+			     optval);
 		}
 	}
 
