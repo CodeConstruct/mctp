@@ -866,78 +866,91 @@ static int cmd_route_show(struct ctx *ctx, int argc, const char **argv)
 	return 0;
 }
 
-static int cmd_route_add(struct ctx *ctx, int argc, const char **argv)
+static int parse_route_args(struct ctx *ctx, int argc, const char **argv,
+			    mctp_eid_t *eidp, int *ifindexp, unsigned int *mtup)
 {
-	const char *eidstr = NULL, *linkstr = NULL;
-	mctp_eid_t eid = 0;
-	uint32_t mtu = 0;
-	int ifindex = 0;
+	const char *eidstr, *linkstr = NULL;
+	unsigned int mtu = 0;
+	mctp_eid_t eid;
+	int ifindex, rc;
 
-	if (!(argc == 4 || argc == 6))
-		goto err;
+	if (argc < 3 || !(argc % 2))
+		return -1;
 
-	eidstr = argv[1];
-
-	if (strcmp(argv[2], "via"))
-		goto err;
-
-	linkstr = argv[3];
-
-	if (argc == 6) {
-		const char *mtustr;
-
-		if (strcmp(argv[4], "mtu"))
-			goto err;
-
-		mtustr = argv[5];
-		if (parse_uint32(mtustr, &mtu) < 0)
-			goto err;
+	eidstr = argv[0];
+	rc = parse_eid(eidstr, &eid);
+	if (rc) {
+		warnx("Invalid EID '%s'", eidstr);
+		return -1;
 	}
 
-	if (parse_eid(eidstr, &eid) < 0)
-		goto err;
+	/* one of:
+	 *  via <dev>
+	 *  mtu <mtu>
+	 */
+	for (int i = 1; i < argc; i += 2) {
+		const char *name = argv[i];
+		const char *val = argv[i + 1];
+
+		if (!strcmp(name, "via")) {
+			linkstr = val;
+
+		} else if (!strcmp(name, "mtu")) {
+			rc = parse_uint32(val, &mtu);
+			if (rc) {
+				warnx("Invalid mtu '%s'", val);
+				return -1;
+			}
+		}
+	}
+
+	if (!linkstr) {
+		warnx("No link specified");
+		return -1;
+	}
 
 	ifindex = mctp_nl_ifindex_byname(ctx->nl, linkstr);
 	if (!ifindex) {
 		warnx("add: invalid device %s", linkstr);
-		goto err;
+		return -1;
+	}
+
+	*eidp = eid;
+	*ifindexp = ifindex;
+	*mtup = mtu;
+
+	return 0;
+}
+
+static int cmd_route_add(struct ctx *ctx, int argc, const char **argv)
+{
+	uint32_t mtu = 0;
+	int rc, ifindex = 0;
+	mctp_eid_t eid;
+
+	rc = parse_route_args(ctx, argc - 1, argv + 1, &eid, &ifindex, &mtu);
+	if (rc) {
+		warnx("add: invalid command line arguments");
+		return -1;
 	}
 
 	return mctp_nl_route_add(ctx->nl, eid, ifindex, mtu);
-
-err:
-	warnx("add: invalid command line arguments");
-	return -1;
 }
 
 static int cmd_route_del(struct ctx *ctx, int argc, const char **argv)
 {
-	const char *eidstr = NULL;
+	unsigned int mtu = 0;
 	int ifindex = 0;
 	mctp_eid_t eid;
+	int rc;
 
-	if (argc != 4)
-		goto err;
-
-	if (strcmp(argv[2], "via"))
-		goto err;
-
-	eidstr = argv[1];
-
-	if (parse_eid(eidstr, &eid) < 0)
-		goto err;
-
-	ifindex = mctp_nl_ifindex_byname(ctx->nl, argv[3]);
-	if (!ifindex) {
-		warnx("del: invalid device %s", argv[3]);
-		goto err;
+	rc = parse_route_args(ctx, argc - 1, argv + 1, &eid, &ifindex, &mtu);
+	if (rc) {
+		warnx("del: invalid command line arguments");
+		return -1;
 	}
 
 	return mctp_nl_route_del(ctx->nl, eid, ifindex);
-
-err:
-	warnx("del: invalid command line arguments");
-	return -1;
 }
 
 static int cmd_route(struct ctx *ctx, int argc, const char **argv)
