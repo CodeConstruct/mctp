@@ -330,3 +330,9 @@ struct mctp_ctrl_resp_alloc_eid {
 #define GET_ROUTING_ENTRY_TYPE(field)                 \
 	(((field) >> MCTP_ROUTING_ENTRY_TYPE_SHIFT) & \
 	 MCTP_ROUTING_ENTRY_TYPE_MASK)
+
+/* MCTP Time Specification
+ * See DSP0283 v1.0.0 Table 4
+ */
+#define MCTP_TRECLAIM_US 5000000 // 5s TRECLAIM
+#define MCTP_RESP_TIMEOUT 400000 //400ms MT2
