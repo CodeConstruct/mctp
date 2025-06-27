@@ -52,6 +52,11 @@
 #define CC_MCTP_DBUS_IFACE_INTERFACE "au.com.codeconstruct.MCTP.Interface1"
 #define CC_MCTP_DBUS_NETWORK_INTERFACE "au.com.codeconstruct.MCTP.Network1"
 
+#define EP_REMOVAL_THRESHOLD 3
+#define MCTP_TRECLAIM_INTERVAL_US 5000000	//5sec
+#define POLL_INTERVAL_US MCTP_TRECLAIM_INTERVAL_US / 2
+#define POLL_TIMEOUT_US 400000	//MT2 min 400msec
+
 // an arbitrary constant for use with sd_id128_get_machine_app_specific()
 static const char* mctpd_appid = "67369c05-4b97-4b7e-be72-65cfd8639f10";
 
@@ -194,6 +199,8 @@ struct peer {
 	uint8_t pool_size;
 	uint8_t pool_start;
 
+	// Bridge polling context (only for bridge peers)
+	struct bridge_endpoint_discovery *bridge_discovery;
 };
 
 struct ctx {
@@ -227,6 +234,26 @@ struct ctx {
 	bool verbose;
 };
 
+struct bridge_eid_poll_context {
+    int sd;    // Socket for sending to this EID
+    sd_event_source *send_timer;  // Timer for periodic sends
+    sd_event_source *recv_io;     // IO handler for receives
+    sd_event_source *timeout_timer; // Timer for response timeout
+	int poll_interval_us;			// Interval b/w poll commands in usec
+	int poll_timeout_us;			// Timeout for sent poll command in usec
+	mctp_eid_t eid;
+    int net;
+    bool stop_poll;
+    int failure_count;
+	struct peer *peer;
+    struct bridge_endpoint_discovery *parent;  // Back pointer to parent context
+};
+
+struct bridge_endpoint_discovery {
+    struct bridge_eid_poll_context *poll_ctxs;  // Array of endpoint poll context
+    struct peer *bridge_peer;
+};
+
 static int emit_endpoint_added(const struct peer *peer);
 static int emit_endpoint_removed(const struct peer *peer);
 static int emit_interface_added(struct link *link);
@@ -251,6 +278,8 @@ static int add_net(struct ctx *ctx, uint32_t net);
 static void del_net(struct net *net);
 static int add_interface(struct ctx *ctx, int ifindex);
 static int endpoint_allocate_eid(struct peer *peer);
+static void cleanup_bridge_polling(struct peer *bridge_peer);
+static void cleanup_bridge_downstream_peers(struct peer *bridge_peer);
 
 static const sd_bus_vtable bus_endpoint_obmc_vtable[];
 static const sd_bus_vtable bus_endpoint_cc_vtable[];
@@ -1453,6 +1482,12 @@ static int remove_peer(struct peer *peer)
 		return -EPROTO;
 	}
 
+	// Clean up downstream peers if this is a bridge peer
+	if (peer->pool_size > 0) {
+		cleanup_bridge_polling(peer);
+		cleanup_bridge_downstream_peers(peer);
+	}
+
 	unpublish_peer(peer);
 
 	// Clear it
@@ -1468,8 +1503,12 @@ static int remove_peer(struct peer *peer)
 	}
 
 	n->peers[peer->eid] = NULL;
-	free(peer->message_types);
-	free(peer->uuid);
+	if (peer->message_types) {
+		free(peer->message_types);
+	}
+	if (peer->uuid) {
+		free(peer->uuid);
+	}
 
 	for (idx = 0; idx < ctx->num_peers; idx++) {
 		if (ctx->peers[idx] == peer)
@@ -1509,6 +1548,7 @@ static void free_peers(struct ctx *ctx)
 {
 	for (size_t i = 0; i < ctx->num_peers; i++) {
 		struct peer *peer = ctx->peers[i];
+		cleanup_bridge_polling(peer);
 		free(peer->message_types);
 		free(peer->uuid);
 		free(peer->path);
@@ -4067,6 +4107,395 @@ out:
 	return rc;
 }
 
+static void cleanup_bridge_polling(struct peer *bridge_peer)
+{
+	struct bridge_endpoint_discovery *discovery = bridge_peer->bridge_discovery;
+	if (!bridge_peer || bridge_peer->pool_size == 0 || !bridge_peer->bridge_discovery) {
+		return;
+	}
+
+	fprintf(stderr, "Cleaning up polling for bridge peer EID %d", bridge_peer->eid);
+
+	for (mctp_eid_t eid = bridge_peer->pool_start; eid <= bridge_peer->pool_start + bridge_peer->pool_size - 1; eid++) {
+		struct bridge_eid_poll_context *poll_ctx = &discovery->poll_ctxs[eid - bridge_peer->pool_start];
+		poll_ctx->stop_poll = true;
+	}
+
+	for (mctp_eid_t eid = bridge_peer->pool_start; eid <= bridge_peer->pool_start + bridge_peer->pool_size - 1; eid++) {
+		struct bridge_eid_poll_context *poll_ctx = &discovery->poll_ctxs[eid - bridge_peer->pool_start];
+
+		if (poll_ctx->recv_io) {
+			sd_event_source_unref(poll_ctx->recv_io);
+			poll_ctx->recv_io = NULL;
+		}
+		if (poll_ctx->send_timer) {
+			sd_event_source_unref(poll_ctx->send_timer);
+			poll_ctx->send_timer = NULL;
+		}
+		if (poll_ctx->timeout_timer) {
+			sd_event_source_unref(poll_ctx->timeout_timer);
+			poll_ctx->timeout_timer = NULL;
+		}
+		if (poll_ctx->sd >= 0) {
+			close(poll_ctx->sd);
+			poll_ctx->sd = -1;
+		}
+	}
+
+	free(discovery->poll_ctxs);
+	free(discovery);
+	bridge_peer->bridge_discovery = NULL;
+}
+
+static void cleanup_bridge_downstream_peers(struct peer *bridge_peer)
+{
+	int removed_count = 0;
+	struct ctx *ctx = bridge_peer->ctx;
+	struct net *n = lookup_net(ctx, bridge_peer->net);
+
+	if (!bridge_peer || bridge_peer->pool_size == 0) {
+		return;
+	}
+	if (!n) {
+		warnx("No network found for bridge peer EID %d", bridge_peer->eid);
+		return;
+	}
+
+	if (bridge_peer->ctx->verbose) {
+		fprintf(stderr, "Cleaning up downstream peers for bridge EID %d (pool %d-%d, size %d)",
+				bridge_peer->eid, bridge_peer->pool_start,
+				bridge_peer->pool_start + bridge_peer->pool_size - 1, bridge_peer->pool_size);
+	}
+
+	// Find and remove all peers in the bridge's EID pool
+	for (mctp_eid_t eid = bridge_peer->pool_start;
+		 eid <= bridge_peer->pool_start + bridge_peer->pool_size - 1; eid++) {
+
+		struct peer *downstream_peer = n->peers[eid];
+		if (downstream_peer && downstream_peer->state == REMOTE && downstream_peer != bridge_peer) {
+			if (bridge_peer->ctx->verbose) {
+				warnx("Removing downstream peer EID %d (discovered via bridge EID %d)",
+						eid, bridge_peer->eid);
+			}
+			remove_peer(downstream_peer);
+			removed_count++;
+		}
+	}
+
+	warnx("Cleaned up %d downstream peers for bridge EID %d", removed_count, bridge_peer->eid);
+}
+
+static int handle_poll_timeout(sd_event_source *s, uint64_t usec, void *userdata)
+{
+	struct bridge_eid_poll_context *ep_poll_ctx = userdata;
+
+	if (!ep_poll_ctx->parent || !ep_poll_ctx->parent->bridge_peer || ep_poll_ctx->stop_poll) {
+		warnx("Bridge polling stopped for EID %d", ep_poll_ctx->eid);
+		return 0;
+	}
+
+	ep_poll_ctx->failure_count++;
+	if (ep_poll_ctx->parent->bridge_peer->ctx->verbose) {
+		warnx("Response timeout for EID %d", ep_poll_ctx->eid);
+	}
+
+	if (ep_poll_ctx->failure_count > EP_REMOVAL_THRESHOLD) {
+		warnx("Reached failure threshold for EID %d, removing peer", ep_poll_ctx->eid);
+		ep_poll_ctx->failure_count = 0;
+		if (ep_poll_ctx->peer != NULL) {
+			remove_peer(ep_poll_ctx->peer);
+			ep_poll_ctx->peer = NULL;
+			// TODO: For non-stop polling after EP_REMOVAL_THRESHOLD failures
+			// ep_poll_ctx->stop_poll = true;
+		}
+	}
+
+	return 0;
+	}
+
+
+static int handle_bridge_poll_response(sd_event_source *s, int fd, uint32_t revents, void *userdata)
+{
+	struct bridge_eid_poll_context *ep_poll_ctx = userdata;
+	uint8_t *buf = NULL;
+	size_t buf_size;
+	struct sockaddr_mctp_ext addr;
+	struct mctp_ctrl_resp_get_eid *resp;
+	int rc;
+
+	if (revents & EPOLLERR) {
+		warnx("%s Socket error for EID %d", __func__, ep_poll_ctx->eid);
+		return 0;
+	}
+
+	if (revents & EPOLLHUP) {
+		warnx("%s Socket hangup for EID %d", __func__, ep_poll_ctx->eid);
+		return 0;
+	}
+
+	if (!(revents & EPOLLIN)) {
+		return 0;
+	}
+
+
+	if (!ep_poll_ctx->parent || !ep_poll_ctx->parent->bridge_peer || ep_poll_ctx->stop_poll) {
+		warnx("Bridge polling stopped for EID %d", ep_poll_ctx->eid);
+		return 0;
+	}
+
+	// Cancel timeout timer since we got a response
+	if (ep_poll_ctx->timeout_timer) {
+		sd_event_source_set_enabled(ep_poll_ctx->timeout_timer, SD_EVENT_OFF);
+	}
+
+	rc = read_message(ep_poll_ctx->parent->bridge_peer->ctx, fd, &buf, &buf_size, &addr);
+	if (rc < 0) {
+		warnx("%s Read failed for EID %d: %s", __func__, ep_poll_ctx->eid, strerror(-rc));
+		return 0;
+	}
+
+	if (buf_size < sizeof(*resp)) {
+		warnx("%s Invalid response size for EID %d", __func__, ep_poll_ctx->eid);
+		free(buf);
+		return 0;
+	}
+
+	resp = (void*)buf;
+
+	if (resp->ctrl_hdr.command_code == MCTP_CTRL_CMD_GET_ENDPOINT_ID) {
+		if (ep_poll_ctx->parent->bridge_peer->ctx->verbose) {
+			printf("Received GET_ENDPOINT_ID response for EID %d\n", ep_poll_ctx->eid);
+		}
+
+		ep_poll_ctx->failure_count = 0;
+		if (ep_poll_ctx->peer == NULL) {
+			struct peer *peer = NULL;
+			rc = add_peer(ep_poll_ctx->parent->bridge_peer->ctx, &(ep_poll_ctx->parent->bridge_peer->phys), ep_poll_ctx->eid, ep_poll_ctx->net, &peer);
+			if (rc < 0) {
+				warnx("Failed to add peer for EID %d: %s", ep_poll_ctx->eid, strerror(-rc));
+				free(buf);
+				return rc;
+			}
+
+			ep_poll_ctx->peer = peer;
+			peer->mtu = mctp_nl_min_mtu_byindex(peer->ctx->nl, peer->phys.ifindex);
+			rc = query_peer_properties(peer);
+			if (rc < 0) {
+				warnx("Failed to query peer properties for EID %d: %s", ep_poll_ctx->eid, strerror(-rc));
+				remove_peer(peer);
+				ep_poll_ctx->peer = NULL;
+				free(buf);
+				return rc;
+			}
+			rc = publish_peer(peer, false);
+			if (rc < 0) {
+				warnx("Failed to publish peer for EID %d: %s", ep_poll_ctx->eid, strerror(-rc));
+				remove_peer(peer);
+				ep_poll_ctx->peer = NULL;
+				free(buf);
+				return rc;
+			}
+		}
+	}
+	else {
+		warnx("Polling: Received unexpected command code %d for EID %d : Ignoring", resp->ctrl_hdr.command_code, ep_poll_ctx->eid);
+	}
+
+	free(buf);
+	return 0;
+	}
+
+static int send_bridge_poll_request(sd_event_source *s, uint64_t usec, void *userdata)
+{
+	struct bridge_eid_poll_context *ep_poll_ctx = userdata;
+	struct mctp_ctrl_cmd_get_eid req = {0};
+	struct sockaddr_mctp addr = {
+		.smctp_family = AF_MCTP,
+		.smctp_network = ep_poll_ctx->net,
+		.smctp_addr.s_addr = ep_poll_ctx->eid,
+		.smctp_type = MCTP_CTRL_HDR_MSG_TYPE,
+		.smctp_tag = MCTP_TAG_OWNER
+	};
+	int rc;
+	uint64_t next_usec;
+
+	if (!ep_poll_ctx->parent || !ep_poll_ctx->parent->bridge_peer || ep_poll_ctx->stop_poll) {
+		warnx("Bridge polling stopped for EID %d", ep_poll_ctx->eid);
+		return 0;
+	}
+
+	req.ctrl_hdr.command_code = MCTP_CTRL_CMD_GET_ENDPOINT_ID;
+	req.ctrl_hdr.rq_dgram_inst = RQDI_REQ | mctp_next_iid(ep_poll_ctx->parent->bridge_peer->ctx);
+
+	if(ep_poll_ctx->parent->bridge_peer->ctx->verbose) {
+		fprintf(stderr, "Sending GET_ENDPOINT_ID to EID %d\n", ep_poll_ctx->eid);
+	}
+
+	rc = mctp_ops.mctp.sendto(ep_poll_ctx->sd, &req, sizeof(req), 0,
+							(struct sockaddr *)&addr, sizeof(addr));
+	if (rc < 0) {
+		warnx("Failed to send GET_ENDPOINT_ID to EID %d: %s",
+			ep_poll_ctx->eid, strerror(errno));
+	}
+	// Polling should stop after EP_REMOVAL_THRESHOLD failures
+	if (ep_poll_ctx->timeout_timer) {
+		sd_event_now(ep_poll_ctx->parent->bridge_peer->ctx->event, CLOCK_MONOTONIC, &next_usec);
+		sd_event_source_set_time(ep_poll_ctx->timeout_timer, next_usec + ep_poll_ctx->poll_timeout_us);
+		sd_event_source_set_enabled(ep_poll_ctx->timeout_timer, SD_EVENT_ONESHOT);
+	}
+
+	// Schedule next send
+	sd_event_now(ep_poll_ctx->parent->bridge_peer->ctx->event, CLOCK_MONOTONIC, &next_usec);
+	sd_event_source_set_time(s, next_usec + ep_poll_ctx->poll_interval_us);
+	sd_event_source_set_enabled(s, SD_EVENT_ONESHOT);
+
+	return 0;
+}
+
+
+static int setup_eid_poll_context(struct bridge_eid_poll_context *poll_ctx, mctp_eid_t eid)
+{
+	int rc;
+	int val = 1;
+	struct sockaddr_mctp addr = {
+		.smctp_family = AF_MCTP,
+		.smctp_network = poll_ctx->net,
+		.smctp_type = MCTP_CTRL_HDR_MSG_TYPE,
+		.smctp_tag = MCTP_TAG_OWNER
+	};
+
+	// Create and setup receive socket
+	poll_ctx->sd = mctp_ops.mctp.socket();
+	if (poll_ctx->sd < 0)
+		return -errno;
+
+	addr.smctp_addr.s_addr = eid;
+	rc = mctp_ops.mctp.bind(poll_ctx->sd, (struct sockaddr *)&addr, sizeof(addr));
+	if (rc < 0) {
+		close(poll_ctx->sd);
+		return -errno;
+	}
+
+
+	rc = mctp_ops.mctp.setsockopt(poll_ctx->sd, SOL_MCTP, MCTP_OPT_ADDR_EXT,
+									&val, sizeof(val));
+	if (rc < 0) goto err_cleanup;
+
+	// Create polling timeout timer
+	rc = sd_event_add_time(poll_ctx->parent->bridge_peer->ctx->event,
+							&poll_ctx->timeout_timer,
+							CLOCK_MONOTONIC,
+							0, 0,
+							handle_poll_timeout,
+							poll_ctx);
+	if (rc < 0) goto err_cleanup;
+
+	// Initially disable the polling timeout timer
+	sd_event_source_set_enabled(poll_ctx->timeout_timer, SD_EVENT_OFF);
+
+	poll_ctx->eid = eid;
+	poll_ctx->failure_count = 0;
+	poll_ctx->peer = NULL;
+	poll_ctx->poll_interval_us = POLL_INTERVAL_US;
+	poll_ctx->poll_timeout_us = POLL_TIMEOUT_US;
+	poll_ctx->stop_poll = false;
+	return 0;
+
+err_cleanup:
+	if (poll_ctx->timeout_timer) {
+		sd_event_source_unref(poll_ctx->timeout_timer);
+	}
+	if (poll_ctx->sd >= 0) {
+		close(poll_ctx->sd);
+	}
+	return -errno;
+}
+
+static int setup_async_downstream_ep_poll(struct peer *bridge_peer)
+{
+	struct bridge_endpoint_discovery *query = NULL;
+	struct bridge_eid_poll_context *poll_ctx = NULL;
+	int rc = 0;
+
+	// Check if bridge peer is still valid
+	if (!bridge_peer || bridge_peer->pool_size == 0) {
+		warnx("Invalid bridge peer for polling setup");
+		return -EINVAL;
+	}
+
+	query = calloc(1, sizeof(*query));
+	if (!query){
+		warnx("Out of memory");
+		return -ENOMEM;
+	}
+
+	query->bridge_peer = bridge_peer;
+
+	// Setup poll_ctx for each EID
+	query->poll_ctxs = calloc(bridge_peer->pool_size,
+								sizeof(struct bridge_eid_poll_context));
+	if (!query->poll_ctxs) {
+		rc = -ENOMEM;
+		warnx("Out of memory");
+		goto err_free_query;
+	}
+
+	for (mctp_eid_t eid = bridge_peer->pool_start; eid <= bridge_peer->pool_start + bridge_peer->pool_size - 1; eid++) {
+		poll_ctx = &query->poll_ctxs[eid - bridge_peer->pool_start];
+		poll_ctx->parent = query;
+		poll_ctx->net = bridge_peer->net;
+
+		rc = setup_eid_poll_context(poll_ctx, eid);
+		if (rc < 0)
+			goto err_cleanup;
+
+		// Setup IO handler for receives
+		rc = sd_event_add_io(bridge_peer->ctx->event, &poll_ctx->recv_io,
+							poll_ctx->sd, EPOLLIN,
+							handle_bridge_poll_response, poll_ctx);
+		if (rc < 0)
+			goto err_cleanup;
+
+		// Setup polling timer for sends
+		rc = sd_event_add_time(bridge_peer->ctx->event, &poll_ctx->send_timer,
+								CLOCK_MONOTONIC, 0, 0,
+								send_bridge_poll_request, poll_ctx);
+		if (rc < 0)
+			goto err_cleanup;
+
+		// Initiate polling immediately
+		uint64_t now;
+		sd_event_now(bridge_peer->ctx->event, CLOCK_MONOTONIC, &now);
+		sd_event_source_set_time(poll_ctx->send_timer, now);
+	}
+
+	// Store the discovery structure in the peer for cleanup
+	bridge_peer->bridge_discovery = query;
+	return 0;
+
+err_cleanup:
+	// Cleanup any socket poll_ctxs we created
+	for (mctp_eid_t eid = bridge_peer->pool_start; eid <= bridge_peer->pool_start + bridge_peer->pool_size - 1; eid++) {
+		struct bridge_eid_poll_context *poll_ctx = &query->poll_ctxs[eid - bridge_peer->pool_start];
+		if (poll_ctx->recv_io)
+			sd_event_source_unref(poll_ctx->recv_io);
+		if (poll_ctx->send_timer)
+			sd_event_source_unref(poll_ctx->send_timer);
+		if (poll_ctx->sd >= 0)
+			close(poll_ctx->sd);
+		if (poll_ctx->timeout_timer)
+			sd_event_source_unref(poll_ctx->timeout_timer);
+	}
+	free(query->poll_ctxs);
+
+err_free_query:
+	free(query);
+	if (bridge_peer->ctx->verbose) {
+		warnx("%s returned error: %s", __func__, strerror(-rc));
+	}
+	return rc;
+}
+
 static mctp_eid_t get_pool_start(struct peer *peer, mctp_eid_t eid_start, uint8_t pool_size)
 {
 	uint8_t count = 0;
@@ -4120,7 +4549,30 @@ static int endpoint_allocate_eid(struct peer* peer)
 		peer->pool_start = allocated_pool_start;
 
 		// add Gateway route for all Bridge's downstream eids
-		// Polling logic for downstream EID
+		struct mctp_fq_addr gw_addr;
+		const char * link;
+		link = mctp_nl_if_byindex(peer->ctx->nl, peer->phys.ifindex);
+		if (!link) {
+			warnx("BUG %s: Unknown ifindex %d", __func__, peer->phys.ifindex);
+			return -ENODEV;
+		}
+		gw_addr.net = peer->net;
+		gw_addr.eid = peer->eid;
+		rc = mctp_nl_route_add(peer->ctx->nl, peer->pool_start, peer->pool_size - 1,
+						link, &gw_addr, peer->mtu);
+		if (rc < 0) {
+			warnx("Failed to add Gateway route for EID %d: %s",
+				gw_addr.eid, strerror(-rc));
+			// If the route already exists, continue polling
+			if (rc != -EEXIST) {
+				return rc;
+			} else {
+				rc = 0;
+			}
+		}
+
+		// Configure polling for all downstream EIDs
+		setup_async_downstream_ep_poll(peer);
 	}
 
 	return rc;
@@ -4140,7 +4592,7 @@ int main(int argc, char **argv)
 	if (rc != 0) {
 		return rc;
 	}
-
+	ctx->verbose = true;
 	rc = parse_config(ctx);
 	if (rc) {
 		err(EXIT_FAILURE, "Can't read configuration");
