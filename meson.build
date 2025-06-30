@@ -65,6 +65,11 @@ executable('mctp-bench',
     sources: ['src/mctp-bench.c'] + util_sources,
 )
 
+executable('mctp-client',
+    sources: ['src/mctp-client.c'] + util_sources,
+    install: true
+)
+
 if libsystemd.found()
     executable('mctpd',
         sources: [
