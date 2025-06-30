@@ -926,3 +926,39 @@ async def test_config_dyn_eid_range_max(nursery, dbus, sysnet):
 
     res = await mctpd.stop_mctpd()
     assert res == 0
+
+""" Test bridge endpoint dynamic EID assignment and downstream
+endpoint EID allocation
+
+Tests that:
+- Bridge endpoint can be assigned a dynamic EID
+- Downstream endpoints get contiguous EIDs after bridge's own eid
+"""
+async def test_assign_dynamic_bridge_eid(dbus, mctpd):
+    iface = mctpd.system.interfaces[0]
+    mctp = await mctpd_mctp_iface_obj(dbus, iface)
+    ep = mctpd.network.endpoints[0]
+    pool_size = 2
+
+    # Set up bridged endpoints as undiscovered EID 0
+    for i in range(pool_size):
+        br_ep = Endpoint(iface, bytes(), types=[0, 2])
+        ep.add_bridged_ep(br_ep)
+        mctpd.network.add_endpoint(br_ep)
+
+    mctp = await mctpd_mctp_iface_obj(dbus, iface)
+
+    # dynamic EID assigment for dev1
+    (eid, _, path, new) = await mctp.call_assign_endpoint(ep.lladdr)
+
+    assert new
+    assert ep.allocated_pool == (eid + 1, pool_size)
+
+    # check if we can assign non-bridged endpoint dev2, eid from
+    #bridge's already assigned pool
+    dev2 = Endpoint(iface, bytes([0x1e]))
+    mctpd.network.add_endpoint(dev2)
+    with pytest.raises(asyncdbus.errors.DBusError) as ex:
+        await mctp.call_assign_endpoint_static(dev2.lladdr, ep.eid + 1)
+
+    assert str(ex.value) == "Request failed"
