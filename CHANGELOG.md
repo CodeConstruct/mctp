@@ -35,6 +35,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
    where the reported endpoint EID may either be different from expected,
    or invalid
 
+6. New debug/test tool, `mctp-becnh`, for performing basic requests to MCTP
+   endpoints, and printing their responses
+
 ### Changed
 
 1. tests are now run with address sanitizer enabled (-fsanitize=address)
