@@ -30,19 +30,19 @@ static int mctp_op_bind(int sd, struct sockaddr *addr, socklen_t addrlen)
 }
 
 static int mctp_op_setsockopt(int sd, int level, int optname, void *optval,
-			       socklen_t optlen)
+			      socklen_t optlen)
 {
 	return setsockopt(sd, level, optname, optval, optlen);
 }
 
 static ssize_t mctp_op_sendto(int sd, const void *buf, size_t len, int flags,
-			       const struct sockaddr *dest, socklen_t addrlen)
+			      const struct sockaddr *dest, socklen_t addrlen)
 {
 	return sendto(sd, buf, len, flags, dest, addrlen);
 }
 
 static ssize_t mctp_op_recvfrom(int sd, void *buf, size_t len, int flags,
-				 struct sockaddr *src, socklen_t *addrlen)
+				struct sockaddr *src, socklen_t *addrlen)
 {
 	return recvfrom(sd, buf, len, flags, src, addrlen);
 }
@@ -52,7 +52,7 @@ static int mctp_op_close(int sd)
 	return close(sd);
 }
 
-static void mctp_bug_warn(const char* fmt, va_list args)
+static void mctp_bug_warn(const char *fmt, va_list args)
 {
 	vwarnx(fmt, args);
 }
@@ -77,4 +77,6 @@ const struct mctp_ops mctp_ops = {
 	.bug_warn = mctp_bug_warn,
 };
 
-void mctp_ops_init(void) { }
+void mctp_ops_init(void)
+{
+}
