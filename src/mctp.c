@@ -311,13 +311,16 @@ static int display_neighbour(struct ctx *ctx, void *p, size_t len)
 	eid = 0;
 	mctp_get_rtnlmsg_attr_u8(NDA_DST, rta, rta_len, &eid);
 	lladdr = mctp_get_rtnlmsg_attr(NDA_LLADDR, rta, rta_len, &lladdr_len);
-	printf("eid %d net %u dev %s lladdr 0x", eid,
+	printf("eid %d net %u dev %s lladdr ", eid,
 	       mctp_nl_net_byindex(ctx->nl, msg->ndm_ifindex),
 	       mctp_nl_if_byindex(ctx->nl, msg->ndm_ifindex));
+	if (lladdr_len == 1) {
+		printf("0x");
+	}
 	if (lladdr && lladdr_len)
 		print_hex_addr(lladdr, lladdr_len);
 	else
-		printf("(no-addr)");
+		printf("none");
 	printf("\n");
 	return 0;
 }

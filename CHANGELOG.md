@@ -42,6 +42,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 1. tests are now run with address sanitizer enabled (-fsanitize=address)
 
+2. `mctp neigh` hardware address formatting is improved.
+
 ### Removed
 
 1. mctpd: Test mode (`-N`) has been removed, as we have a more comprehensive
