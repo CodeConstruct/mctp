@@ -80,7 +80,7 @@ static struct type_lookup_t {
 
 static int do_type_lookup(char *type_str)
 {
-	int ctr;
+	size_t ctr;
 
 	for (ctr = 0; ctr < ARRAY_SIZE(type_lookup); ++ctr) {
 		if (!strcmp(type_str, type_lookup[ctr].name))
@@ -93,10 +93,11 @@ static int do_type_lookup(char *type_str)
 static int do_send_recv(unsigned int net, mctp_eid_t eid, uint8_t type,
 			struct data_t *data)
 {
-	int sd, rc, recvlen, ctr;
 	struct sockaddr_mctp addr;
+	ssize_t rc, recvlen, ctr;
 	uint8_t *recv_buffer;
 	socklen_t addrlen;
+	int sd;
 
 	sd = socket(AF_MCTP, SOCK_DGRAM, 0);
 	if (sd < 0)
@@ -111,15 +112,16 @@ static int do_send_recv(unsigned int net, mctp_eid_t eid, uint8_t type,
 
 	rc = sendto(sd, data->data, data->len, 0, (struct sockaddr *)&addr,
 		    sizeof(addr));
-
-	if (rc != data->len)
-		err(EXIT_FAILURE, "sendto(%zd)", data->len);
+	if (rc < 0)
+		err(EXIT_FAILURE, "sendto(%zd) failed", data->len);
+	if (rc != (ssize_t)data->len)
+		err(EXIT_FAILURE, "sendto(%zd) partial send (%zd)", data->len,
+		    rc);
 
 	recvlen = recvfrom(sd, NULL, 0, MSG_TRUNC | MSG_PEEK,
 			   (struct sockaddr *)&addr, &addrlen);
-
 	if (recvlen < 0)
-		err(EXIT_FAILURE, "receive failed %d", recvlen);
+		err(EXIT_FAILURE, "receive failed %zd", recvlen);
 
 	recv_buffer = malloc(recvlen);
 	if (!recv_buffer)
@@ -129,10 +131,10 @@ static int do_send_recv(unsigned int net, mctp_eid_t eid, uint8_t type,
 		      (struct sockaddr *)&addr, &addrlen);
 
 	if (rc < 0)
-		err(EXIT_FAILURE, "receive failed %d", recvlen);
+		err(EXIT_FAILURE, "receive failed %zd", recvlen);
 
 	if (recvlen != rc)
-		errx(EXIT_FAILURE, "invalid bytes received: %d, expected %d",
+		errx(EXIT_FAILURE, "invalid bytes received: %zd, expected %zd",
 		     rc, recvlen);
 
 	for (ctr = 0; ctr < rc; ++ctr) {
@@ -148,7 +150,8 @@ static int do_send_recv(unsigned int net, mctp_eid_t eid, uint8_t type,
 
 static void print_usage()
 {
-	int ctr;
+	size_t ctr;
+
 	printf("usage:\n\tmctp-client [net <net>] eid <eid> type <type> data <data>\n");
 	printf("net defaults to MCTP_NET_ANY, data is space delimited hexadecimal. ");
 	printf("data must be the last parameter\n");
@@ -165,7 +168,7 @@ static struct data_t create_data(char **data_start, size_t count)
 	unsigned long int tmp;
 	struct data_t data;
 	char *endp;
-	int ctr;
+	size_t ctr;
 
 	data.data = malloc(count);
 	if (!data.data)
