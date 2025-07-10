@@ -76,7 +76,7 @@ class System:
             return f"{self.eid} -> {lladdrstr} {self.iface.name}"
 
     class Route:
-        def __init__(self, iface, start_eid, extent_eid, mtu = 0):
+        def __init__(self, start_eid, extent_eid, iface = None, mtu = 0):
             self.iface = iface
             self.start_eid = start_eid
             self.end_eid = start_eid + extent_eid
@@ -974,7 +974,7 @@ class NLSocket(BaseSocket):
         mtu = 0
 
         iface = self.system.find_interface_by_ifindex(ifindex)
-        route = System.Route(iface, start_eid, extent_eid)
+        route = System.Route(start_eid, extent_eid, iface = iface)
         await self.system.add_route(route)
 
         if msg['header']['flags'] & netlink.NLM_F_ACK:
@@ -990,7 +990,7 @@ class NLSocket(BaseSocket):
         mtu = 0
 
         iface = self.system.find_interface_by_ifindex(ifindex)
-        route = System.Route(iface, start_eid, extent_eid)
+        route = System.Route(start_eid, extent_eid, iface = iface)
         try:
             await self.system.del_route(route)
         except NetlinkError as nle:

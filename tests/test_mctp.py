@@ -7,7 +7,7 @@ async def test_link_simple(mctp):
     assert 'dev mctp0' in proc.stdout
 
 async def test_route_single_direct(mctp):
-    rt = mctp.system.Route(mctp.system.interfaces[0], 9, 0, 0)
+    rt = mctp.system.Route(9, 0, iface = mctp.system.interfaces[0])
     await mctp.system.add_route(rt)
 
     proc = await mctp.run(["route"])
@@ -15,7 +15,7 @@ async def test_route_single_direct(mctp):
     assert proc.stdout.strip() == 'eid min 9 max 9 net 1 dev mctp0 mtu 0'
 
 async def test_route_range_direct(mctp):
-    rt = mctp.system.Route(mctp.system.interfaces[0], 9, 1, 0)
+    rt = mctp.system.Route(9, 1, iface = mctp.system.interfaces[0])
     await mctp.system.add_route(rt)
 
     proc = await mctp.run(["route"])

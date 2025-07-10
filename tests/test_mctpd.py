@@ -409,7 +409,7 @@ async def test_get_endpoint_id(dbus, mctpd):
     mctp = await mctpd_mctp_iface_obj(dbus, iface)
     dev.eid = 12
 
-    await mctpd.system.add_route(mctpd.system.Route(iface, dev.eid, 0))
+    await mctpd.system.add_route(mctpd.system.Route(dev.eid, 0, iface = iface))
     await mctpd.system.add_neighbour(
         mctpd.system.Neighbour(iface, dev.lladdr, dev.eid)
     )
@@ -689,7 +689,7 @@ async def test_bridged_learn_endpoint(dbus, mctpd):
     ep.add_bridged_ep(br_ep)
     mctpd.network.add_endpoint(br_ep)
 
-    await mctpd.system.add_route(mctpd.system.Route(iface, br_ep.eid, 1))
+    await mctpd.system.add_route(mctpd.system.Route(br_ep.eid, 1, iface = iface))
     # static neighbour; no gateway route support at present
     await mctpd.system.add_neighbour(mctpd.system.Neighbour(iface, ep.lladdr, br_ep.eid))
 
