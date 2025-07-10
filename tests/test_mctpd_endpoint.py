@@ -1,6 +1,6 @@
 import pytest
 from mctp_test_utils import *
-from mctpd import *
+from mctpenv import *
 
 @pytest.fixture
 def config():
