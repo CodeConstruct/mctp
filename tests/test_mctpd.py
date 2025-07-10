@@ -787,3 +787,48 @@ async def test_add_interface(dbus, mctpd):
     assert eid == static_eid
     assert new
     assert mctpd.system.lookup_route(net, static_eid).iface == iface
+
+""" Test bridge endpoint EID assignment and downstream endpoint EID allocation
+
+Tests that:
+- Bridge endpoint can be assigned a static EID
+- Downstream endpoints get sequential EIDs from pool start
+"""
+async def test_assign_bridge_static(dbus, mctpd):
+    iface = mctpd.system.interfaces[0]
+    ep = mctpd.network.endpoints[0]
+
+    bridge_eid = 12
+    pool_start = 13
+    pool_size = 2
+
+    # Set up bridged endpoints as undiscovered EID 0
+    for i in range(pool_size):
+        br_ep = Endpoint(iface, bytes(), eid=pool_start + i, types=[0, 2])
+        ep.add_bridged_ep(br_ep)
+        mctpd.network.add_endpoint(br_ep)
+
+    mctp = await mctpd_mctp_iface_obj(dbus, iface)
+
+    (eid, net, path, new, msg) = await mctp.call_assign_bridge_static(
+        ep.lladdr,        # physaddr
+        bridge_eid,       # static_eid
+        pool_start,       # pool_start
+        pool_size         # pool_size
+    )
+
+    # Assert for assigned bridge endpoint ID
+    assert eid == bridge_eid
+    assert path == f'/au/com/codeconstruct/mctp1/networks/1/endpoints/{bridge_eid}'
+    assert new
+
+    # Bridge Simulation : Add routes and neighbours and assert for downstream endpoints
+    # static neighbour; no gateway route support at present
+    net = await mctpd_mctp_network_obj(dbus, iface.net)
+    for i in range(pool_size):
+        br_ep = ep.bridged_eps[i]
+        await mctpd.system.add_route(mctpd.system.Route(iface, br_ep.eid, 1))
+        await mctpd.system.add_neighbour(mctpd.system.Neighbour(iface, ep.lladdr, br_ep.eid))
+        (path, new) = await net.call_learn_endpoint(br_ep.eid)
+        assert path == f'/au/com/codeconstruct/mctp1/networks/1/endpoints/{br_ep.eid}'
+        assert new
