@@ -54,7 +54,7 @@ class System:
             self.up = up
 
         def __str__(self):
-            lladdrstr = ':'.join('%02x' % ord(b) for b in self.lladdr)
+            lladdrstr = ':'.join('%02x' % b for b in self.lladdr)
             return f"{self.name}: net {self.net} lladdr {lladdrstr}"
 
     class Address:
