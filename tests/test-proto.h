@@ -55,5 +55,3 @@ struct sock_msg {
 		} bind;
 	};
 };
-
-
