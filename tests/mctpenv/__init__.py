@@ -82,6 +82,9 @@ class System:
             self.end_eid = start_eid + extent_eid
             self.mtu = mtu
 
+        def net(self):
+            return self.iface.net
+
         def __str__(self):
             return (f"{self.start_eid}-{self.end_eid} -> " +
                     f"{self.iface.name} mtu {self.mtu}")
@@ -99,7 +102,7 @@ class System:
             await self.nl.notify_newroute(route)
 
     async def del_route(self, route):
-        route = self.lookup_route_exact(route.iface, route.start_eid,
+        route = self.lookup_route_exact(route.net(), route.start_eid,
                 route.end_eid)
         if not route:
             raise NetlinkError(errno.ENOENT)
@@ -174,13 +177,13 @@ class System:
     def lookup_route(self, net, eid):
         for rt in self.routes:
             eid_range = range(rt.start_eid, rt.end_eid + 1)
-            if net in (0, rt.iface.net) and eid in eid_range:
+            if net in (0, rt.net()) and eid in eid_range:
                 return rt
         return None
 
-    def lookup_route_exact(self, iface, start_eid, end_eid):
+    def lookup_route_exact(self, net, start_eid, end_eid):
         for rt in self.routes:
-            if (rt.iface == iface and rt.start_eid == start_eid
+            if (rt.net() == net and rt.start_eid == start_eid
                     and rt.end_eid == end_eid):
                 return rt
         return None
