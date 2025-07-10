@@ -31,3 +31,7 @@ async def mctpd(nursery, dbus, sysnet, config):
     yield m
     res = await m.stop_mctpd()
     assert res == 0
+
+@pytest.fixture
+async def mctp(nursery, sysnet):
+    return mctpenv.MctpWrapper(nursery, sysnet)

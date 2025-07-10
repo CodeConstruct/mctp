@@ -58,6 +58,11 @@ executable('mctp',
     install: true,
 )
 
+mctp_test = executable('test-mctp',
+    sources: ['src/mctp.c'] + netlink_sources + util_sources + test_ops_sources,
+    include_directories:  include_directories('src'),
+)
+
 executable('mctp-req',
     sources: ['src/mctp-req.c'] + util_sources,
 )
@@ -148,8 +153,9 @@ if tests
     )
 
     test('test-mctpd', dbus_run_session,
-        depends: mctpd_test,
+        depends: [mctpd_test, mctp_test],
         args: [ sh.full_path(), '-c', script, '--' ],
         protocol: 'tap',
     )
+
 endif

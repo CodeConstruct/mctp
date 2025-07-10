@@ -42,6 +42,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 8. `mctp` route can add & delete range routes, using a <min>-<max> range format
 
+9. In-tree tests now include coverage for the `mctp` utility
+
 ### Changed
 
 1. tests are now run with address sanitizer enabled (-fsanitize=address)

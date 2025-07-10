@@ -1144,6 +1144,37 @@ class MctpdWrapper(MctpProcessWrapper):
 
         await send_chan.send(proc_rc)
 
+class MctpWrapper(MctpProcessWrapper):
+    def __init__(self, nursery, sysnet):
+        super().__init__(sysnet)
+        self.nursery = nursery
+        self.binary = './test-mctp'
+
+    async def run(self, args):
+        env = os.environ.copy()
+        env['MCTP_TEST_SOCK'] = str(self.sock_remote.fileno())
+
+        command = [self.binary] + args
+
+        self.nursery.start_soon(self.handle_control, self.nursery)
+
+        proc = await trio.run_process(
+                command = command,
+                pass_fds = (1, 2, self.sock_remote.fileno()),
+                env = env,
+                capture_stdout = True,
+                capture_stderr = True,
+                check = False,
+            )
+        self.sock_remote.close()
+
+        # everything is text
+        proc.stdout = proc.stdout.decode('utf-8')
+        proc.stderr = proc.stderr.decode('utf-8')
+
+        return proc
+
+
 Sysnet = namedtuple('SysNet', ['system', 'network'])
 
 async def default_sysnet():
