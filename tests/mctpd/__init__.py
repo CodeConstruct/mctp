@@ -948,7 +948,7 @@ class NLSocket(BaseSocket):
 
         for route in routes:
             resp = self._create_resp(rtmsg_mctp, msg, rtnl.RTM_NEWROUTE, flags)
-            self._format_route(self, resp, route)
+            self._format_route(resp, route)
             resp.encode()
             buf.extend(resp.data)
 
