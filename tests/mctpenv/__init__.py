@@ -1024,14 +1024,10 @@ async def send_fd(sock, fd):
         ]
     )
 
-
-class MctpdWrapper:
-    def __init__(self, bus, sysnet, binary=None, config=None):
-        self.bus = bus
+class MctpProcessWrapper:
+    def __init__(self, sysnet):
         self.system = sysnet.system
         self.network = sysnet.network
-        self.binary = binary or './test-mctpd'
-        self.config = config
         (self.sock_local, self.sock_remote) = self.socketpair()
 
     def socketpair(self):
@@ -1068,6 +1064,13 @@ class MctpdWrapper:
 
             else:
                 print(f"unknown op {op}")
+
+class MctpdWrapper(MctpProcessWrapper):
+    def __init__(self, bus, sysnet, binary=None, config=None):
+        super().__init__(sysnet)
+        self.bus = bus
+        self.binary = binary or './test-mctpd'
+        self.config = config
 
     async def start_mctpd(self, nursery):
         nursery.start_soon(self.handle_control, nursery)
