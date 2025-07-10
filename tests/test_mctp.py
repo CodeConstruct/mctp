@@ -21,3 +21,19 @@ async def test_route_range_direct(mctp):
     proc = await mctp.run(["route"])
     assert proc.returncode == 0
     assert proc.stdout.strip() == 'eid min 9 max 10 net 1 dev mctp0 mtu 0'
+
+async def test_route_single_gw(mctp):
+    rt = mctp.system.Route(10, 0, gw = (1, 9))
+    await mctp.system.add_route(rt)
+
+    proc = await mctp.run(["route"])
+    assert proc.returncode == 0
+    assert proc.stdout.strip() == 'eid min 10 max 10 net 1 gw 9 mtu 0'
+
+async def test_route_range_gw(mctp):
+    rt = mctp.system.Route(10, 1, gw = (1, 9))
+    await mctp.system.add_route(rt)
+
+    proc = await mctp.run(["route"])
+    assert proc.returncode == 0
+    assert proc.stdout.strip() == 'eid min 10 max 11 net 1 gw 9 mtu 0'

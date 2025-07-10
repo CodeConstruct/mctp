@@ -76,18 +76,45 @@ class System:
             return f"{self.eid} -> {lladdrstr} {self.iface.name}"
 
     class Route:
-        def __init__(self, start_eid, extent_eid, iface = None, mtu = 0):
+        def __init__(self, start_eid, extent_eid, iface = None, gw = None,
+                mtu = 0):
+            if (iface is None) and (gw is None):
+                raise ValueError("neither interface or gateway are set")
+            elif (iface is not None) and (gw is not None):
+                raise ValueError("both interface and gateway are set")
+
+            if type(gw) is int:
+                # use default net
+                gw = (1, gw)
+            elif type(gw) in [tuple, list] and len(gw) == 2:
+                gw = tuple(gw)
+                if gw[0] == 0:
+                    gw = (1, gw[1])
+            elif gw is not None:
+                raise ValueError("gateway should be a 2-tuple or int")
+
             self.iface = iface
+            self.gw = gw
             self.start_eid = start_eid
             self.end_eid = start_eid + extent_eid
             self.mtu = mtu
 
         def net(self):
-            return self.iface.net
+            if self.gw is not None:
+                return self.gw[0]
+            elif self.iface is not None:
+                return self.iface.net
+            raise ValueError("no gw or iface");
 
         def __str__(self):
-            return (f"{self.start_eid}-{self.end_eid} -> " +
-                    f"{self.iface.name} mtu {self.mtu}")
+            s = f"{self.start_eid}-{self.end_eid} -> "
+            if self.iface:
+                s += f"iface {self.iface.name} "
+            else:
+                (net, eid) = self.gw
+                s += f"gw {net},{eid} "
+            s += f"mtu {self.mtu}"
+            return s
 
     def __init__(self):
         self.interfaces = []
@@ -441,7 +468,7 @@ class rtmsg_mctp(rtnl.rtmsg.rtmsg):
         ('RTA_SRC', 'uint8'),
         ('RTA_IIF', 'uint32'),
         ('RTA_OIF', 'uint32'),
-        ('RTA_GATEWAY', 'uint8'),
+        ('RTA_GATEWAY', 'gateway'),
         ('RTA_PRIORITY', 'uint32'),
         ('RTA_PREFSRC', 'uint8'),
         ('RTA_METRICS', 'metrics'),
@@ -461,6 +488,9 @@ class rtmsg_mctp(rtnl.rtmsg.rtmsg):
         ('RTA_ENCAP', 'encap_info'),
         ('RTA_EXPIRES', 'hex'),
     )
+
+    class gateway(netlink.nla_base):
+        fields = [('net', 'I'), ('eid', 'B'), ('__pad', '3x')]
 
 class BaseSocket:
     msg_fmt = "@I"
@@ -940,11 +970,37 @@ class NLSocket(BaseSocket):
         msg['src_len'] = 0
         msg['attrs'] = [
             ['RTA_DST', route.start_eid],
-            ['RTA_OIF', route.iface.ifindex],
             ['RTA_METRICS', {
                 'attrs': [['RTAX_MTU', route.mtu]],
             }],
         ]
+        if route.iface:
+            msg['attrs'].append(['RTA_OIF', route.iface.ifindex])
+        elif route.gw:
+            msg['attrs'].append(['RTA_GATEWAY', {
+                "net": route.gw[0],
+                "eid": route.gw[1],
+                }])
+
+    def _parse_route(self, msg):
+        msg = rtmsg_mctp(msg.data)
+        msg.decode()
+
+        ifindex = msg.get_attr('RTA_OIF')
+        gw = msg.get_attr('RTA_GATEWAY')
+        start_eid = msg.get_attr('RTA_DST')
+        extent_eid = msg['dst_len']
+        # todo: RTAX metrics
+        mtu = 0
+
+        if ifindex:
+            iface = self.system.find_interface_by_ifindex(ifindex)
+            gw = None
+        else:
+            gw = (gw['net'], gw['eid'])
+            iface = None
+
+        return System.Route(start_eid, extent_eid, iface = iface, gw = gw)
 
     async def _handle_getroute(self, msg):
         dump = bool(msg['header']['flags'] & netlink.NLM_F_DUMP)
@@ -970,14 +1026,8 @@ class NLSocket(BaseSocket):
         msg = rtmsg_mctp(msg.data)
         msg.decode()
 
-        ifindex = msg.get_attr('RTA_OIF')
-        start_eid = msg.get_attr('RTA_DST')
-        extent_eid = msg['dst_len']
-        # todo: RTAX metrics
-        mtu = 0
+        route = self._parse_route(msg)
 
-        iface = self.system.find_interface_by_ifindex(ifindex)
-        route = System.Route(start_eid, extent_eid, iface = iface)
         await self.system.add_route(route)
 
         if msg['header']['flags'] & netlink.NLM_F_ACK:
@@ -987,13 +1037,8 @@ class NLSocket(BaseSocket):
         msg = rtmsg_mctp(msg.data)
         msg.decode()
 
-        ifindex = msg.get_attr('RTA_OIF')
-        start_eid = msg.get_attr('RTA_DST')
-        extent_eid = msg['dst_len']
-        mtu = 0
+        route = self._parse_route(msg)
 
-        iface = self.system.find_interface_by_ifindex(ifindex)
-        route = System.Route(start_eid, extent_eid, iface = iface)
         try:
             await self.system.del_route(route)
         except NetlinkError as nle:
