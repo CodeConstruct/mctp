@@ -46,6 +46,7 @@ config_h = configure_file(
 util_sources = ['src/mctp-util.c']
 netlink_sources = ['src/mctp-netlink.c']
 ops_sources = ['src/mctp-ops.c']
+test_ops_sources = ['tests/mctp-ops-test.c']
 
 toml_dep = declare_dependency(
     sources: ['lib/tomlc99/toml.c'],
@@ -87,8 +88,7 @@ if libsystemd.found()
     mctpd_test = executable('test-mctpd',
         sources: [
             'src/mctpd.c',
-            'tests/mctp-ops-test.c',
-        ] + netlink_sources + util_sources,
+        ] + test_ops_sources + netlink_sources + util_sources,
         include_directories:  include_directories('src'),
         dependencies: [libsystemd, toml_dep],
     )
