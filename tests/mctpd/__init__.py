@@ -467,11 +467,18 @@ class BaseSocket:
 
     async def run(self):
         while True:
-            data = await self.sock.recv(1024)
+            try:
+                data = await self.sock.recv(1024)
+            except ConnectionResetError as ex:
+                break
+
             if len(data) == 0:
                 break
 
-            await self.recv_msg(data)
+            try:
+                await self.recv_msg(data)
+            except BrokenPipeError as ex:
+                break
 
     async def recv_msg(self, data):
         (typ,) = struct.unpack("@I", data[0:4])
