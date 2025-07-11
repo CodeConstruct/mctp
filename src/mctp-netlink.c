@@ -301,6 +301,16 @@ static void fill_link_changes(const struct linkmap_entry *old, size_t old_count,
 				ch->old_up = oe->up;
 				ch->link_userdata = oe->userdata;
 			}
+
+			if (strncmp(oe->ifname, ne->ifname,
+				    sizeof(oe->ifname))) {
+				ch = push_change(changes, &siz);
+				ch->op = MCTP_NL_CHANGE_NAME;
+				ch->ifindex = ne->ifindex;
+				memcpy(ch->old_name, ne->ifname,
+				       sizeof(ch->old_name));
+				ch->link_userdata = oe->userdata;
+			}
 			o++;
 			n++;
 		} else if (!oe || (ne && ne->ifindex < oe->ifindex)) {
@@ -343,9 +353,9 @@ void mctp_nl_changes_dump(mctp_nl *nl, mctp_nl_change *changes,
 		if (!ifname)
 			ifname = "deleted";
 		fprintf(stderr,
-			"%3zd %-12s ifindex %3d (%-20s) eid %3d old_net %4d old_up %d\n",
+			"%3zd %-12s ifindex %3d (%-20s) eid %3d old_net %4d old_up %d old name %s\n",
 			i, ops[ch->op], ch->ifindex, ifname, ch->eid,
-			ch->old_net, ch->old_up);
+			ch->old_net, ch->old_up, ch->old_name);
 	}
 }
 

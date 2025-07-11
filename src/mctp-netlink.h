@@ -17,6 +17,7 @@ struct mctp_nl_change {
 		MCTP_NL_DEL_LINK,
 		MCTP_NL_CHANGE_NET,
 		MCTP_NL_CHANGE_UP,
+		MCTP_NL_CHANGE_NAME,
 		MCTP_NL_ADD_EID,
 		MCTP_NL_DEL_EID,
 	} op;
@@ -32,8 +33,11 @@ struct mctp_nl_change {
 	// Filled for CHANGE_UP
 	bool old_up;
 
+	// Filled for CHANGE_NAME
+	char old_name[IFNAMSIZ + 1];
+
 	// If userdata is present on the link, it is passed here. Populated for
-	// link change events (DEL_LINK, CHANGE_NET, CHANGE_UP).
+	// link change events (DEL_LINK, CHANGE_NET, CHANGE_UP, CHANGE_NAME).
 	void *link_userdata;
 };
 typedef struct mctp_nl_change mctp_nl_change;
