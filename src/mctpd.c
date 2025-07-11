@@ -982,7 +982,8 @@ static int cb_listen_monitor(sd_event_source *s, int sd, uint32_t revents,
 		case MCTP_NL_ADD_LINK: {
 			rc = add_interface_local(ctx, c->ifindex);
 			any_error |= (rc < 0);
-		} break;
+			break;
+		}
 
 		case MCTP_NL_DEL_LINK: {
 			// Local addresses have already been deleted with DEL_EID
@@ -996,7 +997,8 @@ static int cb_listen_monitor(sd_event_source *s, int sd, uint32_t revents,
 					 c->ifindex);
 			}
 			any_error |= (rc < 0);
-		} break;
+			break;
+		}
 
 		case MCTP_NL_CHANGE_NET: {
 			// Local addresses have already been deleted with DEL_EID
@@ -1007,22 +1009,26 @@ static int cb_listen_monitor(sd_event_source *s, int sd, uint32_t revents,
 			rc = change_net_interface(ctx, c->ifindex, c->old_net);
 			any_error |= (rc < 0);
 
-		} break;
+			break;
+		}
 
 		case MCTP_NL_ADD_EID: {
 			uint32_t net = mctp_nl_net_byindex(ctx->nl, c->ifindex);
 			rc = add_local_eid(ctx, net, c->eid);
 			any_error |= (rc < 0);
-		} break;
+			break;
+		}
 
 		case MCTP_NL_DEL_EID: {
 			rc = del_local_eid(ctx, c->old_net, c->eid);
 			any_error |= (rc < 0);
-		} break;
+			break;
+		}
 
 		case MCTP_NL_CHANGE_UP: {
 			// 'up' state is currently unused
-		} break;
+			break;
+		}
 		}
 	}
 
