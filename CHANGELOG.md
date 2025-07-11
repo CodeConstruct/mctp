@@ -44,6 +44,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 9. In-tree tests now include coverage for the `mctp` utility
 
+10. `mctpd` now handles interface name changes, updating dbus objects to
+    reflect new interface names.
+
 ### Changed
 
 1. tests are now run with address sanitizer enabled (-fsanitize=address)

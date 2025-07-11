@@ -238,6 +238,7 @@ static int peer_neigh_update(struct peer *peer, uint16_t type);
 
 static int add_interface_local(struct ctx *ctx, int ifindex);
 static int del_interface(struct link *link);
+static int rename_interface(struct ctx *ctx, struct link *link, int ifindex);
 static int change_net_interface(struct ctx *ctx, int ifindex, uint32_t old_net);
 static int add_local_eid(struct ctx *ctx, uint32_t net, int eid);
 static int del_local_eid(struct ctx *ctx, uint32_t net, int eid);
@@ -1009,6 +1010,21 @@ static int cb_listen_monitor(sd_event_source *s, int sd, uint32_t revents,
 			rc = change_net_interface(ctx, c->ifindex, c->old_net);
 			any_error |= (rc < 0);
 
+			break;
+		}
+
+		case MCTP_NL_CHANGE_NAME: {
+			if (c->link_userdata) {
+				rc = rename_interface(ctx, c->link_userdata,
+						      c->ifindex);
+			} else {
+				rc = -ENOENT;
+				bug_warn(
+					"name change for unconfigured interface %d",
+					c->ifindex);
+			}
+
+			any_error |= (rc < 0);
 			break;
 		}
 
@@ -3388,6 +3404,48 @@ static int del_interface(struct link *link)
 		      link->ifindex);
 	prune_old_nets(ctx);
 	free_link(link);
+
+	return 0;
+}
+
+static int rename_interface(struct ctx *ctx, struct link *link, int ifindex)
+{
+	const char *ifname;
+	char *path;
+	int rc;
+
+	ifname = mctp_nl_if_byindex(ctx->nl, ifindex);
+	if (!ifname) {
+		warnx("no name for interface %d during rename?", ifindex);
+		return -ENODEV;
+	}
+
+	rc = asprintf(&path, "%s/%s", MCTP_DBUS_PATH_LINKS, ifname);
+	if (rc < 0)
+		return -ENOMEM;
+
+	/* remove existing dbus object */
+	emit_interface_removed(link);
+	sd_bus_slot_unref(link->slot_iface);
+	link->slot_iface = NULL;
+	sd_bus_slot_unref(link->slot_busowner);
+	link->slot_busowner = NULL;
+	free(link->path);
+
+	/* set new path and re-add */
+	link->path = path;
+	sd_bus_add_object_vtable(link->ctx->bus, &link->slot_iface, link->path,
+				 CC_MCTP_DBUS_IFACE_INTERFACE, bus_link_vtable,
+				 link);
+
+	if (link->role == ENDPOINT_ROLE_BUS_OWNER) {
+		sd_bus_add_object_vtable(link->ctx->bus, &link->slot_busowner,
+					 link->path,
+					 CC_MCTP_DBUS_IFACE_BUSOWNER,
+					 bus_link_owner_vtable, link);
+	}
+
+	emit_interface_added(link);
 
 	return 0;
 }

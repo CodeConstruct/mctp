@@ -787,3 +787,37 @@ async def test_add_interface(dbus, mctpd):
     assert eid == static_eid
     assert new
     assert mctpd.system.lookup_route(net, static_eid).iface == iface
+
+async def test_interface_rename(dbus, mctpd):
+    iface = mctpd.system.interfaces[0]
+    iface_obj = await mctpd_mctp_iface_obj(dbus, iface)
+    assert iface_obj.path.endswith(iface.name)
+
+    new_name = "newmctp0"
+    iface.name = new_name
+    await mctpd.system.notify_interface(iface)
+
+    iface_obj = await mctpd_mctp_iface_obj(dbus, iface)
+    assert iface_obj.path.endswith(new_name)
+
+async def test_interface_rename_with_peers(dbus, mctpd):
+    iface = mctpd.system.interfaces[0]
+    ep = mctpd.network.endpoints[0]
+
+    iface_obj = await mctpd_mctp_iface_obj(dbus, iface)
+    assert iface_obj.path.endswith(iface.name)
+
+    # access the endpoint object before rename
+    (_, _, ep_path, _) = await iface_obj.call_setup_endpoint(ep.lladdr)
+    ep_obj = await dbus.get_proxy_object(MCTPD_C, ep_path)
+
+    new_name = "newmctp0"
+    iface.name = new_name
+    await mctpd.system.notify_interface(iface)
+
+    iface_obj = await mctpd_mctp_iface_obj(dbus, iface)
+    assert iface_obj.path.endswith(new_name)
+
+    # ensure the endpoint persists after rename
+    ep_obj = await dbus.get_proxy_object(MCTPD_C, ep_path)
+    assert ep_obj is not None
