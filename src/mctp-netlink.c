@@ -202,11 +202,16 @@ err:
 
 mctp_nl_change *push_change(mctp_nl_change **changes, size_t *psize)
 {
+	struct mctp_nl_change *ch;
 	size_t siz = *psize;
+
 	siz++;
 	*changes = realloc(*changes, siz * sizeof(**changes));
 	*psize = siz;
-	return &(*changes)[siz - 1];
+	ch = &(*changes)[siz - 1];
+	memset(ch, 0, sizeof(*ch));
+
+	return ch;
 }
 
 static void fill_eid_changes(const struct linkmap_entry *oe,
