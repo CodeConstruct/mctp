@@ -65,6 +65,7 @@ static size_t MAX_PEER_SIZE = 1000000;
 
 static const uint8_t RQDI_REQ = 1 << 7;
 static const uint8_t RQDI_RESP = 0x0;
+static const uint8_t IID_MASK = 0x1f;
 static const uint8_t RQDI_IID_MASK = 0x1f;
 
 struct dest_phys {
@@ -645,7 +646,8 @@ static int handle_control_set_endpoint_id(struct ctx *ctx, int sd,
 	req = (void *)buf;
 
 	resp->ctrl_hdr.command_code = req->ctrl_hdr.command_code;
-	resp->ctrl_hdr.rq_dgram_inst = RQDI_RESP;
+	resp->ctrl_hdr.rq_dgram_inst =
+		(req->ctrl_hdr.rq_dgram_inst & IID_MASK) | RQDI_RESP;
 	resp->completion_code = 0;
 	resp->status = 0x01 << 4; // Already assigned, TODO
 	resp->eid_set = local_addr(ctx, addr->smctp_ifindex);
@@ -696,7 +698,8 @@ handle_control_get_version_support(struct ctx *ctx, int sd,
 	}
 
 	resp->ctrl_hdr.command_code = req->ctrl_hdr.command_code;
-	resp->ctrl_hdr.rq_dgram_inst = RQDI_RESP;
+	resp->ctrl_hdr.rq_dgram_inst =
+		(req->ctrl_hdr.rq_dgram_inst & IID_MASK) | RQDI_RESP;
 	return reply_message(ctx, sd, resp, resp_len, addr);
 }
 
@@ -715,7 +718,8 @@ static int handle_control_get_endpoint_id(struct ctx *ctx, int sd,
 
 	req = (void *)buf;
 	resp->ctrl_hdr.command_code = req->ctrl_hdr.command_code;
-	resp->ctrl_hdr.rq_dgram_inst = RQDI_RESP;
+	resp->ctrl_hdr.rq_dgram_inst =
+		(req->ctrl_hdr.rq_dgram_inst & IID_MASK) | RQDI_RESP;
 
 	resp->eid = local_addr(ctx, addr->smctp_ifindex);
 	if (ctx->default_role == ENDPOINT_ROLE_BUS_OWNER)
@@ -744,7 +748,8 @@ handle_control_get_endpoint_uuid(struct ctx *ctx, int sd,
 
 	req = (void *)buf;
 	resp->ctrl_hdr.command_code = req->ctrl_hdr.command_code;
-	resp->ctrl_hdr.rq_dgram_inst = RQDI_RESP;
+	resp->ctrl_hdr.rq_dgram_inst =
+		(req->ctrl_hdr.rq_dgram_inst & IID_MASK) | RQDI_RESP;
 	memcpy(resp->uuid, ctx->uuid, sizeof(resp->uuid));
 	return reply_message(ctx, sd, resp, sizeof(*resp), addr);
 }
@@ -767,7 +772,8 @@ static int handle_control_get_message_type_support(
 	req = (void *)buf;
 	resp = (void *)resp_buf;
 	resp->ctrl_hdr.command_code = req->ctrl_hdr.command_code;
-	resp->ctrl_hdr.rq_dgram_inst = RQDI_RESP;
+	resp->ctrl_hdr.rq_dgram_inst =
+		(req->ctrl_hdr.rq_dgram_inst & IID_MASK) | RQDI_RESP;
 
 	// Only control messages supported
 	resp->msg_type_count = 1;
@@ -797,7 +803,8 @@ handle_control_resolve_endpoint_id(struct ctx *ctx, int sd,
 	resp = (void *)resp_buf;
 	memset(resp, 0x0, sizeof(*resp));
 	resp->ctrl_hdr.command_code = req->ctrl_hdr.command_code;
-	resp->ctrl_hdr.rq_dgram_inst = RQDI_RESP;
+	resp->ctrl_hdr.rq_dgram_inst =
+		(req->ctrl_hdr.rq_dgram_inst & IID_MASK) | RQDI_RESP;
 
 	peer = find_peer_by_addr(ctx, req->eid, addr->smctp_base.smctp_network);
 	if (!peer) {
@@ -832,7 +839,8 @@ static int handle_control_unsupported(struct ctx *ctx, int sd,
 
 	req = (void *)buf;
 	resp->ctrl_hdr.command_code = req->command_code;
-	resp->ctrl_hdr.rq_dgram_inst = RQDI_RESP;
+	resp->ctrl_hdr.rq_dgram_inst = (req->rq_dgram_inst & IID_MASK) |
+				       RQDI_RESP;
 	resp->completion_code = MCTP_CTRL_CC_ERROR_UNSUPPORTED_CMD;
 	return reply_message(ctx, sd, resp, sizeof(*resp), addr);
 }
