@@ -676,6 +676,7 @@ handle_control_get_version_support(struct ctx *ctx, int sd,
 
 	req = (void *)buf;
 	resp = (void *)respbuf;
+	memset(resp, 0x0, sizeof(*resp));
 	versions = (void *)(resp + 1);
 	switch (req->msg_type_number) {
 	case 0xff: // Base Protocol
