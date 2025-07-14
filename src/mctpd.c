@@ -646,7 +646,7 @@ static int handle_control_set_endpoint_id(struct ctx *ctx, int sd,
 
 	resp->ctrl_hdr.command_code = req->ctrl_hdr.command_code;
 	resp->ctrl_hdr.rq_dgram_inst = RQDI_RESP;
-	resp->completion_code = 0;
+	resp->completion_code = MCTP_CTRL_CC_SUCCESS;
 	resp->status = 0x01 << 4; // Already assigned, TODO
 	resp->eid_set = local_addr(ctx, addr->smctp_ifindex);
 	resp->eid_pool_size = 0;
@@ -687,12 +687,13 @@ handle_control_get_version_support(struct ctx *ctx, int sd,
 		versions[2] = htonl(0xF1F2FF00);
 		versions[3] = htonl(0xF1F3F100);
 		resp->number_of_entries = 4;
-		resp->completion_code = 0x00;
+		resp->completion_code = MCTP_CTRL_CC_SUCCESS;
 		resp_len = sizeof(*resp) + 4 * sizeof(*versions);
 		break;
 	default:
 		// Unsupported message type
-		resp->completion_code = 0x80;
+		resp->completion_code =
+			MCTP_CTRL_CC_GET_MCTP_VER_SUPPORT_UNSUPPORTED_TYPE;
 		resp_len = sizeof(*resp);
 	}
 
@@ -802,7 +803,7 @@ handle_control_resolve_endpoint_id(struct ctx *ctx, int sd,
 
 	peer = find_peer_by_addr(ctx, req->eid, addr->smctp_base.smctp_network);
 	if (!peer) {
-		resp->completion_code = 1;
+		resp->completion_code = MCTP_CTRL_CC_ERROR;
 		resp_len = sizeof(*resp);
 	} else {
 		// TODO: bridging
