@@ -51,7 +51,7 @@ static const size_t MAX_LEN = 64 * 1024 - 1;
 static const uint32_t SEQ_START = UINT32_MAX - 5;
 static const uint16_t MAGIC_VAL = 0xbeca;
 static const int DEFAULT_NET = MCTP_NET_ANY;
-static const int DEFAULT_SECONDS_INTERVAL = 10;
+static const int DEFAULT_SECONDS_INTERVAL = 2;
 
 static float get_throughput(float total_len, float elapsed_time)
 {
