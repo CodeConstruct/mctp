@@ -62,7 +62,7 @@ static void print_stats(struct recv_ctx *recv_ctx)
 {
 	float throughput = get_throughput(recv_ctx->stats.total_received_len,
 					  recv_ctx->stats.elapsed_time);
-	printf("Throughput: %.2f kB/s | Recevied: %lu msgs | "
+	printf("Throughput: %.2f kB/s | Received: %lu msgs | "
 	       "Dropped: %lu msgs | "
 	       "Invalid: %lu msgs\n",
 	       throughput, recv_ctx->stats.msg_count,
