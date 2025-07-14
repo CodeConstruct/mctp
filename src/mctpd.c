@@ -1157,7 +1157,8 @@ static int mctp_ctrl_validate_response(uint8_t *buf, size_t rsp_size,
 		return -EINVAL;
 	}
 
-	if (rsp_size < exp_size) {
+	/* Error responses only need to include the completion code */
+	if (rsp_size < MCTP_CTRL_ERROR_RESP_LEN) {
 		warnx("%s: Wrong reply length (%zu bytes)",
 		      peer_cmd_prefix(peer, cmd), rsp_size);
 		return -ENOMSG;
@@ -1183,6 +1184,13 @@ static int mctp_ctrl_validate_response(uint8_t *buf, size_t rsp_size,
 		warnx("%s: Command failed, completion code 0x%02x",
 		      peer_cmd_prefix(peer, cmd), rsp->completion_code);
 		return -ECONNREFUSED;
+	}
+
+	/* Non-error responses must be full sized */
+	if (rsp_size < exp_size) {
+		warnx("%s: Wrong reply length (%zu bytes)",
+		      peer_cmd_prefix(peer, cmd), rsp_size);
+		return -ENOMSG;
 	}
 
 	return 0;
