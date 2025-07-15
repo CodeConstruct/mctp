@@ -424,6 +424,15 @@ async def test_get_endpoint_id(dbus, mctpd):
     # EID matches the system
     assert rsp[3] == mctpd.system.addresses[0].eid
 
+""" Test that instance ID is populated correctly on control protocol responses
+"""
+async def test_response_iid(mctpd):
+    peer = mctpd.network.endpoints[0]
+    for iid in [0, 1, 30, 31]:
+        cmd = MCTPControlCommand(True, iid, 0x02)
+        rsp = await peer.send_control(mctpd.network.mctp_socket, cmd)
+        assert rsp[0] == iid
+
 """ During a LearnEndpoint's Get Endpoint ID exchange, return a response
 from a different command; in this case Get Message Type Support, which happens
 to be the same length as a the expected Get Endpoint ID response."""
