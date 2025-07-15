@@ -13,6 +13,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 2. Netlink handling now handles interface deletion correctly; we no longer
    lose sync with the internal linkmap
 
+3. When operating as a responder, mctpd now uses the correct instance id (IID)
+   in the control protocol header
+
 ### Added
 
 1. New debug tool, `mctp-bench`, for sending and receiving a stream of MCTP
