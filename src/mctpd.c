@@ -648,7 +648,7 @@ static int handle_control_set_endpoint_id(struct ctx *ctx, int sd,
 	resp->ctrl_hdr.command_code = req->ctrl_hdr.command_code;
 	resp->ctrl_hdr.rq_dgram_inst =
 		(req->ctrl_hdr.rq_dgram_inst & IID_MASK) | RQDI_RESP;
-	resp->completion_code = 0;
+	resp->completion_code = MCTP_CTRL_CC_SUCCESS;
 	resp->status = 0x01 << 4; // Already assigned, TODO
 	resp->eid_set = local_addr(ctx, addr->smctp_ifindex);
 	resp->eid_pool_size = 0;
@@ -678,6 +678,7 @@ handle_control_get_version_support(struct ctx *ctx, int sd,
 
 	req = (void *)buf;
 	resp = (void *)respbuf;
+	memset(resp, 0x0, sizeof(*resp));
 	versions = (void *)(resp + 1);
 	switch (req->msg_type_number) {
 	case 0xff: // Base Protocol
@@ -688,12 +689,13 @@ handle_control_get_version_support(struct ctx *ctx, int sd,
 		versions[2] = htonl(0xF1F2FF00);
 		versions[3] = htonl(0xF1F3F100);
 		resp->number_of_entries = 4;
-		resp->completion_code = 0x00;
+		resp->completion_code = MCTP_CTRL_CC_SUCCESS;
 		resp_len = sizeof(*resp) + 4 * sizeof(*versions);
 		break;
 	default:
 		// Unsupported message type
-		resp->completion_code = 0x80;
+		resp->completion_code =
+			MCTP_CTRL_CC_GET_MCTP_VER_SUPPORT_UNSUPPORTED_TYPE;
 		resp_len = sizeof(*resp);
 	}
 
@@ -808,7 +810,7 @@ handle_control_resolve_endpoint_id(struct ctx *ctx, int sd,
 
 	peer = find_peer_by_addr(ctx, req->eid, addr->smctp_base.smctp_network);
 	if (!peer) {
-		resp->completion_code = 1;
+		resp->completion_code = MCTP_CTRL_CC_ERROR;
 		resp_len = sizeof(*resp);
 	} else {
 		// TODO: bridging
@@ -1164,7 +1166,8 @@ static int mctp_ctrl_validate_response(uint8_t *buf, size_t rsp_size,
 		return -EINVAL;
 	}
 
-	if (rsp_size < exp_size) {
+	/* Error responses only need to include the completion code */
+	if (rsp_size < MCTP_CTRL_ERROR_RESP_LEN) {
 		warnx("%s: Wrong reply length (%zu bytes)",
 		      peer_cmd_prefix(peer, cmd), rsp_size);
 		return -ENOMSG;
@@ -1190,6 +1193,13 @@ static int mctp_ctrl_validate_response(uint8_t *buf, size_t rsp_size,
 		warnx("%s: Command failed, completion code 0x%02x",
 		      peer_cmd_prefix(peer, cmd), rsp->completion_code);
 		return -ECONNREFUSED;
+	}
+
+	/* Non-error responses must be full sized */
+	if (rsp_size < exp_size) {
+		warnx("%s: Wrong reply length (%zu bytes)",
+		      peer_cmd_prefix(peer, cmd), rsp_size);
+		return -ENOMSG;
 	}
 
 	return 0;

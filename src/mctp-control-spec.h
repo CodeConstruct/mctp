@@ -21,6 +21,10 @@ struct mctp_ctrl_resp {
 	uint8_t completion_code;
 } __attribute__((packed));
 
+/* Error responses should generally only be interpreted up to
+ * the completion code. */
+static const size_t MCTP_CTRL_ERROR_RESP_LEN = sizeof(struct mctp_ctrl_resp);
+
 typedef enum {
 	mctp_ctrl_cmd_set_eid_set_eid = 0,
 	mctp_ctrl_cmd_set_eid_force_eid = 1,
