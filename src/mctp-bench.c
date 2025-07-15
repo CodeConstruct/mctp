@@ -51,7 +51,7 @@ static const size_t MAX_LEN = 64 * 1024 - 1;
 static const uint32_t SEQ_START = UINT32_MAX - 5;
 static const uint16_t MAGIC_VAL = 0xbeca;
 static const int DEFAULT_NET = MCTP_NET_ANY;
-static const int DEFAULT_SECONDS_INTERVAL = 10;
+static const int DEFAULT_SECONDS_INTERVAL = 2;
 
 static float get_throughput(float total_len, float elapsed_time)
 {
@@ -62,7 +62,7 @@ static void print_stats(struct recv_ctx *recv_ctx)
 {
 	float throughput = get_throughput(recv_ctx->stats.total_received_len,
 					  recv_ctx->stats.elapsed_time);
-	printf("Throughput: %.2f kB/s | Recevied: %lu msgs | "
+	printf("Throughput: %.2f kB/s | Received: %lu msgs | "
 	       "Dropped: %lu msgs | "
 	       "Invalid: %lu msgs\n",
 	       throughput, recv_ctx->stats.msg_count,
