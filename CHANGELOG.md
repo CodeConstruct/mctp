@@ -16,6 +16,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 3. When operating as a responder, mctpd now uses the correct instance id (IID)
    in the control protocol header
 
+4. `mctpd` now correctly handles error responses that contain only the CC,
+   as permitted by the spec
+
+5. Ensure that `mctpd` error response data is initialised
+
 ### Added
 
 1. New debug tool, `mctp-bench`, for sending and receiving a stream of MCTP
