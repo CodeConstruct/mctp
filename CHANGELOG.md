@@ -61,6 +61,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 2. `mctp neigh` hardware address formatting is improved.
 
+3. `mctp-bench` now reports at 2-second intervals rather than 10.
+
 ### Removed
 
 1. mctpd: Test mode (`-N`) has been removed, as we have a more comprehensive
