@@ -32,5 +32,6 @@ async def test_respond_get_eid_with_no_eid(dbus, mctpd):
     assert len(mctpd.system.addresses) == 0
 
     # no EID yet
-    rsp = await bo.send_control(mctpd.network.mctp_socket, 0x02)
+    cmd = MCTPControlCommand(True, 0, 0x02)
+    rsp = await bo.send_control(mctpd.network.mctp_socket, cmd)
     assert rsp.hex(' ') == '00 02 00 00 02 00'

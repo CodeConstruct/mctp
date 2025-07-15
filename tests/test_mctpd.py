@@ -9,7 +9,7 @@ from mctp_test_utils import (
     mctpd_mctp_endpoint_common_obj,
     mctpd_mctp_endpoint_control_obj
 )
-from mctpenv import Endpoint, MCTPSockAddr
+from mctpenv import Endpoint, MCTPSockAddr, MCTPControlCommand
 
 # DBus constant symbol suffixes:
 #
@@ -414,7 +414,8 @@ async def test_get_endpoint_id(dbus, mctpd):
         mctpd.system.Neighbour(iface, dev.lladdr, dev.eid)
     )
 
-    rsp = await dev.send_control(mctpd.network.mctp_socket, 0x02)
+    cmd = MCTPControlCommand(True, 0, 0x02)
+    rsp = await dev.send_control(mctpd.network.mctp_socket, cmd)
 
     # command code
     assert rsp[1] == 0x02

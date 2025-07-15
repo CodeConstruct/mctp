@@ -370,17 +370,13 @@ class Endpoint:
             else:
                 await sock.send(raddr, bytes(hdr + [0x05])) # unsupported command
 
-    async def send_control(self, sock, cmd_code, data = bytes()):
+    async def send_control(self, sock, cmd):
 
-        typ = MCTPControlCommand.MSGTYPE
+        typ = cmd.MSGTYPE
         # todo: tag 0 implied
         addr = MCTPSockAddr(self.iface.net, self.eid, typ, 0x80)
         if sock.addr_ext:
             addr.set_ext(self.iface.ifindex, self.lladdr)
-
-        # todo: multiple commands; iid 0 implied
-        iid = 0
-        cmd = MCTPControlCommand(True, iid, cmd_code, data)
 
         key = (typ, cmd.iid)
         assert not key in self.commands
@@ -390,8 +386,6 @@ class Endpoint:
         await sock.send(addr, cmd.to_buf())
 
         return await cmd.wait()
-
-
 
 class Network:
     def __init__(self):
