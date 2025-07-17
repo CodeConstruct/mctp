@@ -216,6 +216,9 @@ struct ctx {
 
 	// Verbose logging
 	bool verbose;
+
+	//  maximum pool size for assumed MCTP Bridge
+	uint8_t max_pool_size;
 };
 
 static int emit_endpoint_added(const struct peer *peer);
@@ -3932,9 +3935,27 @@ static int parse_config_mctp(struct ctx *ctx, toml_table_t *mctp_tab)
 	return 0;
 }
 
+static int parse_config_bus_owner(struct ctx *ctx, toml_table_t *bus_owner)
+{
+	toml_datum_t val;
+
+	val = toml_int_in(bus_owner, "max_pool_size");
+	if (val.ok) {
+		int64_t i = val.u.i;
+		if (i <= 0 || i > (eid_alloc_max - eid_alloc_min)) {
+			warnx("invalid max_pool_size value (must be 1-%d)",
+			      eid_alloc_max - eid_alloc_min);
+			return -1;
+		}
+		ctx->max_pool_size = i;
+	}
+
+	return 0;
+}
+
 static int parse_config(struct ctx *ctx)
 {
-	toml_table_t *conf_root, *mctp_tab;
+	toml_table_t *conf_root, *mctp_tab, *bus_owner;
 	bool conf_file_specified;
 	char errbuf[256] = { 0 };
 	const char *filename;
@@ -3979,6 +4000,13 @@ static int parse_config(struct ctx *ctx)
 			goto out_free;
 	}
 
+	bus_owner = toml_table_in(conf_root, "bus-owner");
+	if (bus_owner) {
+		rc = parse_config_bus_owner(ctx, bus_owner);
+		if (rc)
+			goto out_free;
+	}
+
 	rc = 0;
 
 out_free:
@@ -3992,6 +4020,7 @@ static void setup_config_defaults(struct ctx *ctx)
 {
 	ctx->mctp_timeout = 250000; // 250ms
 	ctx->default_role = ENDPOINT_ROLE_BUS_OWNER;
+	ctx->max_pool_size = 15;
 }
 
 static void free_config(struct ctx *ctx)
