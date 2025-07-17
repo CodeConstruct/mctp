@@ -219,6 +219,22 @@ busctl call au.com.codeconstruct.MCTP1 \
 
 Removes the MCTP endpoint from `mctpd`, and deletes routes and neighbour entries.
 
+### MCTP bridge interface: `au.com.codeconstruct.MCTP.Bridge1` interface
+For any endpoint which also happens to be an MCTP Bridge, if dynamic eid is
+assgined to it via d-bus method `.AssignEndpoint`, such endpoint's pool
+allocation details would be reflected into `au.com.codeconstruct.MCTP.Bridge1`
+interface of bridge's endpoint object.
+
+### `.PoolEnd`: `y`
+
+A constant property representing last EID in the contiguous range allocated
+for downstream endpoints.
+
+### `.PoolStart`: `y`
+
+A constant property representing first EID in the contiguous range allocated
+for downstream endpoints.
+
 ## Configuration
 
 `mctpd` reads configuration data from a TOML file, typically `/etc/mctpd.conf`.
