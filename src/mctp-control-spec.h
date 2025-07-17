@@ -3,6 +3,7 @@
 /* Derived from libmctp's libmctp-cmds.h */
 #pragma once
 
+#include <assert.h>
 #include <stdint.h>
 #include <linux/mctp.h>
 
@@ -308,3 +309,32 @@ struct mctp_ctrl_resp_resolve_endpoint_id {
 #define GET_ROUTING_ENTRY_TYPE(field)                 \
 	(((field) >> MCTP_ROUTING_ENTRY_TYPE_SHIFT) & \
 	 MCTP_ROUTING_ENTRY_TYPE_MASK)
+
+#define RQDI_REQ (1 << 7)
+#define RQDI_RESP 0x0
+#define RQDI_IID_MASK 0x1f
+#define GET_IID(msg)                                                  \
+	(((struct mctp_ctrl_msg_hdr *)(void *)(msg))->rq_dgram_inst & \
+	 RQDI_IID_MASK)
+#define NEXT_IID(iid) ((iid) + 1) & RQDI_IID_MASK
+
+static inline void *mctp_ctrl_hdr_init_req(void *buf, size_t buf_len,
+					   uint8_t iid, uint8_t command_code)
+{
+	struct mctp_ctrl_msg_hdr *req = buf;
+	assert(buf_len >= sizeof(*req));
+	assert(iid <= RQDI_IID_MASK);
+	req->command_code = command_code;
+	req->rq_dgram_inst = iid | RQDI_REQ;
+	return buf;
+}
+
+static inline void *mctp_ctrl_hdr_init_resp(void *buf, size_t buf_len,
+					    struct mctp_ctrl_msg_hdr req)
+{
+	struct mctp_ctrl_msg_hdr *resp = buf;
+	assert(buf_len >= sizeof(*resp));
+	resp->command_code = req.command_code;
+	resp->rq_dgram_inst = (req.rq_dgram_inst & RQDI_IID_MASK) | RQDI_RESP;
+	return buf;
+}
