@@ -221,6 +221,9 @@ struct ctx {
 
 	// Verbose logging
 	bool verbose;
+
+	//  MAX_POOL_SIZE for assumed MCTP Bridge
+	uint8_t max_pool_size;
 };
 
 static int emit_endpoint_added(const struct peer *peer);
@@ -3919,6 +3922,16 @@ static int parse_config_mctp(struct ctx *ctx, toml_table_t *mctp_tab)
 			return -1;
 		}
 		ctx->mctp_timeout = i * 1000;
+	}
+
+	val = toml_int_in(mctp_tab, "MAX_POOL_SIZE");
+	if (val.ok) {
+		int64_t i = val.u.i;
+		if (i <= 0) {
+			warnx("invalid MAX_POOL_SIZE value");
+			return -1;
+		}
+		ctx->max_pool_size = i;
 	}
 
 	val = toml_string_in(mctp_tab, "uuid");
