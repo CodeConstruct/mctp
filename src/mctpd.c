@@ -45,6 +45,8 @@
 #define MCTP_DBUS_PATH_LINKS "/au/com/codeconstruct/mctp1/interfaces"
 #define CC_MCTP_DBUS_IFACE_BUSOWNER "au.com.codeconstruct.MCTP.BusOwner1"
 #define CC_MCTP_DBUS_IFACE_ENDPOINT "au.com.codeconstruct.MCTP.Endpoint1"
+#define CC_MCTP_DBUS_IFACE_ENDPOINT_TYPE \
+	"au.com.codeconstruct.MCTP.EndpointType1"
 #define CC_MCTP_DBUS_IFACE_TESTING "au.com.codeconstruct.MCTPTesting"
 #define MCTP_DBUS_NAME "au.com.codeconstruct.MCTP1"
 #define MCTP_DBUS_IFACE_ENDPOINT "xyz.openbmc_project.MCTP.Endpoint"
@@ -164,6 +166,7 @@ struct peer {
 	bool published;
 	sd_bus_slot *slot_obmc_endpoint;
 	sd_bus_slot *slot_cc_endpoint;
+	sd_bus_slot *slot_type_endpoint;
 	sd_bus_slot *slot_uuid;
 	char *path;
 
@@ -265,6 +268,7 @@ static int endpoint_allocate_eid(struct peer *peer);
 
 static const sd_bus_vtable bus_endpoint_obmc_vtable[];
 static const sd_bus_vtable bus_endpoint_cc_vtable[];
+static const sd_bus_vtable bus_endpoint_type_vtable[];
 static const sd_bus_vtable bus_endpoint_uuid_vtable[];
 
 __attribute__((format(printf, 1, 2))) static void bug_warn(const char *fmt, ...)
@@ -1696,6 +1700,7 @@ static void free_peers(struct ctx *ctx)
 		free(peer->path);
 		sd_bus_slot_unref(peer->slot_obmc_endpoint);
 		sd_bus_slot_unref(peer->slot_cc_endpoint);
+		sd_bus_slot_unref(peer->slot_type_endpoint);
 		sd_bus_slot_unref(peer->slot_uuid);
 		free(peer);
 	}
@@ -2704,6 +2709,10 @@ static int publish_peer(struct peer *peer, bool add_route)
 				 peer->path, CC_MCTP_DBUS_IFACE_ENDPOINT,
 				 bus_endpoint_cc_vtable, peer);
 
+	sd_bus_add_object_vtable(peer->ctx->bus, &peer->slot_type_endpoint,
+				 peer->path, CC_MCTP_DBUS_IFACE_ENDPOINT_TYPE,
+				 bus_endpoint_type_vtable, peer);
+
 	if (peer->uuid) {
 		sd_bus_add_object_vtable(peer->ctx->bus, &peer->slot_uuid,
 					 peer->path, OPENBMC_IFACE_COMMON_UUID,
@@ -2754,6 +2763,8 @@ static int unpublish_peer(struct peer *peer)
 		peer->slot_obmc_endpoint = NULL;
 		sd_bus_slot_unref(peer->slot_cc_endpoint);
 		peer->slot_cc_endpoint = NULL;
+		sd_bus_slot_unref(peer->slot_type_endpoint);
+		peer->slot_type_endpoint = NULL;
 		sd_bus_slot_unref(peer->slot_uuid);
 		peer->slot_uuid = NULL;
 		peer->published = false;
@@ -3138,6 +3149,41 @@ static int bus_endpoint_get_prop(sd_bus *bus, const char *path,
 	return rc;
 }
 
+static int bus_endpoint_type_get_prop(sd_bus *bus, const char *path,
+				      const char *interface,
+				      const char *property,
+				      sd_bus_message *reply, void *userdata,
+				      sd_bus_error *berr)
+{
+	struct peer *peer = userdata;
+	int rc;
+
+	if (strcmp(property, "PoolStart") == 0) {
+		rc = sd_bus_message_append(reply, "y", peer->pool_start);
+	} else if (strcmp(property, "PoolSize") == 0) {
+		rc = sd_bus_message_append(reply, "y", peer->pool_size);
+	} else if (strcmp(property, "PoolEnd") == 0) {
+		uint8_t pool_end =
+			peer->pool_size ?
+				peer->pool_start + peer->pool_size - 1 :
+				0;
+		rc = sd_bus_message_append(reply, "y", pool_end);
+	} else if (strcmp(property, "Type") == 0) {
+		rc = sd_bus_message_append(reply, "s",
+					   peer->state == LOCAL ?
+						   "LOCAL" :
+						   (peer->pool_size > 0 ?
+							    "MCTP Bridge" :
+							    "MCTP Device"));
+	} else {
+		warnx("Unknown bridge property '%s' for %s iface %s", property,
+		      path, interface);
+		rc = -ENOENT;
+	}
+
+	return rc;
+}
+
 static int bus_network_get_prop(sd_bus *bus, const char *path,
 				const char *interface, const char *property,
 				sd_bus_message *reply, void *userdata,
@@ -3334,6 +3380,31 @@ static const sd_bus_vtable bus_endpoint_cc_vtable[] = {
 		0,
 		SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
 #endif
+	SD_BUS_VTABLE_END
+};
+
+static const sd_bus_vtable bus_endpoint_type_vtable[] = {
+	SD_BUS_VTABLE_START(0),
+	SD_BUS_PROPERTY("Type",
+			"s",
+			bus_endpoint_type_get_prop,
+			0,
+			SD_BUS_VTABLE_PROPERTY_CONST),
+	SD_BUS_PROPERTY("PoolStart",
+			"y",
+			bus_endpoint_type_get_prop,
+			0,
+			SD_BUS_VTABLE_PROPERTY_CONST),
+	SD_BUS_PROPERTY("PoolSize",
+			"y",
+			bus_endpoint_type_get_prop,
+			0,
+			SD_BUS_VTABLE_PROPERTY_CONST),
+	SD_BUS_PROPERTY("PoolEnd",
+			"y",
+			bus_endpoint_type_get_prop,
+			0,
+			SD_BUS_VTABLE_PROPERTY_CONST),
 	SD_BUS_VTABLE_END
 };
 
