@@ -3,6 +3,7 @@
 /* Derived from libmctp's libmctp-cmds.h */
 #pragma once
 
+#include <assert.h>
 #include <stdint.h>
 #include <linux/mctp.h>
 
@@ -308,3 +309,22 @@ struct mctp_ctrl_resp_resolve_endpoint_id {
 #define GET_ROUTING_ENTRY_TYPE(field)                 \
 	(((field) >> MCTP_ROUTING_ENTRY_TYPE_SHIFT) & \
 	 MCTP_ROUTING_ENTRY_TYPE_MASK)
+
+#define RQDI_REQ (1 << 7)
+#define RQDI_RESP 0x0
+#define RQDI_IID_MASK 0x1f
+
+static inline void mctp_ctrl_msg_hdr_init_req(struct mctp_ctrl_msg_hdr *req,
+					      uint8_t iid, uint8_t command_code)
+{
+	assert(iid <= RQDI_IID_MASK);
+	req->command_code = command_code;
+	req->rq_dgram_inst = iid | RQDI_REQ;
+}
+
+static inline void mctp_ctrl_msg_hdr_init_resp(struct mctp_ctrl_msg_hdr *resp,
+					       struct mctp_ctrl_msg_hdr req)
+{
+	resp->command_code = req.command_code;
+	resp->rq_dgram_inst = (req.rq_dgram_inst & RQDI_IID_MASK) | RQDI_RESP;
+}
