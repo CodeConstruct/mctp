@@ -12,6 +12,10 @@
 #include <sys/socket.h>
 #include <time.h>
 #include <unistd.h>
+#include <linux/prctl.h>
+#include <sys/prctl.h>
+#include <assert.h>
+#include <sys/random.h>
 
 #include "mctp.h"
 
@@ -25,10 +29,33 @@ struct mctp_bench_send_args {
 	int net;
 };
 
+struct mctp_bench_recv_args {
+	mctp_eid_t eid;
+	int net;
+
+	unsigned int payload_size;
+	uint64_t message_count;
+};
+
+// Packet fields are little endian.
+
 struct msg_header {
 	uint8_t vendor_prefix[sizeof(VENDOR_TYPE_BENCH)];
 	uint16_t magic;
 	uint32_t seq_no;
+} __attribute__((packed));
+
+struct command_msg {
+	uint8_t vendor_prefix[sizeof(VENDOR_TYPE_BENCH)];
+	uint16_t magic;
+	// Initial portion the same structure as msg_header,
+	// with different magic value.
+
+	uint8_t version;
+	uint8_t command;
+	uint32_t iid;
+
+	uint8_t body[];
 } __attribute__((packed));
 
 struct mctp_stats {
@@ -46,12 +73,42 @@ struct recv_ctx {
 	int sd;
 };
 
+struct command_response {
+	// A command_response value
+	uint8_t status;
+} __attribute__((packed));
+
+struct command_request_bench {
+	uint32_t flags;
+	uint16_t payload_size;
+	uint64_t message_count;
+} __attribute__((packed));
+
 static const size_t MSG_HEADER_LEN = sizeof(struct msg_header);
 static const size_t MAX_LEN = 64 * 1024 - 1;
 static const uint32_t SEQ_START = UINT32_MAX - 5;
 static const uint16_t MAGIC_VAL = 0xbeca;
 static const int DEFAULT_NET = MCTP_NET_ANY;
 static const int DEFAULT_SECONDS_INTERVAL = 2;
+
+static const uint16_t COMMAND_MAGIC = 0x22dd;
+static const uint8_t COMMAND_VERSION = 1;
+
+enum command {
+	COMMAND_RESPONSE = 0x00,
+	COMMAND_REQUEST_BENCH = 0x01,
+};
+
+enum command_status {
+	RESPONSE_SUCCESS = 0x00,
+	RESPONSE_OTHER_FAILURE = 0x01,
+	RESPONSE_UNKNOWN_COMMAND = 0x02,
+	RESPONSE_BAD_ARGUMENT = 0x03,
+};
+
+static int request_recv(const struct mctp_bench_recv_args *recv_args);
+static int command(mctp_eid_t eid, int net, enum command command,
+		   const void *body, size_t body_len);
 
 static float get_throughput(float total_len, float elapsed_time)
 {
@@ -103,9 +160,27 @@ static uint32_t get_packets_dropped(uint32_t curr, uint32_t prev)
 	return UINT32_MAX - prev + curr;
 }
 
+static int validate_vendor_prefix(const void *buf, size_t buf_len)
+{
+	if (buf_len < sizeof(VENDOR_TYPE_BENCH)) {
+		warn("recv: short vendor prefix, got:%zd bytes", buf_len);
+		return -1;
+	}
+
+	const struct msg_header *hdr = (const struct msg_header *)buf;
+	if (memcmp(hdr->vendor_prefix, VENDOR_TYPE_BENCH,
+		   sizeof(VENDOR_TYPE_BENCH)) != 0) {
+		warnx("recv: unexpected vendor prefix %02x %02x %02x",
+		      hdr->vendor_prefix[0], hdr->vendor_prefix[1],
+		      hdr->vendor_prefix[2]);
+		return -1;
+	}
+	return 0;
+}
+
 static int handle_incoming_msg(struct recv_ctx *recv_ctx)
 {
-	struct msg_header *hdr;
+	const struct msg_header *hdr;
 
 	ssize_t len = recv(recv_ctx->sd, recv_ctx->buf, MAX_LEN, MSG_TRUNC);
 	if (len < 0) {
@@ -119,20 +194,13 @@ static int handle_incoming_msg(struct recv_ctx *recv_ctx)
 		     recv_ctx->stats.curr_packet_len);
 		return -1;
 	}
-	if (recv_ctx->stats.curr_packet_len < sizeof(VENDOR_TYPE_BENCH)) {
-		warn("recv: short vendor prefix, got:%zd bytes",
-		     recv_ctx->stats.curr_packet_len);
+
+	if (validate_vendor_prefix(recv_ctx->buf,
+				   recv_ctx->stats.curr_packet_len) != 0) {
 		return -1;
 	}
 
-	hdr = (struct msg_header *)recv_ctx->buf;
-	if (memcmp(hdr->vendor_prefix, VENDOR_TYPE_BENCH,
-		   sizeof(VENDOR_TYPE_BENCH)) != 0) {
-		warnx("recv: unexpected vendor prefix %02x %02x %02x",
-		      hdr->vendor_prefix[0], hdr->vendor_prefix[1],
-		      hdr->vendor_prefix[2]);
-		return -1;
-	}
+	hdr = (const struct msg_header *)recv_ctx->buf;
 	if (recv_ctx->stats.curr_packet_len < sizeof(*hdr)) {
 		warn("recv: short message, got:%zd bytes",
 		     recv_ctx->stats.curr_packet_len);
@@ -168,12 +236,15 @@ static int handle_incoming_msg(struct recv_ctx *recv_ctx)
 	return 0;
 }
 
-static int mctp_bench_recv()
+static int mctp_bench_recv(const struct mctp_bench_recv_args *recv_args)
 {
 	struct recv_ctx recv_ctx = { 0 };
 	struct sockaddr_mctp addr = { 0 };
 	int rc;
 
+	// Construct a listening socket prior to sending any receive request.
+	// Otherwise the peer might respond before we're ready, and we'll miss
+	// the first few messages.
 	recv_ctx.sd = socket(AF_MCTP, SOCK_DGRAM, 0);
 	if (recv_ctx.sd < 0)
 		err(EXIT_FAILURE, "recv: socket");
@@ -196,6 +267,10 @@ static int mctp_bench_recv()
 	}
 
 	recv_ctx.started_recv_flag = false;
+
+	if (request_recv(recv_args) != 0) {
+		errx(EXIT_FAILURE, "Request failed");
+	}
 
 	printf("recv: waiting for first msg\n");
 	while (1) {
@@ -350,10 +425,11 @@ static int mctp_bench_send(struct mctp_bench_send_args send_args)
 static void usage(void)
 {
 	fprintf(stderr, "'mctp-bench send' [len <value>] eid [<net>,]<eid>\n");
-	fprintf(stderr, "'mctp-bench recv'\n");
+	fprintf(stderr,
+		"'mctp-bench recv' [eid [<net>,]<eid>] [len <value>] [count <value>]\n");
 }
 
-static int parse_int(char *opt, unsigned int *out)
+static int parse_int(const char *opt, unsigned int *out)
 {
 	char *endptr;
 
@@ -365,9 +441,23 @@ static int parse_int(char *opt, unsigned int *out)
 	return 0;
 }
 
-static int parse_net_and_eid(struct mctp_bench_send_args *send_args, char *opt)
+static int parse_u64(const char *opt, uint64_t *out)
 {
-	char *comma;
+	char *endptr;
+
+	static_assert(sizeof(uint64_t) == sizeof(unsigned long long), "u64");
+
+	errno = 0;
+	*out = strtoull(opt, &endptr, 0);
+	if (endptr == opt || errno == ERANGE) {
+		return -1;
+	}
+	return 0;
+}
+
+static int parse_net_and_eid(const char *opt, mctp_eid_t *eid, int *net)
+{
+	const char *comma;
 	unsigned int tmp, rc;
 
 	for (size_t i = 0; i < strlen(opt); i++) {
@@ -390,7 +480,7 @@ static int parse_net_and_eid(struct mctp_bench_send_args *send_args, char *opt)
 			return -1;
 		}
 
-		send_args->net = tmp;
+		*net = tmp;
 		comma++;
 
 		rc = parse_int(comma, &tmp);
@@ -399,7 +489,7 @@ static int parse_net_and_eid(struct mctp_bench_send_args *send_args, char *opt)
 			return -1;
 		}
 	}
-	send_args->eid = tmp;
+	*eid = tmp;
 	return 0;
 }
 
@@ -425,12 +515,50 @@ static int parse_len(struct mctp_bench_send_args *send_args, char *opt)
 	return 0;
 }
 
+static int parse_recv_args(int argc, char **argv,
+			   struct mctp_bench_recv_args *recv_args)
+{
+	const char *optname, *optval;
+	int rc;
+
+	memset(recv_args, 0x0, sizeof(*recv_args));
+	for (int i = 2; i < argc; i += 2) {
+		optname = argv[i];
+		optval = argv[i + 1];
+		if (!strcmp(optname, "eid")) {
+			rc = parse_net_and_eid(optval, &recv_args->eid,
+					       &recv_args->net);
+			if (rc) {
+				usage();
+				return EXIT_FAILURE;
+			}
+		} else if (!strcmp(optname, "len")) {
+			rc = parse_int(optval, &recv_args->payload_size);
+			if (rc) {
+				usage();
+				return EXIT_FAILURE;
+			}
+		} else if (!strcmp(optname, "count")) {
+			rc = parse_u64(optval, &recv_args->message_count);
+			if (rc) {
+				usage();
+				return EXIT_FAILURE;
+			}
+		} else {
+			warnx("recv: unknown argument:\"%s\"\n", optname);
+			usage();
+			return EXIT_FAILURE;
+		}
+	}
+	return 0;
+}
+
 int main(int argc, char **argv)
 {
 	char *optname, *optval;
 	int rc = 0;
 
-	if (argc < 2 || argc > 6) {
+	if (argc < 2 || argc > 8) {
 		warnx("%s\n", (argc < 2) ? "error: missing command" :
 					   "error: too many arguments");
 		usage();
@@ -447,7 +575,8 @@ int main(int argc, char **argv)
 			optname = argv[i];
 			optval = argv[i + 1];
 			if (!strcmp(optname, "eid")) {
-				rc = parse_net_and_eid(&send_args, optval);
+				rc = parse_net_and_eid(optval, &send_args.eid,
+						       &send_args.net);
 				if (rc) {
 					usage();
 					return EXIT_FAILURE;
@@ -473,16 +602,140 @@ int main(int argc, char **argv)
 		}
 		return mctp_bench_send(send_args);
 	} else if (!strcmp(argv[1], "recv")) {
-		if (argc > 2) {
-			warnx("recv: does not take extra arguments\n");
+		struct mctp_bench_recv_args recv_args;
+		if (parse_recv_args(argc, argv, &recv_args)) {
 			usage();
 			return EXIT_FAILURE;
 		}
-		return mctp_bench_recv();
+		return mctp_bench_recv(&recv_args);
 	} else {
 		warnx("error: unknown command:\"%s\"\n", argv[1]);
 		usage();
 		return EXIT_FAILURE;
 	}
 	return EXIT_FAILURE;
+}
+
+static int request_recv(const struct mctp_bench_recv_args *recv_args)
+{
+	if (recv_args->eid == 0) {
+		return 0;
+	}
+
+	if (recv_args->payload_size > UINT16_MAX) {
+		errx(EXIT_FAILURE, "Payload too large");
+	}
+
+	struct command_request_bench body = {
+		.flags = 0,
+		.payload_size = (uint16_t)recv_args->payload_size,
+		.message_count = recv_args->message_count,
+	};
+
+	if (body.payload_size == 0) {
+		// arbitrary TODO
+		body.payload_size = 100;
+	}
+
+	if (body.message_count == 0) {
+		// nearly 2**64
+		body.message_count = 18000000000000000000ULL;
+	}
+
+	printf("Requesting %llu %u byte chunks\n",
+	       (unsigned long long)body.message_count, body.payload_size);
+
+	int status = command(recv_args->eid, recv_args->net,
+			     COMMAND_REQUEST_BENCH, &body, sizeof(body));
+
+	return status;
+}
+
+static int command(mctp_eid_t eid, int net, enum command command,
+		   const void *body, size_t body_len)
+{
+	static_assert(sizeof(struct command_msg) >= sizeof(struct msg_header),
+		      "command msg size");
+
+	struct sockaddr_mctp addr = { 0 };
+	int sd;
+	int rc;
+
+	sd = socket(AF_MCTP, SOCK_DGRAM, 0);
+	if (sd < 0) {
+		err(EXIT_FAILURE, "command socket");
+	}
+
+	addr.smctp_family = AF_MCTP;
+	addr.smctp_network = net;
+	addr.smctp_addr.s_addr = eid;
+	addr.smctp_type = MCTP_TYPE_VENDOR_PCIE;
+	addr.smctp_tag = MCTP_TAG_OWNER;
+
+	size_t req_len = sizeof(struct command_msg) + body_len;
+	struct command_msg *req = malloc(req_len);
+	if (!req) {
+		errx(EXIT_FAILURE, "out of memory");
+	}
+
+	memcpy(&req->vendor_prefix, VENDOR_TYPE_BENCH,
+	       sizeof(VENDOR_TYPE_BENCH));
+	req->magic = COMMAND_MAGIC;
+	req->version = COMMAND_VERSION;
+	req->command = command;
+	getrandom(&req->iid, sizeof(req->iid), 0);
+	memcpy(req->body, body, body_len);
+
+	rc = sendto(sd, req, req_len, 0, (struct sockaddr *)&addr,
+		    sizeof(addr));
+	if (rc != (ssize_t)req_len) {
+		err(EXIT_FAILURE, "command send failed");
+	}
+
+	size_t resp_len = sizeof(struct command_msg) + 2000;
+	struct command_msg *resp = malloc(resp_len);
+	if (!resp) {
+		errx(EXIT_FAILURE, "out of memory");
+	}
+
+	rc = recv(sd, resp, resp_len, 0);
+	if (rc < 0) {
+		err(EXIT_FAILURE, "command recv failed");
+	}
+	resp_len = (size_t)rc;
+	if (resp_len !=
+	    sizeof(struct command_msg) + sizeof(struct command_response)) {
+		errx(EXIT_FAILURE, "command wrong length");
+	}
+
+	if (validate_vendor_prefix(resp, resp_len) != 0) {
+		errx(EXIT_FAILURE, "command bad response");
+	}
+
+	if (resp->magic != COMMAND_MAGIC) {
+		errx(EXIT_FAILURE, "command bad magic");
+	}
+
+	if (resp->version != COMMAND_VERSION) {
+		errx(EXIT_FAILURE, "command bad version");
+	}
+
+	if (resp->iid != req->iid) {
+		errx(EXIT_FAILURE, "command wrong instance ID");
+	}
+
+	if (resp->command != COMMAND_RESPONSE) {
+		errx(EXIT_FAILURE, "command wrong response");
+	}
+
+	struct command_response resp_body;
+	memcpy(&resp_body, resp->body, sizeof(struct command_response));
+	if (resp_body.status != 0) {
+		errx(EXIT_FAILURE, "Response failed, status %d",
+		     resp_body.status);
+	}
+
+	free(req);
+	free(resp);
+	return resp_body.status;
 }
