@@ -837,6 +837,7 @@ endpoint EID allocation
 Tests that:
 - Bridge endpoint can be assigned a dynamic EID
 - Downstream endpoints get contiguous EIDs after bridge's own eid
+- Endpoint discovery is done via polling which continues in the background discovering the endpoint
 """
 async def test_assign_dynamic_bridge_eid(dbus, mctpd):
     iface = mctpd.system.interfaces[0]
@@ -863,10 +864,19 @@ async def test_assign_dynamic_bridge_eid(dbus, mctpd):
     assert path == f'/au/com/codeconstruct/mctp1/networks/1/endpoints/{eid}'
     assert new
 
+    # static neighbour; no gateway route support at present
+    for i in range(pool_size):
+        br_ep = ep.bridged_eps[i]
+        await mctpd.system.add_neighbour(mctpd.system.Neighbour(iface, ep.lladdr, br_ep.eid))
+
     net = await mctpd_mctp_network_obj(dbus, iface.net)
+    # wait for the endpoint to be discovered via polling
+    await trio.sleep(5)
     for i in range(pool_size):
         br_ep = ep.bridged_eps[i]
         #check if the downstream endpoint eid is contiguous to the bridge endpoint eid
         assert (eid + i + 1) == br_ep.eid
-        (path, new) = await net.call_learn_endpoint(br_ep.eid)
-        assert path == f'/au/com/codeconstruct/mctp1/networks/1/endpoints/{br_ep.eid}'
+        dep = await mctpd_mctp_endpoint_common_obj(dbus,
+            f'/au/com/codeconstruct/mctp1/networks/1/endpoints/{br_ep.eid}'
+        )
+        assert dep is not None

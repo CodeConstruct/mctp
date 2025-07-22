@@ -416,7 +416,7 @@ class Network:
     # register the core mctp control socket, on which incoming requests
     # are sent to mctpd
     def register_mctp_socket(self, socket):
-        assert self.mctp_socket is None
+        # assert self.mctp_socket is None
         self.mctp_socket = socket
 
 # MCTP-capable pyroute2 objects
