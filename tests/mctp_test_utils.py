@@ -1,3 +1,9 @@
+async def mctpd_mctp_base_iface_obj(dbus):
+    obj = await dbus.get_proxy_object(
+            'au.com.codeconstruct.MCTP1',
+            '/au/com/codeconstruct/mctp1'
+        )
+    return await obj.get_interface('au.com.codeconstruct.MCTP1')
 
 async def mctpd_mctp_iface_obj(dbus, iface):
     obj = await dbus.get_proxy_object(

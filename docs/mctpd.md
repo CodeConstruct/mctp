@@ -25,8 +25,39 @@ Service au.com.codeconstruct.MCTP1:
 
 ## Top-level object: `/au/com/codeconstruct/mctp1`
 
-This object serves as the global MCTP daemon namespace; it doesn't contain
-much at present, but hosts two trees of MCTP objects:
+This object serves as the global MCTP daemon namespace.
+It hosts `au.com.codeconstruct.MCTP1` dbus interface to modify mctp properties like
+supported message types.
+```
+NAME                                TYPE      SIGNATURE  RESULT/VALUE  FLAGS
+au.com.codeconstruct.MCTP1          interface -          -             -
+.RegisterTypeSupport                  method    yau        -             -
+```
+
+#### `.RegisterTypeSupport`: `yau`
+
+This method is used to add support for mctp message types other than control
+messages. Once called successfully subsequent response for get message type
+control command will include this new message type also. Also the versions
+passed to this method will be used to respond to get version control command.
+
+`RegisterTypeSupport <msg type> <versions>`
+
+If message type is already registered then dbus call will fail
+
+`<msg type>` Message type defined in DSP0239
+
+`<versions>` Versions supported for this message type formatted as uint32 integers as
+specified in DSP0236
+
+Example for PLDM type with two versions:
+
+```shell
+busctl call au.com.codeconstruct.MCTP1 /au/com/codeconstruct/mctp1 \
+  au.com.codeconstruct.MCTP1 RegisterTypeSupport yau 1 2 0xF1F2F3F4 0xF0F0F0F1
+```
+
+Also it hosts two trees of MCTP objects:
 
  * Interfaces: Local hardware transport bindings that connect us to a MCTP bus
  * Endpoints: MCTP endpoints that `mctpd` knows about, both remote and local

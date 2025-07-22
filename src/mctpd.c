@@ -201,6 +201,13 @@ struct peer {
 	uint8_t pool_start;
 };
 
+struct msg_type_support {
+	uint8_t msg_type;
+	uint32_t *versions;
+	size_t num_versions;
+	sd_bus_track *source_peer;
+};
+
 struct ctx {
 	sd_event *event;
 	sd_bus *bus;
@@ -231,6 +238,10 @@ struct ctx {
 	uint8_t iid;
 
 	uint8_t uuid[16];
+
+	// Supported message types and their versions
+	struct msg_type_support *supported_msg_types;
+	size_t num_supported_msg_types;
 
 	// Verbose logging
 	bool verbose;
@@ -838,9 +849,10 @@ handle_control_get_version_support(struct ctx *ctx, int sd,
 	struct mctp_ctrl_cmd_get_mctp_ver_support *req = NULL;
 	struct mctp_ctrl_resp_get_mctp_ver_support *resp = NULL;
 	uint32_t *versions = NULL;
-	// space for 4 versions
-	uint8_t respbuf[sizeof(*resp) + 4 * sizeof(*versions)] = { 0 };
-	size_t resp_len;
+	uint8_t *respbuf = NULL;
+	size_t resp_len, i, ver_count = 0, ver_bytes_count;
+	ssize_t ver_idx = -1;
+	int status;
 
 	if (buf_size < sizeof(struct mctp_ctrl_cmd_get_mctp_ver_support)) {
 		warnx("short Get Version Support message");
@@ -848,29 +860,51 @@ handle_control_get_version_support(struct ctx *ctx, int sd,
 	}
 
 	req = (void *)buf;
-	resp = (void *)respbuf;
-	mctp_ctrl_msg_hdr_init_resp(&resp->ctrl_hdr, req->ctrl_hdr);
-	versions = (void *)(resp + 1);
-	switch (req->msg_type_number) {
-	case 0xff: // Base Protocol
-	case 0x00: // Control protocol
-		// from DSP0236 1.3.1  section 12.6.2. Big endian.
-		versions[0] = htonl(0xF1F0FF00);
-		versions[1] = htonl(0xF1F1FF00);
-		versions[2] = htonl(0xF1F2FF00);
-		versions[3] = htonl(0xF1F3F100);
-		resp->number_of_entries = 4;
-		resp->completion_code = MCTP_CTRL_CC_SUCCESS;
-		resp_len = sizeof(*resp) + 4 * sizeof(*versions);
-		break;
-	default:
-		// Unsupported message type
-		resp->completion_code =
-			MCTP_CTRL_CC_GET_MCTP_VER_SUPPORT_UNSUPPORTED_TYPE;
-		resp_len = sizeof(*resp);
+	if (req->msg_type_number == 0xFF) {
+		// use same version for base spec and control protocol
+		req->msg_type_number = 0;
+	}
+	for (i = 0; i < ctx->num_supported_msg_types; i++) {
+		if (ctx->supported_msg_types[i].msg_type ==
+		    req->msg_type_number) {
+			ver_idx = i;
+			break;
+		}
 	}
 
-	return reply_message(ctx, sd, resp, resp_len, addr);
+	if (ver_idx < 0) {
+		respbuf = malloc(sizeof(struct mctp_ctrl_resp));
+		if (!respbuf) {
+			warnx("Failed to allocate response buffer");
+			return -ENOMEM;
+		}
+		resp = (void *)respbuf;
+		// Nobody registered yet as responder for this type
+		resp->completion_code =
+			MCTP_CTRL_CC_GET_MCTP_VER_SUPPORT_UNSUPPORTED_TYPE;
+		resp_len = sizeof(struct mctp_ctrl_resp);
+	} else {
+		ver_count = ctx->supported_msg_types[ver_idx].num_versions;
+		ver_bytes_count = ver_count * sizeof(uint32_t);
+		respbuf = malloc(sizeof(*resp) + ver_bytes_count);
+		if (!respbuf) {
+			warnx("Failed to allocate response buffer for versions");
+			return -ENOMEM;
+		}
+		resp = (void *)respbuf;
+		resp->number_of_entries = ver_count;
+		versions = (void *)(resp + 1);
+		memcpy(versions, ctx->supported_msg_types[ver_idx].versions,
+		       ver_bytes_count);
+		resp->completion_code = MCTP_CTRL_CC_SUCCESS;
+		resp_len = sizeof(*resp) + ver_bytes_count;
+	}
+
+	mctp_ctrl_msg_hdr_init_resp(&resp->ctrl_hdr, req->ctrl_hdr);
+
+	status = reply_message(ctx, sd, resp, resp_len, addr);
+	free(respbuf);
+	return status;
 }
 
 static int handle_control_get_endpoint_id(struct ctx *ctx, int sd,
@@ -927,8 +961,9 @@ static int handle_control_get_message_type_support(
 {
 	struct mctp_ctrl_cmd_get_msg_type_support *req = NULL;
 	struct mctp_ctrl_resp_get_msg_type_support *resp = NULL;
-	uint8_t resp_buf[sizeof(*resp) + 1] = { 0 };
-	size_t resp_len;
+	uint8_t *resp_buf, *msg_types;
+	size_t resp_len, type_count;
+	size_t i;
 
 	if (buf_size < sizeof(*req)) {
 		warnx("short Get Message Type Support message");
@@ -936,15 +971,29 @@ static int handle_control_get_message_type_support(
 	}
 
 	req = (void *)buf;
+	type_count = ctx->num_supported_msg_types;
+	// Allocate extra space for the message types
+	resp_len = sizeof(*resp) + type_count;
+	resp_buf = malloc(resp_len);
+	if (!resp_buf) {
+		warnx("Failed to allocate response buffer");
+		return -ENOMEM;
+	}
+
 	resp = (void *)resp_buf;
 	mctp_ctrl_msg_hdr_init_resp(&resp->ctrl_hdr, req->ctrl_hdr);
+	resp->completion_code = MCTP_CTRL_CC_SUCCESS;
 
-	// Only control messages supported
-	resp->msg_type_count = 1;
-	*((uint8_t *)(resp + 1)) = MCTP_CTRL_HDR_MSG_TYPE;
-	resp_len = sizeof(*resp) + resp->msg_type_count;
+	resp->msg_type_count = type_count;
+	// Append message types after msg_type_count
+	msg_types = (uint8_t *)(resp + 1);
+	for (i = 0; i < type_count; i++) {
+		msg_types[i] = ctx->supported_msg_types[i].msg_type;
+	}
 
-	return reply_message(ctx, sd, resp, resp_len, addr);
+	int result = reply_message(ctx, sd, resp, resp_len, addr);
+	free(resp_buf);
+	return result;
 }
 
 static int
@@ -3319,6 +3368,113 @@ err:
 	return rc;
 }
 
+int on_dbus_peer_removed(sd_bus_track *track, void *userdata)
+{
+	struct ctx *ctx = userdata;
+	size_t i, msg_types = ctx->num_supported_msg_types;
+
+	for (i = 0; i < msg_types; i++) {
+		if (ctx->supported_msg_types[i].source_peer == track) {
+			free(ctx->supported_msg_types[i].versions);
+			if (i < (msg_types - 1)) {
+				ctx->supported_msg_types[i] =
+					ctx->supported_msg_types[msg_types - 1];
+			}
+			ctx->num_supported_msg_types--;
+			break;
+		}
+	}
+	sd_bus_track_unref(track);
+	return 0;
+}
+
+static int method_register_responder(sd_bus_message *call, void *data,
+				     sd_bus_error *berr)
+{
+	struct ctx *ctx = data;
+	uint8_t msg_type;
+	const uint32_t *versions = NULL;
+	size_t i, versions_len;
+	int rc;
+
+	rc = sd_bus_message_read(call, "y", &msg_type);
+	if (rc < 0)
+		goto err;
+	rc = sd_bus_message_read_array(call, 'u', (const void **)&versions,
+				       &versions_len);
+	if (rc < 0)
+		goto err;
+
+	if (versions_len == 0) {
+		warnx("No versions provided for message type %d", msg_type);
+		return sd_bus_error_setf(
+			berr, SD_BUS_ERROR_INVALID_ARGS,
+			"No versions provided for message type %d", msg_type);
+	}
+
+	for (i = 0; i < ctx->num_supported_msg_types; i++) {
+		if (ctx->supported_msg_types[i].msg_type == msg_type) {
+			warnx("Message type %d already registered", msg_type);
+			return sd_bus_error_setf(
+				berr, SD_BUS_ERROR_INVALID_ARGS,
+				"Message type %d already registered", msg_type);
+		}
+	}
+
+	struct msg_type_support *msg_types =
+		realloc(ctx->supported_msg_types,
+			(ctx->num_supported_msg_types + 1) *
+				sizeof(struct msg_type_support));
+	if (!msg_types) {
+		return sd_bus_error_setf(
+			berr, SD_BUS_ERROR_NO_MEMORY,
+			"Failed to allocate memory for message types");
+	}
+	ctx->supported_msg_types = msg_types;
+	struct msg_type_support *cur_msg_type =
+		&ctx->supported_msg_types[ctx->num_supported_msg_types];
+
+	cur_msg_type->source_peer = NULL;
+	cur_msg_type->versions = NULL;
+	rc = sd_bus_track_new(ctx->bus, &cur_msg_type->source_peer,
+			      on_dbus_peer_removed, ctx);
+	if (rc < 0) {
+		warnx("Failed to create dbus track for message type %d: %s",
+		      msg_type, strerror(-rc));
+		goto track_err;
+	}
+
+	rc = sd_bus_track_add_sender(cur_msg_type->source_peer, call);
+	if (rc < 0) {
+		warnx("Failed to add dbus track for message type %d: %s",
+		      msg_type, strerror(-rc));
+		goto track_err;
+	}
+
+	cur_msg_type->msg_type = msg_type;
+	cur_msg_type->num_versions = versions_len / sizeof(uint32_t);
+	cur_msg_type->versions = malloc(versions_len);
+	if (!cur_msg_type->versions) {
+		goto track_err;
+	}
+	// Assume callers's responsibility to provide version in uint32 format from spec
+	memcpy(cur_msg_type->versions, versions, versions_len);
+
+	ctx->num_supported_msg_types++;
+
+	return sd_bus_reply_method_return(call, "");
+
+track_err:
+	// Extra memory for last msg type will remain allocated but tracked
+	sd_bus_track_unref(cur_msg_type->source_peer);
+	set_berr(ctx, rc, berr);
+	return rc;
+
+err:
+	set_berr(ctx, rc, berr);
+	return rc;
+}
+
 // clang-format off
 static const sd_bus_vtable bus_link_owner_vtable[] = {
 	SD_BUS_VTABLE_START(0),
@@ -3672,6 +3828,17 @@ static const sd_bus_vtable bus_network_vtable[] = {
 			SD_BUS_VTABLE_PROPERTY_CONST),
 	SD_BUS_VTABLE_END
 };
+
+static const sd_bus_vtable mctp_base_vtable[] = {
+	SD_BUS_VTABLE_START(0),
+	SD_BUS_METHOD_WITH_ARGS("RegisterTypeSupport",
+	SD_BUS_ARGS("y", msg_type,
+	            "au", versions),
+	SD_BUS_NO_RESULT,
+	method_register_responder,
+	0),
+	SD_BUS_VTABLE_END,
+};
 // clang-format on
 
 static int emit_endpoint_added(const struct peer *peer)
@@ -3819,6 +3986,13 @@ static int setup_bus(struct ctx *ctx)
 	rc = sd_bus_add_object_manager(ctx->bus, NULL, MCTP_DBUS_PATH);
 	if (rc < 0) {
 		warnx("Adding object manager failed: %s", strerror(-rc));
+		goto out;
+	}
+
+	rc = sd_bus_add_object_vtable(ctx->bus, NULL, MCTP_DBUS_PATH,
+				      MCTP_DBUS_NAME, mctp_base_vtable, ctx);
+	if (rc < 0) {
+		warnx("Adding MCTP base vtable failed: %s", strerror(-rc));
 		goto out;
 	}
 
@@ -4613,6 +4787,34 @@ out_close:
 	return rc;
 }
 
+static void setup_ctrl_cmd_defaults(struct ctx *ctx)
+{
+	ctx->supported_msg_types = NULL;
+	ctx->num_supported_msg_types = 0;
+
+	// Default to supporting only control messages
+	ctx->supported_msg_types = malloc(sizeof(struct msg_type_support));
+	if (!ctx->supported_msg_types) {
+		warnx("Out of memory for supported message types");
+		return;
+	}
+	ctx->num_supported_msg_types = 1;
+	ctx->supported_msg_types[0].msg_type = MCTP_CTRL_HDR_MSG_TYPE;
+
+	ctx->supported_msg_types[0].versions = malloc(sizeof(uint32_t) * 4);
+	if (!ctx->supported_msg_types[0].versions) {
+		warnx("Out of memory for versions");
+		free(ctx->supported_msg_types);
+		ctx->num_supported_msg_types = 0;
+		return;
+	}
+	ctx->supported_msg_types[0].num_versions = 4;
+	ctx->supported_msg_types[0].versions[0] = htonl(0xF1F0FF00);
+	ctx->supported_msg_types[0].versions[1] = htonl(0xF1F1FF00);
+	ctx->supported_msg_types[0].versions[2] = htonl(0xF1F2FF00);
+	ctx->supported_msg_types[0].versions[3] = htonl(0xF1F3F100);
+}
+
 static void setup_config_defaults(struct ctx *ctx)
 {
 	ctx->mctp_timeout = 250000; // 250ms
@@ -4625,6 +4827,16 @@ static void setup_config_defaults(struct ctx *ctx)
 static void free_config(struct ctx *ctx)
 {
 	free(ctx->config_filename);
+}
+
+static void free_ctrl_cmd_defaults(struct ctx *ctx)
+{
+	size_t i;
+
+	for (i = 0; i < ctx->num_supported_msg_types; i++) {
+		free(ctx->supported_msg_types[i].versions);
+	}
+	free(ctx->supported_msg_types);
 }
 
 static int endpoint_send_allocate_endpoint_ids(
@@ -4778,6 +4990,8 @@ int main(int argc, char **argv)
 	setlinebuf(stdout);
 
 	setup_config_defaults(ctx);
+	setup_ctrl_cmd_defaults(ctx);
+
 	mctp_ops_init();
 
 	rc = parse_args(ctx, argc, argv);
@@ -4842,6 +5056,7 @@ int main(int argc, char **argv)
 	free_peers(ctx);
 	free_nets(ctx);
 	free_config(ctx);
+	free_ctrl_cmd_defaults(ctx);
 
 	mctp_nl_close(ctx->nl);
 

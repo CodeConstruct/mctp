@@ -7,7 +7,8 @@ from mctp_test_utils import (
     mctpd_mctp_iface_obj,
     mctpd_mctp_network_obj,
     mctpd_mctp_endpoint_common_obj,
-    mctpd_mctp_endpoint_control_obj
+    mctpd_mctp_endpoint_control_obj,
+    mctpd_mctp_base_iface_obj
 )
 from mctpenv import Endpoint, MCTPSockAddr, MCTPControlCommand, MctpdWrapper
 
@@ -1252,3 +1253,25 @@ async def test_bridge_pool_range_limited(dbus, sysnet, nursery):
 
     res = await mctpd.stop_mctpd()
     assert res == 0
+
+async def test_get_message_types(dbus, mctpd):
+    ep = mctpd.network.endpoints[0]
+    ep.eid = 12
+    iface = mctpd.system.interfaces[0]
+    await mctpd.system.add_route(mctpd.system.Route(ep.eid, 1, iface = iface))
+    await mctpd.system.add_neighbour(mctpd.system.Neighbour(iface, ep.lladdr, ep.eid))
+
+    # Check default response when no responder registered
+    rsp = await ep.send_control(mctpd.network.mctp_socket, MCTPControlCommand(True, 0, 0x05, bytes([0x00])))
+    assert rsp.hex(' ') == '00 05 00 01 00'
+
+    # Register spdm responder with a random version
+    mctp = await mctpd_mctp_base_iface_obj(dbus)
+    await mctp.call_register_type_support(5, [0xF1F2F3F4])
+
+    # Verify get message type response includes spdm
+    rsp = await ep.send_control(mctpd.network.mctp_socket, MCTPControlCommand(True, 0, 0x05, bytes([0x00])))
+    assert rsp.hex(' ') == '00 05 00 02 00 05'
+    # Verify version passed in dbus call is responded back
+    rsp = await ep.send_control(mctpd.network.mctp_socket, MCTPControlCommand(True, 0, 0x04, bytes([0x05])))
+    assert rsp.hex(' ') == '00 04 00 01 f4 f3 f2 f1'    
