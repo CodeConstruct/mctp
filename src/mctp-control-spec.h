@@ -181,6 +181,28 @@ struct mctp_ctrl_resp_resolve_endpoint_id {
 	// ... uint8_t physical_address[N]
 } __attribute__((__packed__));
 
+typedef enum {
+	mctp_ctrl_cmd_alloc_eid_alloc_eid = 0,
+	mctp_ctrl_cmd_alloc_eid_force_alloc = 1,
+	mctp_ctrl_cmd_alloc_eid_get_alloc_info = 2,
+	mctp_ctrl_cmd_alloc_eid_reserved = 3
+} mctp_ctrl_cmd_alloc_eid_op;
+
+struct mctp_ctrl_cmd_alloc_eid {
+	struct mctp_ctrl_msg_hdr ctrl_hdr;
+	uint8_t alloc_eid_op;
+	uint8_t pool_size;
+	uint8_t start_eid;
+} __attribute__((__packed__));
+
+struct mctp_ctrl_resp_alloc_eid {
+	struct mctp_ctrl_msg_hdr ctrl_hdr;
+	uint8_t completion_code;
+	uint8_t status;
+	uint8_t eid_pool_size;
+	uint8_t eid_set;
+} __attribute__((__packed__));
+
 #define MCTP_CTRL_HDR_MSG_TYPE 0
 #define MCTP_CTRL_HDR_FLAG_REQUEST (1 << 7)
 #define MCTP_CTRL_HDR_FLAG_DGRAM (1 << 6)
@@ -308,3 +330,9 @@ struct mctp_ctrl_resp_resolve_endpoint_id {
 #define GET_ROUTING_ENTRY_TYPE(field)                 \
 	(((field) >> MCTP_ROUTING_ENTRY_TYPE_SHIFT) & \
 	 MCTP_ROUTING_ENTRY_TYPE_MASK)
+
+/* MCTP Time Specification
+ * See DSP0283 v1.0.0 Table 4
+ */
+#define MCTP_TRECLAIM_US 5000000 // 5s TRECLAIM
+#define MCTP_RESP_TIMEOUT 400000 //400ms MT2

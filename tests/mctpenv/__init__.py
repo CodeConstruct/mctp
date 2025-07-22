@@ -348,7 +348,7 @@ class Endpoint:
                 # Set Endpoint ID
                 (op, eid) = data[2:]
                 self.eid = eid
-                data = bytes(hdr + [0x00, 0x00, self.eid, 0x00])
+                data = bytes(hdr + [0x00, 0x01 if len(self.bridged_eps) > 0 else 0x00, self.eid, len(self.bridged_eps)])
                 await sock.send(raddr, data)
 
             elif opcode == 2:
@@ -365,6 +365,18 @@ class Endpoint:
                 # Get Message Type Support
                 types = self.types
                 data = bytes(hdr + [0x00, len(types)] + types)
+                await sock.send(raddr, data)
+
+            elif opcode == 8:
+                # Allocate Endpoint IDs
+                (_, _, _, pool_size, pool_start) = data
+                num_eps = min(pool_size, len(self.bridged_eps))
+                data = bytes(hdr + [0x00, 0x00, num_eps, pool_start])
+
+                # Assign sequential EIDs starting from pool_start
+                for ep in range(num_eps):
+                    self.bridged_eps[ep].eid = pool_start + ep
+
                 await sock.send(raddr, data)
 
             else:
@@ -404,7 +416,7 @@ class Network:
     # register the core mctp control socket, on which incoming requests
     # are sent to mctpd
     def register_mctp_socket(self, socket):
-        assert self.mctp_socket is None
+        # assert self.mctp_socket is None
         self.mctp_socket = socket
 
 # MCTP-capable pyroute2 objects
