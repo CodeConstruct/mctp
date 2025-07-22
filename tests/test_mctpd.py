@@ -831,3 +831,42 @@ async def test_interface_rename_with_peers(dbus, mctpd):
     # ensure the endpoint persists after rename
     ep_obj = await dbus.get_proxy_object(MCTPD_C, ep_path)
     assert ep_obj is not None
+""" Test bridge endpoint dynamic EID assignment and downstream
+endpoint EID allocation
+
+Tests that:
+- Bridge endpoint can be assigned a dynamic EID
+- Downstream endpoints get contiguous EIDs after bridge's own eid
+"""
+async def test_assign_dynamic_bridge_eid(dbus, mctpd):
+    iface = mctpd.system.interfaces[0]
+    mctp = await mctpd_mctp_iface_obj(dbus, iface)
+    ep = mctpd.network.endpoints[0]
+
+    pool_size = 2
+
+    # Set up bridged endpoints as undiscovered EID 0
+    for i in range(pool_size):
+        br_ep = Endpoint(iface, bytes(), types=[0, 2])
+        ep.add_bridged_ep(br_ep)
+        mctpd.network.add_endpoint(br_ep)
+
+    mctp = await mctpd_mctp_iface_obj(dbus, iface)
+
+    # dynamic EID assigment for dev1
+    (eid, _, path, new) = await mctp.call_assign_endpoint(
+        ep.lladdr,
+    )
+
+    assert new
+    # Assert for assigned bridge endpoint ID
+    assert path == f'/au/com/codeconstruct/mctp1/networks/1/endpoints/{eid}'
+    assert new
+
+    net = await mctpd_mctp_network_obj(dbus, iface.net)
+    for i in range(pool_size):
+        br_ep = ep.bridged_eps[i]
+        #check if the downstream endpoint eid is contiguous to the bridge endpoint eid
+        assert (eid + i + 1) == br_ep.eid
+        (path, new) = await net.call_learn_endpoint(br_ep.eid)
+        assert path == f'/au/com/codeconstruct/mctp1/networks/1/endpoints/{br_ep.eid}'
