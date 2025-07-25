@@ -192,6 +192,16 @@ struct peer {
 	} recovery;
 };
 
+struct msg_type_support {
+	size_t count;
+
+	// Assume array index follows same order. Msg type at msg_types[0]
+	// will have version_counts[0] versions stored at versions[0]
+	uint8_t *msg_types;
+	size_t *version_counts;
+	uint32_t **versions;
+};
+
 struct ctx {
 	sd_event *event;
 	sd_bus *bus;
@@ -218,6 +228,9 @@ struct ctx {
 	uint8_t iid;
 
 	uint8_t uuid[16];
+
+	// Supported message types and their versions
+	struct msg_type_support supported_msg_types;
 
 	// Verbose logging
 	bool verbose;
@@ -670,6 +683,7 @@ handle_control_get_version_support(struct ctx *ctx, int sd,
 	// space for 4 versions
 	uint8_t respbuf[sizeof(*resp) + 4 * sizeof(*versions)];
 	size_t resp_len;
+	ssize_t i, ver_idx = -1, ver_count = 0;
 
 	if (buf_size < sizeof(struct mctp_ctrl_cmd_get_mctp_ver_support)) {
 		warnx("short Get Version Support message");
@@ -679,24 +693,32 @@ handle_control_get_version_support(struct ctx *ctx, int sd,
 	req = (void *)buf;
 	resp = (void *)respbuf;
 	memset(resp, 0x0, sizeof(*resp));
-	versions = (void *)(resp + 1);
-	switch (req->msg_type_number) {
-	case 0xff: // Base Protocol
-	case 0x00: // Control protocol
-		// from DSP0236 1.3.1  section 12.6.2. Big endian.
-		versions[0] = htonl(0xF1F0FF00);
-		versions[1] = htonl(0xF1F1FF00);
-		versions[2] = htonl(0xF1F2FF00);
-		versions[3] = htonl(0xF1F3F100);
-		resp->number_of_entries = 4;
-		resp->completion_code = MCTP_CTRL_CC_SUCCESS;
-		resp_len = sizeof(*resp) + 4 * sizeof(*versions);
-		break;
-	default:
+	if (req->msg_type_number == 0xFF) {
+		// use same version for base spec and control protocol
+		req->msg_type_number = 0;
+	}
+	for (i = 0; i < ctx->supported_msg_types.count; i++) {
+		if (ctx->supported_msg_types.msg_types[i] ==
+		    req->msg_type_number) {
+			ver_idx = i;
+			break;
+		}
+	}
+	if (ver_idx < 0) {
 		// Unsupported message type
 		resp->completion_code =
 			MCTP_CTRL_CC_GET_MCTP_VER_SUPPORT_UNSUPPORTED_TYPE;
-		resp_len = sizeof(*resp);
+		// Number of enrties not needed in unsupprted cmd
+		resp_len = sizeof(*resp) - sizeof(uint8_t);
+	} else {
+		versions = (void *)(resp + 1);
+		ver_count = ctx->supported_msg_types.version_counts[ver_idx];
+		memcpy(versions, ctx->supported_msg_types.versions[ver_idx],
+		       ver_count * sizeof(uint32_t));
+		resp->number_of_entries = ver_count;
+
+		resp->completion_code = MCTP_CTRL_CC_SUCCESS;
+		resp_len = sizeof(*resp) + ver_count * sizeof(uint32_t);
 	}
 
 	resp->ctrl_hdr.command_code = req->ctrl_hdr.command_code;
@@ -761,10 +783,9 @@ static int handle_control_get_message_type_support(
 	const uint8_t *buf, const size_t buf_size)
 {
 	struct mctp_ctrl_cmd_get_msg_type_support *req = NULL;
-	;
 	struct mctp_ctrl_resp_get_msg_type_support *resp = NULL;
-	uint8_t resp_buf[sizeof(*resp) + 1];
-	size_t resp_len;
+	uint8_t *resp_buf;
+	size_t resp_len, type_count;
 
 	if (buf_size < sizeof(*req)) {
 		warnx("short Get Message Type Support message");
@@ -772,17 +793,29 @@ static int handle_control_get_message_type_support(
 	}
 
 	req = (void *)buf;
+	type_count = ctx->supported_msg_types.count;
+	// Allocate extra space for the message types
+	resp_len = sizeof(*resp) + type_count;
+	resp_buf = malloc(resp_len);
+	if (!resp_buf) {
+		warnx("Failed to allocate response buffer");
+		return -ENOMEM;
+	}
+
 	resp = (void *)resp_buf;
-	resp->ctrl_hdr.command_code = req->ctrl_hdr.command_code;
 	resp->ctrl_hdr.rq_dgram_inst =
 		(req->ctrl_hdr.rq_dgram_inst & IID_MASK) | RQDI_RESP;
+	resp->ctrl_hdr.command_code = req->ctrl_hdr.command_code;
+	resp->completion_code = MCTP_CTRL_CC_SUCCESS;
 
-	// Only control messages supported
-	resp->msg_type_count = 1;
-	*((uint8_t *)(resp + 1)) = MCTP_CTRL_HDR_MSG_TYPE;
-	resp_len = sizeof(*resp) + resp->msg_type_count;
+	resp->msg_type_count = type_count;
+	// Append message types after msg_type_count
+	memcpy((uint8_t *)(resp + 1), ctx->supported_msg_types.msg_types,
+	       type_count);
 
-	return reply_message(ctx, sd, resp, resp_len, addr);
+	int result = reply_message(ctx, sd, resp, resp_len, addr);
+	free(resp_buf);
+	return result;
 }
 
 static int
@@ -2829,6 +2862,91 @@ err:
 	return rc;
 }
 
+static int method_register_responder(sd_bus_message *call, void *data,
+				     sd_bus_error *berr)
+{
+	struct ctx *ctx = data;
+	uint8_t msg_type;
+	const uint32_t *versions = NULL;
+	size_t versions_len;
+	int rc;
+	int i;
+
+	rc = sd_bus_message_read(call, "y", &msg_type);
+	if (rc < 0)
+		goto err;
+	rc = sd_bus_message_read_array(call, 'u', (const void **)&versions,
+				       &versions_len);
+	if (rc < 0)
+		goto err;
+
+	if (versions_len == 0) {
+		warnx("No versions provided for message type %d", msg_type);
+		return sd_bus_error_setf(
+			berr, SD_BUS_ERROR_INVALID_ARGS,
+			"No versions provided for message type %d", msg_type);
+	}
+
+	for (i = 0; i < ctx->supported_msg_types.count; i++) {
+		if (ctx->supported_msg_types.msg_types[i] == msg_type) {
+			warnx("Message type %d already registered", msg_type);
+			return sd_bus_error_setf(
+				berr, SD_BUS_ERROR_INVALID_ARGS,
+				"Message type %d already registered", msg_type);
+		}
+	}
+
+	uint8_t *msg_types =
+		realloc(ctx->supported_msg_types.msg_types,
+			(ctx->supported_msg_types.count + 1) * sizeof(uint8_t));
+	if (!msg_types) {
+		goto oom_err;
+	}
+	ctx->supported_msg_types.msg_types = msg_types;
+
+	uint32_t **versions_ptr = realloc(ctx->supported_msg_types.versions,
+					  (ctx->supported_msg_types.count + 1) *
+						  sizeof(uint32_t *));
+	if (!versions_ptr) {
+		// realloc ptrs are not cleared. msg_types will have one byte extra capacity.
+		// same for next alloc also.
+		goto oom_err;
+	}
+	ctx->supported_msg_types.versions = versions_ptr;
+
+	size_t *version_counts =
+		realloc(ctx->supported_msg_types.version_counts,
+			(ctx->supported_msg_types.count + 1) * sizeof(size_t));
+	if (!version_counts) {
+		goto oom_err;
+	}
+	ctx->supported_msg_types.version_counts = version_counts;
+
+	uint32_t *msg_versions = malloc(versions_len);
+	if (!msg_versions) {
+		goto oom_err;
+	}
+	// Assume callers's responsibility to provide version in uint32 format from spec
+	memcpy(msg_versions, versions, versions_len);
+
+	ctx->supported_msg_types.msg_types[ctx->supported_msg_types.count] =
+		msg_type;
+	ctx->supported_msg_types.versions[ctx->supported_msg_types.count] =
+		msg_versions;
+	ctx->supported_msg_types.version_counts[ctx->supported_msg_types.count] =
+		versions_len / sizeof(uint32_t);
+	ctx->supported_msg_types.count++;
+
+	return sd_bus_reply_method_return(call, "");
+
+oom_err:
+	return sd_bus_error_setf(berr, SD_BUS_ERROR_NO_MEMORY,
+				 "Failed to allocate memory");
+err:
+	set_berr(ctx, rc, berr);
+	return rc;
+}
+
 // clang-format off
 static const sd_bus_vtable bus_link_owner_vtable[] = {
 	SD_BUS_VTABLE_START(0),
@@ -3145,6 +3263,17 @@ static const sd_bus_vtable bus_network_vtable[] = {
 			SD_BUS_VTABLE_PROPERTY_CONST),
 	SD_BUS_VTABLE_END
 };
+
+static const sd_bus_vtable mctp_base_vtable[] = {
+	SD_BUS_VTABLE_START(0),
+	SD_BUS_METHOD_WITH_ARGS("RegisterResponder",
+	SD_BUS_ARGS("y", msg_type,
+	            "au", versions),
+	SD_BUS_NO_RESULT,
+	method_register_responder,
+	0),
+	SD_BUS_VTABLE_END,
+};
 // clang-format on
 
 static int emit_endpoint_added(const struct peer *peer)
@@ -3292,6 +3421,14 @@ static int setup_bus(struct ctx *ctx)
 	rc = sd_bus_add_object_manager(ctx->bus, NULL, MCTP_DBUS_PATH);
 	if (rc < 0) {
 		warnx("Adding object manager failed: %s", strerror(-rc));
+		goto out;
+	}
+
+	rc = sd_bus_add_object_vtable(ctx->bus, NULL, MCTP_DBUS_PATH,
+				      MCTP_DBUS_NAME,
+				      mctp_base_vtable, ctx);
+	if (rc < 0) {
+		warnx("Adding MCTP base vtable failed: %s", strerror(-rc));
 		goto out;
 	}
 
@@ -3996,13 +4133,68 @@ out_close:
 
 static void setup_config_defaults(struct ctx *ctx)
 {
+	uint32_t *ctrl_cmd_versions = NULL;
+	ctx->supported_msg_types.msg_types = NULL;
+	ctx->supported_msg_types.versions = NULL;
+	ctx->supported_msg_types.version_counts = NULL;
+
 	ctx->mctp_timeout = 250000; // 250ms
 	ctx->default_role = ENDPOINT_ROLE_BUS_OWNER;
+	ctx->supported_msg_types.count = 0;
+
+	// Default to supporting only control messages
+	ctx->supported_msg_types.msg_types = malloc(1);
+	if (!ctx->supported_msg_types.msg_types) {
+		warnx("Out of memory for supported message types");
+		goto oom_err;
+	}
+	ctrl_cmd_versions = malloc(sizeof(uint32_t) * 4);
+	if (!ctrl_cmd_versions) {
+		warnx("Out of memory for versions");
+		goto oom_err;
+	}
+	ctx->supported_msg_types.versions = malloc(sizeof(uint32_t *));
+	if (!ctx->supported_msg_types.versions) {
+		warnx("Out of memory for versions");
+		goto oom_err;
+	}
+	ctx->supported_msg_types.version_counts = malloc(sizeof(size_t));
+	if (!ctx->supported_msg_types.version_counts) {
+		warnx("Out of memory for version counts");
+		goto oom_err;
+	}
+
+	ctx->supported_msg_types.count = 1;
+	ctx->supported_msg_types.msg_types[0] = MCTP_CTRL_HDR_MSG_TYPE;
+	ctrl_cmd_versions[0] = htonl(0xF1F0FF00);
+	ctrl_cmd_versions[1] = htonl(0xF1F1FF00);
+	ctrl_cmd_versions[2] = htonl(0xF1F2FF00);
+	ctrl_cmd_versions[3] = htonl(0xF1F3F100);
+	ctx->supported_msg_types.versions[0] = ctrl_cmd_versions;
+	ctx->supported_msg_types.version_counts[0] = 4;
+
+	return;
+oom_err:
+	free(ctrl_cmd_versions);
+	free(ctx->supported_msg_types.msg_types);
+	free(ctx->supported_msg_types.versions);
+	free(ctx->supported_msg_types.version_counts);
+	ctx->supported_msg_types.msg_types = NULL;
+	ctx->supported_msg_types.versions = NULL;
+	ctx->supported_msg_types.version_counts = NULL;
 }
 
 static void free_config(struct ctx *ctx)
 {
+	int i;
+
 	free(ctx->config_filename);
+	for (i = 0; i < ctx->supported_msg_types.count; i++) {
+		free(ctx->supported_msg_types.versions[i]);
+	}
+	free(ctx->supported_msg_types.versions);
+	free(ctx->supported_msg_types.version_counts);
+	free(ctx->supported_msg_types.msg_types);
 }
 
 int main(int argc, char **argv)
