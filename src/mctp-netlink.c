@@ -1075,6 +1075,15 @@ int mctp_nl_hwaddr_len_byindex(const mctp_nl *nl, int index,
 	return 0;
 }
 
+uint8_t mctp_nl_phys_binding_byindex(const mctp_nl *nl, int index)
+{
+	struct linkmap_entry *entry = entry_byindex(nl, index);
+	if (!entry) {
+		return MCTP_PHYS_BINDING_UNSPEC;
+	}
+	return entry->phys_binding;
+}
+
 mctp_eid_t *mctp_nl_addrs_byindex(const mctp_nl *nl, int index, size_t *ret_num)
 {
 	struct linkmap_entry *entry = entry_byindex(nl, index);

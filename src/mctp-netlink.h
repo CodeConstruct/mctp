@@ -6,6 +6,7 @@
 #include <linux/if.h>
 #include <linux/rtnetlink.h>
 
+#include "mctp-control-spec.h"
 #include "mctp.h"
 
 struct mctp_nl;
@@ -83,6 +84,8 @@ uint32_t mctp_nl_max_mtu_byindex(const mctp_nl *nl, int index);
 /* Returns negative errno on failure */
 int mctp_nl_hwaddr_len_byindex(const mctp_nl *nl, int index,
 			       size_t *ret_hwaddr_len);
+/* Returns interface physical binding, or MCTP_PHYS_BINDING_UNSPEC if bad index */
+uint8_t mctp_nl_phys_binding_byindex(const mctp_nl *nl, int index);
 /* Caller to free */
 mctp_eid_t *mctp_nl_addrs_byindex(const mctp_nl *nl, int index,
 				  size_t *ret_num);
