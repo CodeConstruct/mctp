@@ -9,7 +9,7 @@ from mctp_test_utils import (
     mctpd_mctp_endpoint_common_obj,
     mctpd_mctp_endpoint_control_obj
 )
-from mctpenv import Endpoint, MCTPSockAddr, MCTPControlCommand
+from mctpenv import Endpoint, MCTPSockAddr, MCTPControlCommand, MctpdWrapper
 
 # DBus constant symbol suffixes:
 #
@@ -869,3 +869,60 @@ async def test_interface_rename_with_peers(dbus, mctpd):
     # ensure the endpoint persists after rename
     ep_obj = await dbus.get_proxy_object(MCTPD_C, ep_path)
     assert ep_obj is not None
+
+""" Test that we use the minimum EID from the dynamic_eid_range config """
+async def test_config_dyn_eid_range_min(nursery, dbus, sysnet):
+    (min_dyn_eid, max_dyn_eid) = (20, 254)
+    config = f"""
+    [bus-owner]
+    dynamic_eid_range = [{min_dyn_eid}, {max_dyn_eid}]
+    """
+
+    # since we're specifying per-test config, we create the wrapper directly
+    # rather than using the fixture.
+    mctpd = MctpdWrapper(dbus, sysnet, config = config)
+    await mctpd.start_mctpd(nursery)
+
+    iface = mctpd.system.interfaces[0]
+    ep = mctpd.network.endpoints[0]
+
+    mctp = await mctpd_mctp_iface_obj(dbus, iface)
+    (eid, net, path, new) = await mctp.call_setup_endpoint(ep.lladdr)
+    assert eid == min_dyn_eid
+    assert ep.eid == eid
+
+    res = await mctpd.stop_mctpd()
+    assert res == 0
+
+""" Test that we use the maximum EID from the dynamic_eid_range config """
+async def test_config_dyn_eid_range_max(nursery, dbus, sysnet):
+    (min_dyn_eid, max_dyn_eid) = (20, 21)
+    config = f"""
+    [bus-owner]
+    dynamic_eid_range = [{min_dyn_eid}, {max_dyn_eid}]
+    """
+
+    mctpd = MctpdWrapper(dbus, sysnet, config = config)
+    await mctpd.start_mctpd(nursery)
+
+    iface = mctpd.system.interfaces[0]
+    mctp = await mctpd_mctp_iface_obj(dbus, iface)
+
+    mctpd.network.add_endpoint(Endpoint(iface, bytes([0x01]), types = [0, 1]))
+    mctpd.network.add_endpoint(Endpoint(iface, bytes([0x02]), types = [0, 1]))
+
+    for i in range(0, 2):
+        ep = mctpd.network.endpoints[i]
+        (eid, net, path, new) = await mctp.call_setup_endpoint(ep.lladdr)
+        assert eid >= 20 and eid <= 21
+
+    # we should have run out of EIDs
+    with pytest.raises(asyncdbus.errors.DBusError) as ex:
+        ep = mctpd.network.endpoints[2]
+        (eid, net, path, new) = await mctp.call_setup_endpoint(ep.lladdr)
+
+    assert str(ex.value) == "Ran out of EIDs"
+    assert mctpd.network.endpoints[2].eid == 0
+
+    res = await mctpd.stop_mctpd()
+    assert res == 0

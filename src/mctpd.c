@@ -57,8 +57,8 @@ static const char *mctpd_appid = "67369c05-4b97-4b7e-be72-65cfd8639f10";
 
 static const char *conf_file_default = MCTPD_CONF_FILE_DEFAULT;
 
-static mctp_eid_t eid_alloc_min = 0x08;
-static mctp_eid_t eid_alloc_max = 0xfe;
+static const mctp_eid_t eid_alloc_min = 0x08;
+static const mctp_eid_t eid_alloc_max = 0xfe;
 
 // arbitrary sanity
 static size_t MAX_PEER_SIZE = 1000000;
@@ -205,6 +205,10 @@ struct ctx {
 
 	struct net **nets;
 	size_t num_nets;
+
+	// the range we allocate any dynamic EIDs from
+	mctp_eid_t dyn_eid_min;
+	mctp_eid_t dyn_eid_max;
 
 	// Timeout in usecs for a MCTP response
 	uint64_t mctp_timeout;
@@ -1667,8 +1671,8 @@ static int endpoint_assign_eid(struct ctx *ctx, sd_bus_error *berr,
 
 		new_eid = static_eid;
 	} else {
-		/* Find an unused EID */
-		for (e = eid_alloc_min; e <= eid_alloc_max; e++) {
+		/* Find an unused dynamic EID */
+		for (e = ctx->dyn_eid_min; e <= ctx->dyn_eid_max; e++) {
 			if (n->peers[e])
 				continue;
 			rc = add_peer(ctx, dest, e, net, &peer);
@@ -1676,7 +1680,7 @@ static int endpoint_assign_eid(struct ctx *ctx, sd_bus_error *berr,
 				return rc;
 			break;
 		}
-		if (e > eid_alloc_max) {
+		if (e > ctx->dyn_eid_max) {
 			warnx("Ran out of EIDs for net %d, allocating %s", net,
 			      dest_phys_tostr(dest));
 			sd_bus_error_setf(berr, SD_BUS_ERROR_FAILED,
@@ -3935,19 +3939,65 @@ static int parse_config_mctp(struct ctx *ctx, toml_table_t *mctp_tab)
 	return 0;
 }
 
+static int parse_config_dyn_eid_range(struct ctx *ctx, toml_array_t *arr)
+{
+	int sz = toml_array_nelem(arr);
+	toml_datum_t min_val, max_val;
+
+	if (sz < 2) {
+		warnx("dynamic_eid_range has invalid format - needs two elements");
+		return -1;
+	}
+	if (sz > 2) {
+		warnx("dynamic_eid_range: ignoring extra (> 2) elements");
+	}
+
+	min_val = toml_int_at(arr, 0);
+	max_val = toml_int_at(arr, 1);
+
+	if (!min_val.ok || !max_val.ok) {
+		warnx("dynamic_eid_range: invalid range data");
+		return -1;
+	}
+
+	if (min_val.u.i < eid_alloc_min || min_val.u.i > eid_alloc_max) {
+		warnx("dynamic_eid_range: start address is invalid");
+		return -1;
+	}
+
+	if (max_val.u.i < eid_alloc_min || max_val.u.i > eid_alloc_max ||
+	    max_val.u.i < min_val.u.i) {
+		warnx("dynamic_eid_range: end address is invalid");
+		return -1;
+	}
+
+	ctx->dyn_eid_max = max_val.u.i;
+	ctx->dyn_eid_min = min_val.u.i;
+	return 0;
+}
+
 static int parse_config_bus_owner(struct ctx *ctx, toml_table_t *bus_owner)
 {
+	toml_array_t *array;
 	toml_datum_t val;
+	int rc;
 
 	val = toml_int_in(bus_owner, "max_pool_size");
 	if (val.ok) {
 		int64_t i = val.u.i;
-		if (i <= 0 || i > (eid_alloc_max - eid_alloc_min)) {
+		if (i <= 0 || i > (ctx->dyn_eid_max - ctx->dyn_eid_min)) {
 			warnx("invalid max_pool_size value (must be 1-%d)",
-			      eid_alloc_max - eid_alloc_min);
+			      ctx->dyn_eid_max - ctx->dyn_eid_min);
 			return -1;
 		}
 		ctx->max_pool_size = i;
+	}
+
+	array = toml_array_in(bus_owner, "dynamic_eid_range");
+	if (array) {
+		rc = parse_config_dyn_eid_range(ctx, array);
+		if (rc)
+			return rc;
 	}
 
 	return 0;
@@ -4021,6 +4071,8 @@ static void setup_config_defaults(struct ctx *ctx)
 	ctx->mctp_timeout = 250000; // 250ms
 	ctx->default_role = ENDPOINT_ROLE_BUS_OWNER;
 	ctx->max_pool_size = 15;
+	ctx->dyn_eid_min = eid_alloc_min;
+	ctx->dyn_eid_max = eid_alloc_max;
 }
 
 static void free_config(struct ctx *ctx)

@@ -276,6 +276,20 @@ uuid = "21f0f554-7f7c-4211-9ca1-6d0f000ea9e7"
 
 This section affects behaviour when `mctpd` is running in bus owner mode
 
+#### `dynamic_eid_range`: Range for dynamic EID allocations
+
+* type: array of integers, 2 elements
+* default: `[ 8, 254 ]`
+
+This setting specifies the range of dynamic EIDs that `mctpd` will allocate
+new peers' EIDs from. Values are inclusive.
+
+Local interface EIDs and statically-allocated EIDs may fall outside this range;
+it is only used when a peer needs a new dynamic address.
+
+The default value makes the entire MCTP EID address space available for dynamic
+allocations.
+
 #### `max_pool_size`: Maximum peer allocation pool size
 
 * type: integer

@@ -20,6 +20,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 3. Added documentation for `mctpd.conf` settings
 
+4. `mctpd`'s dynamic EID range is now configurable
+
 ## [2.2] - 2025-07-28
 
 ### Fixed
