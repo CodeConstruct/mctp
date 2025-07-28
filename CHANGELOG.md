@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [2.2] - 2025-07-28
+
 ### Fixed
 
 1. Fixed an issue where peer pointers are kept over a potential realloc()
