@@ -99,3 +99,30 @@ async def test_accept_multiple_set_eids_for_single_interface(dbus, mctpd):
 
     # expect new EID on D-Bus
     assert await mctpd_mctp_endpoint_control_obj(dbus, f"/au/com/codeconstruct/mctp1/networks/1/endpoints/{0x66}")
+
+
+""" Test simple Discovery sequence """
+async def test_simple_discovery_sequence(dbus, mctpd):
+    bo = mctpd.network.endpoints[0]
+
+    assert len(mctpd.system.addresses) == 0
+
+    # no EID yet
+    rsp = await bo.send_control(mctpd.network.mctp_socket, MCTPControlCommand(True, 0, 0x02))
+    assert rsp.hex(' ') == '00 02 00 00 02 00'
+
+    # BMC response to Prepare for Discovery
+    rsp = await bo.send_control(mctpd.network.mctp_socket, MCTPControlCommand(True, 0, 0x0B))
+    assert rsp.hex(' ') == '00 0b 00'
+
+    # BMC response to Endpoint Discovery
+    rsp = await bo.send_control(mctpd.network.mctp_socket, MCTPControlCommand(True, 0, 0x0C))
+    assert rsp.hex(' ') == '00 0c 00'
+
+    # set EID = 42
+    rsp = await bo.send_control(mctpd.network.mctp_socket, MCTPControlCommand(True, 0, 0x01, bytes([0x00, 0x42])))
+    assert rsp.hex(' ') == '00 01 00 00 42 00'
+
+    # BMC should contains two object paths: bus owner and itself
+    assert await mctpd_mctp_endpoint_control_obj(dbus, "/au/com/codeconstruct/mctp1/networks/1/endpoints/8")
+    assert await mctpd_mctp_endpoint_control_obj(dbus, f"/au/com/codeconstruct/mctp1/networks/1/endpoints/{0x42}")
