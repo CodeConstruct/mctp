@@ -16,6 +16,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 1. `mctp-bench` now supports a "request receive" mode, where
    `mctp-bench recv eid <...>` sends a command to start the benchmark session.
 
+2. `mctpd` now supports a bus-owner configuration section
+
 ## [2.2] - 2025-07-28
 
 ### Fixed
