@@ -214,3 +214,73 @@ busctl call au.com.codeconstruct.MCTP1 \
 ### `.Remove`
 
 Removes the MCTP endpoint from `mctpd`, and deletes routes and neighbour entries.
+
+## Configuration
+
+`mctpd` reads configuration data from a TOML file, typically `/etc/mctpd.conf`.
+An alternative configuration file can be specified using the `--config`
+command-line option.
+
+The configuration file has a global section, plus function-specific sections.
+
+### Global settings
+
+These apply to all modes of `mctpd` operation. One top-level setting is defined:
+
+#### `mode`: mctpd mode of operation
+
+* type: string enum: `bus-owner` or `endpoint`
+* default: `bus-owner`
+
+This sets the overall mode of `mctpd`, either as a Bus Owner (`mode =
+"bus-owner"`) or Endpoint (`mode = "endpoint"`). In bus owner mode, mctpd will
+assume responsibility for allocating addresses to other endpoints. In endpoint
+mode, mctpd will not allocate addresses, but instead accept allocations from an
+external bus owner.
+
+### `[mctp]` section
+
+This section affects MCTP protocol behaviour, and any common values used for
+both bus-owner and endpoint modes.
+
+#### `message_timeout_ms`: global MCTP message timeout
+
+* type: integer, in milliseconds
+* default: 250
+
+This sets the timeout for outgoing request messages. A message will be
+considered lost if no response is received within this timeout.
+
+Long timeouts may degrade `mctpd` performance, as we typically wait for
+operations synchronously.
+
+#### `uuid`: endpoint UUID value
+
+* type: string, UUID format
+* default: queried from system
+
+This sets the UUID used to identify this endpoint to peers, as returned in the
+MCTP "Get Endpoint UUID" command.
+
+This is not typically needed; if no `uuid` configuration is specified, `mctpd`
+will use the system-wide UUID value, which has generally correct semantics
+for the MCTP endpoint UUID.
+
+The UUID should be formatted as a RFC 4122 UUID string, for example:
+
+```
+uuid = "21f0f554-7f7c-4211-9ca1-6d0f000ea9e7"
+```
+
+#### `[bus-owner]` section
+
+This section affects behaviour when `mctpd` is running in bus owner mode
+
+#### `max_pool_size`: Maximum peer allocation pool size
+
+* type: integer
+* default: 15
+
+This setting determines the maximum EID pool size that a bridge peer may request
+via their Set Endpoint ID response. Requests larger than this size will be
+truncated.

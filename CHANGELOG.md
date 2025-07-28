@@ -18,6 +18,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 2. `mctpd` now supports a bus-owner configuration section
 
+3. Added documentation for `mctpd.conf` settings
+
 ## [2.2] - 2025-07-28
 
 ### Fixed
