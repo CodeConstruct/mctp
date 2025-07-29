@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## Fixed
+
+1. mctpd: fixed an issue where endpoints may persist when their dependent
+   interface is deleted
+
 ## [2.2] - 2025-07-28
 
 ### Fixed

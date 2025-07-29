@@ -748,6 +748,44 @@ async def test_del_interface_last(dbus, mctpd):
     with pytest.raises(asyncdbus.errors.DBusError):
         await mctpd_mctp_network_obj(dbus, iface.net)
 
+""" Delete an interface with peers attached, ensure all are gone """
+async def test_del_interface_with_peers(dbus, mctpd):
+    net = mctpd.system.interfaces[0].net
+    iface = mctpd.system.Interface(
+        'mctp1', 2, net,  bytes([0x10]), 68, 254, True,
+    )
+    await mctpd.system.add_interface(iface)
+
+    eps = [
+        Endpoint(iface, bytes([0x11])),
+        Endpoint(iface, bytes([0x12])),
+        Endpoint(iface, bytes([0x13])),
+    ]
+
+    mctp = await mctpd_mctp_iface_obj(dbus, iface)
+
+    paths = []
+    for ep in eps:
+        mctpd.network.add_endpoint(ep)
+        (eid, _, path, _) = await mctp.call_setup_endpoint(ep.lladdr)
+        assert eid == ep.eid
+        paths.append(path)
+
+    await mctpd.system.del_interface(iface)
+
+    # interface should be gone
+    with pytest.raises(asyncdbus.errors.DBusError):
+        await mctpd_mctp_iface_obj(dbus, iface)
+
+    # .. but the network should remain, as the default interface is still
+    # present
+    _ = await mctpd_mctp_network_obj(dbus, net)
+
+    for path in paths:
+        with pytest.raises(asyncdbus.errors.DBusError) as ex:
+            ep = await mctpd_mctp_endpoint_common_obj(dbus, path)
+        assert str(ex.value).startswith("Unknown object")
+
 """ Remove and re-add an interface """
 async def test_add_interface(dbus, mctpd):
     net = 1
