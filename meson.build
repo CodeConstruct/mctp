@@ -63,6 +63,8 @@ mctp_test = executable('test-mctp',
     include_directories:  include_directories('src'),
 )
 
+test_deps = [mctp_test]
+
 executable('mctp-req',
     sources: ['src/mctp-req.c'] + util_sources,
 )
@@ -97,6 +99,7 @@ if libsystemd.found()
         include_directories:  include_directories('src'),
         dependencies: [libsystemd, toml_dep],
     )
+    test_deps += mctpd_test
 endif
 
 tests = get_option('tests')
@@ -153,7 +156,7 @@ if tests
     )
 
     test('test-mctpd', dbus_run_session,
-        depends: [mctpd_test, mctp_test],
+        depends: [test_deps],
         args: [ sh.full_path(), '-c', script, '--' ],
         protocol: 'tap',
     )
