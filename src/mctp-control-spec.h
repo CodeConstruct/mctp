@@ -5,7 +5,8 @@
 
 #include <assert.h>
 #include <stdint.h>
-#include <linux/mctp.h>
+
+#include "mctp.h"
 
 /*
  * Helper structs and functions for MCTP control messages.
