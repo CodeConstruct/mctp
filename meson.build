@@ -141,7 +141,9 @@ if tests
     # redirecting to a file. We can detect this if stdout is an terminal, and
     # disable TAP protocol.
     pytest = find_program('pytest')
-    script = '''export DBUS_STARTER_BUS_TYPE=user; if [ ! -t 1 ]; then PYTEST_FLAGS="--tap"; fi; @0@ $PYTEST_FLAGS $@'''.format(pytest.full_path())
+    script = 'if [ ! -t 1 ]; then PFL="--tap"; fi; DBUS_STARTER_BUS_TYPE=user "@0@" $PFL $@'.format(
+      pytest.full_path()
+    )
     sh = find_program('sh')
     dbus_run_session = find_program('dbus-run-session')
 
