@@ -11,6 +11,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 1. mctpd: fixed an issue where endpoints may persist when their dependent
    interface is deleted
 
+2. Header compatibility fixes for environments without a recent linux/mctp.h
+
 ## Added
 
 1. `mctp-bench` now supports a "request receive" mode, where
