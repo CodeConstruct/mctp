@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
+#include <linux/if.h>
 #include <linux/rtnetlink.h>
 
 #include "mctp.h"
