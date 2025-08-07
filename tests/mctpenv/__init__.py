@@ -303,6 +303,10 @@ class Endpoint:
         self.eid = eid
         self.types = types or [0]
         self.bridged_eps = []
+        self.pool_size = 0
+        self.pool_start = 0
+        self.allocated_pool_size = 0
+
         # keyed by (type, type-specific-instance)
         self.commands = {}
 
@@ -348,7 +352,9 @@ class Endpoint:
                 # Set Endpoint ID
                 (op, eid) = data[2:]
                 self.eid = eid
-                data = bytes(hdr + [0x00, 0x00, self.eid, 0x00])
+                self.pool_size = len(self.bridged_eps)
+                alloc_status = 0x01 if self.pool_size > 0 else 0x00
+                data = bytes(hdr + [0x00, alloc_status, self.eid, self.pool_size])
                 await sock.send(raddr, data)
 
             elif opcode == 2:
@@ -365,6 +371,24 @@ class Endpoint:
                 # Get Message Type Support
                 types = self.types
                 data = bytes(hdr + [0x00, len(types)] + types)
+                await sock.send(raddr, data)
+
+            elif opcode == 8:
+                # Allocate Endpoint IDs
+                (_, _, _, pool_size, pool_start) = data
+                alloc_status = 0x00
+                if self.allocated_pool_size > 0:
+                    alloc_status = 0x01
+                else:
+                    num_eps = min(pool_size, self.pool_size)
+                    self.allocated_pool_size = num_eps
+                    self.pool_start = pool_start
+                    # Assign sequential EIDs starting from pool_start
+                    for ep in range(num_eps):
+                        self.bridged_eps[ep].eid = pool_start + ep
+
+                data = bytes(hdr + [0x00, alloc_status,
+                                self.allocated_pool_size, self.pool_start])
                 await sock.send(raddr, data)
 
             else:
