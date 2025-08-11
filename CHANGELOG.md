@@ -24,6 +24,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 4. `mctpd`'s dynamic EID range is now configurable
 
+5. When in endpoint mode, `mctpd` now handles to Set Endpoint ID messages,
+   assigning an EID to local interfaces.
+
 ## [2.2] - 2025-07-28
 
 ### Fixed
