@@ -744,20 +744,22 @@ static int handle_control_set_endpoint_id(struct ctx *ctx, int sd,
 	case MCTP_SET_EID_SET:
 		// TODO: for bridges, only accept EIDs from originator bus
 		//
-		// We currently only support endpoints, which require separate EIDs on
-		// interfaces (see function comment). For bridges, we might need to support
-		// sharing a single EID for multiple interfaces. We will need to:
+		// We currently only support endpoints, which require separate
+		// EIDs on interfaces (see function comment). For bridges, we
+		// might need to support sharing a single EID for multiple
+		// interfaces. We will need to:
 		// - track the first bus assigned the EID.
-		// - policy for propagating EID to other interfaces (see bridge EID options in
-		//   function comment above)
+		// - policy for propagating EID to other interfaces (see bridge
+		//   EID options in function comment above)
 
 		// fallthrough
 	case MCTP_SET_EID_FORCE:
 
 		fprintf(stderr, "setting EID to %d\n", req->eid);
 
-		// When we are assigned a new EID, assume our world view of the network
-		// reachable from this interface has been stale. Reset everything.
+		// When we are assigned a new EID, assume our world view of the
+		// network reachable from this interface has been stale. Reset
+		// everything.
 		clear_interface_addrs(ctx, addr->smctp_ifindex);
 
 		rc = mctp_nl_addr_add(ctx->nl, req->eid, addr->smctp_ifindex);
