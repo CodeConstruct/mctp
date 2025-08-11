@@ -719,10 +719,12 @@ static int handle_control_get_endpoint_id(struct ctx *ctx, int sd,
 	mctp_ctrl_msg_hdr_init_resp(&resp->ctrl_hdr, req->ctrl_hdr);
 
 	resp->eid = local_addr(ctx, addr->smctp_ifindex);
+
+	resp->eid_type = 0;
 	if (ctx->default_role == ENDPOINT_ROLE_BUS_OWNER)
-		SET_ENDPOINT_TYPE(resp->eid_type, MCTP_BUS_OWNER_BRIDGE);
-	// 10b = 2 = static EID supported, matches currently assigned.
-	SET_ENDPOINT_ID_TYPE(resp->eid_type, 2);
+		resp->eid_type |= SET_ENDPOINT_TYPE(MCTP_BUS_OWNER_BRIDGE);
+	resp->eid_type |=
+		SET_ENDPOINT_ID_TYPE(MCTP_STATIC_EID_MATCHING_PRESENT);
 	// TODO: medium specific information
 
 	// Get Endpoint ID is typically send and reply using physical addressing.
