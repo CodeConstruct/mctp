@@ -6,6 +6,7 @@
  * Copyright (c) 2021 Google
  */
 
+#include <stdbool.h>
 #define _GNU_SOURCE
 #include "config.h"
 
@@ -45,6 +46,7 @@
 #define MCTP_DBUS_PATH_LINKS "/au/com/codeconstruct/mctp1/interfaces"
 #define CC_MCTP_DBUS_IFACE_BUSOWNER "au.com.codeconstruct.MCTP.BusOwner1"
 #define CC_MCTP_DBUS_IFACE_ENDPOINT "au.com.codeconstruct.MCTP.Endpoint1"
+#define CC_MCTP_DBUS_IFACE_BRIDGE "au.com.codeconstruct.MCTP.Bridge1"
 #define CC_MCTP_DBUS_IFACE_TESTING "au.com.codeconstruct.MCTPTesting"
 #define MCTP_DBUS_NAME "au.com.codeconstruct.MCTP1"
 #define MCTP_DBUS_IFACE_ENDPOINT "xyz.openbmc_project.MCTP.Endpoint"
@@ -151,6 +153,7 @@ struct peer {
 	bool published;
 	sd_bus_slot *slot_obmc_endpoint;
 	sd_bus_slot *slot_cc_endpoint;
+	sd_bus_slot *slot_bridge;
 	sd_bus_slot *slot_uuid;
 	char *path;
 
@@ -185,6 +188,10 @@ struct peer {
 		uint8_t endpoint_type;
 		uint8_t medium_spec;
 	} recovery;
+
+	// Pool size
+	uint8_t pool_size;
+	uint8_t pool_start;
 };
 
 struct ctx {
@@ -232,7 +239,7 @@ static int emit_interface_removed(struct link *link);
 static int emit_net_added(struct ctx *ctx, struct net *net);
 static int emit_net_removed(struct ctx *ctx, struct net *net);
 static int add_peer(struct ctx *ctx, const dest_phys *dest, mctp_eid_t eid,
-		    uint32_t net, struct peer **ret_peer);
+		    uint32_t net, struct peer **ret_peer, bool net_learn);
 static int add_peer_from_addr(struct ctx *ctx,
 			      const struct sockaddr_mctp_ext *addr,
 			      struct peer **ret_peer);
@@ -254,9 +261,11 @@ static int del_local_eid(struct ctx *ctx, uint32_t net, int eid);
 static int add_net(struct ctx *ctx, uint32_t net);
 static void del_net(struct net *net);
 static int add_interface(struct ctx *ctx, int ifindex);
+static int endpoint_allocate_eid(struct peer *peer);
 
 static const sd_bus_vtable bus_endpoint_obmc_vtable[];
 static const sd_bus_vtable bus_endpoint_cc_vtable[];
+static const sd_bus_vtable bus_endpoint_bridge[];
 static const sd_bus_vtable bus_endpoint_uuid_vtable[];
 
 __attribute__((format(printf, 1, 2))) static void bug_warn(const char *fmt, ...)
@@ -1484,7 +1493,7 @@ static int endpoint_query_phys(struct ctx *ctx, const dest_phys *dest,
 }
 
 /* returns -ECONNREFUSED if the endpoint returns failure. */
-static int endpoint_send_set_endpoint_id(const struct peer *peer,
+static int endpoint_send_set_endpoint_id(struct peer *peer,
 					 mctp_eid_t *new_eidp)
 {
 	struct sockaddr_mctp_ext addr;
@@ -1552,9 +1561,20 @@ static int endpoint_send_set_endpoint_id(const struct peer *peer,
 
 	alloc = resp->status & 0x3;
 	if (alloc != 0) {
-		// TODO for bridges
-		warnx("%s requested allocation pool, unimplemented",
-		      dest_phys_tostr(dest));
+		peer->pool_size = resp->eid_pool_size;
+		if (peer->ctx->verbose) {
+			fprintf(stderr,
+				"%s requested allocation of pool size = %d\n",
+				dest_phys_tostr(dest), peer->pool_size);
+		}
+		if (peer->pool_size > peer->ctx->max_pool_size) {
+			warnx("Truncate: requested pool size > max pool size config");
+			peer->pool_size = peer->ctx->max_pool_size;
+		}
+	} else {
+		// reset previous assumed pool
+		peer->pool_size = 0;
+		peer->pool_start = 0;
 	}
 
 	rc = 0;
@@ -1563,10 +1583,27 @@ out:
 	return rc;
 }
 
+// Checks if given EID belongs to any bridge's pool range
+static bool is_eid_in_bridge_pool(struct net *n, struct ctx *ctx,
+				  mctp_eid_t eid)
+{
+	for (int i = ctx->dyn_eid_min; i <= eid; i++) {
+		struct peer *peer = n->peers[i];
+		if (peer && peer->pool_size > 0) {
+			if (eid >= peer->pool_start &&
+			    eid < peer->pool_start + peer->pool_size) {
+				return true;
+			}
+			i += peer->pool_size;
+		}
+	}
+	return false;
+}
+
 /* Returns the newly added peer.
  * Error is -EEXISTS if it exists */
 static int add_peer(struct ctx *ctx, const dest_phys *dest, mctp_eid_t eid,
-		    uint32_t net, struct peer **ret_peer)
+		    uint32_t net, struct peer **ret_peer, bool net_learn)
 {
 	struct peer *peer, **tmp;
 	struct net *n;
@@ -1584,6 +1621,14 @@ static int add_peer(struct ctx *ctx, const dest_phys *dest, mctp_eid_t eid,
 		}
 		*ret_peer = peer;
 		return 0;
+	} else {
+		/* only LearnEndpoint methods of au.com.codeconstruct.MCTP.Network1
+		 * interface will approve peer structure if eid belongs to a bridge
+		 * pool space else never allow.
+		 */
+		if (!net_learn & is_eid_in_bridge_pool(n, ctx, eid)) {
+			return -EADDRNOTAVAIL;
+		}
 	}
 
 	if (ctx->num_peers == MAX_PEER_SIZE)
@@ -1627,7 +1672,7 @@ static int add_peer_from_addr(struct ctx *ctx,
 	phys.hwaddr_len = addr->smctp_halen;
 
 	return add_peer(ctx, &phys, addr->smctp_base.smctp_addr.s_addr,
-			addr->smctp_base.smctp_network, ret_peer);
+			addr->smctp_base.smctp_network, ret_peer, true);
 }
 
 static int check_peer_struct(const struct peer *peer, const struct net *n)
@@ -1728,6 +1773,7 @@ static void free_peers(struct ctx *ctx)
 		free(peer->path);
 		sd_bus_slot_unref(peer->slot_obmc_endpoint);
 		sd_bus_slot_unref(peer->slot_cc_endpoint);
+		sd_bus_slot_unref(peer->slot_bridge);
 		sd_bus_slot_unref(peer->slot_uuid);
 		free(peer);
 	}
@@ -1796,11 +1842,66 @@ static int peer_set_mtu(struct ctx *ctx, struct peer *peer, uint32_t mtu)
 	return rc;
 }
 
+struct eid_allocation {
+	mctp_eid_t start;
+	unsigned int extent; /* 0 = only the start EID */
+};
+
+/* Allocate an unused dynamic EID for a peer, optionally with an associated
+ * bridge range (of size @bridged_len).
+ *
+ * We try to find the first allocation that contains the base EID plus the
+ * full range. If no space for that exists, we return the largest
+ * possible range. If the requested range is 0, then the first available
+ * (single) EID will suit as a match, the returned alloc->extent will be zero.
+ *
+ * It is up to the caller to check whether this range is suitable, and
+ * actually reserve that EID (& range) if so.
+ *
+ * returns 0 on success (with @alloc populated), non-zero on failure.
+ */
+static int allocate_eid(struct ctx *ctx, struct net *net,
+			unsigned int bridged_len, struct eid_allocation *alloc)
+{
+	struct eid_allocation cur = { 0 }, best = { 0 };
+	mctp_eid_t eid;
+
+	for (eid = ctx->dyn_eid_min; eid <= ctx->dyn_eid_max; eid++) {
+		if (net->peers[eid]) {
+			// reset our current candidate allocation
+			cur.start = 0;
+			eid += net->peers[eid]->pool_size;
+			continue;
+		}
+
+		// start a new candidate allocation
+		if (!cur.start)
+			cur.start = eid;
+		cur.extent = eid - cur.start;
+
+		// if this suits, we're done
+		if (cur.extent == bridged_len) {
+			*alloc = cur;
+			return 0;
+		}
+
+		if (cur.extent > best.extent)
+			best = cur;
+	}
+
+	if (best.start) {
+		*alloc = best;
+		return 0;
+	}
+
+	return -1;
+}
+
 static int endpoint_assign_eid(struct ctx *ctx, sd_bus_error *berr,
 			       const dest_phys *dest, struct peer **ret_peer,
-			       mctp_eid_t static_eid)
+			       mctp_eid_t static_eid, bool assign_bridge)
 {
-	mctp_eid_t e, new_eid;
+	mctp_eid_t new_eid;
 	struct net *n = NULL;
 	struct peer *peer = NULL;
 	uint32_t net;
@@ -1819,28 +1920,49 @@ static int endpoint_assign_eid(struct ctx *ctx, sd_bus_error *berr,
 	}
 
 	if (static_eid) {
-		rc = add_peer(ctx, dest, static_eid, net, &peer);
+		rc = add_peer(ctx, dest, static_eid, net, &peer, false);
 		if (rc < 0)
 			return rc;
 
 		new_eid = static_eid;
 	} else {
-		/* Find an unused dynamic EID */
-		for (e = ctx->dyn_eid_min; e <= ctx->dyn_eid_max; e++) {
-			if (n->peers[e])
-				continue;
-			rc = add_peer(ctx, dest, e, net, &peer);
-			if (rc < 0)
-				return rc;
-			break;
-		}
-		if (e > ctx->dyn_eid_max) {
-			warnx("Ran out of EIDs for net %d, allocating %s", net,
-			      dest_phys_tostr(dest));
+		struct eid_allocation alloc;
+		unsigned int alloc_size = 0;
+
+		if (assign_bridge)
+			alloc_size = ctx->max_pool_size;
+
+		rc = allocate_eid(ctx, n, alloc_size, &alloc);
+		if (rc) {
+			warnx("Cannot allocate any EID (+pool %d) on net %d for %s",
+			      alloc_size, net, dest_phys_tostr(dest));
 			sd_bus_error_setf(berr, SD_BUS_ERROR_FAILED,
 					  "Ran out of EIDs");
 			return -EADDRNOTAVAIL;
 		}
+
+		/* Only allow complete pools for now. In future we could reserve
+		 * this range, in the assumption that the subsequent pool
+		 * request (in the Set Endpoint ID response) will fit in this
+		 * reservation.
+		 */
+		if (alloc.extent < alloc_size) {
+			warnx("Cannot allocate sufficient EIDs (+pool %d) on net %d for %s"
+			      " (largest span %d at %d)",
+			      alloc_size, net, dest_phys_tostr(dest),
+			      alloc.extent, alloc.start);
+			alloc.extent = 0;
+		}
+
+		new_eid = alloc.start;
+
+		rc = add_peer(ctx, dest, new_eid, net, &peer, false);
+		if (rc < 0)
+			return rc;
+
+		peer->pool_size = alloc.extent;
+		if (peer->pool_size)
+			peer->pool_start = new_eid + 1;
 	}
 
 	rc = endpoint_send_set_endpoint_id(peer, &new_eid);
@@ -1854,6 +1976,10 @@ static int endpoint_assign_eid(struct ctx *ctx, sd_bus_error *berr,
 	}
 
 	if (new_eid != peer->eid) {
+		// avoid allocation for any different EID in response
+		warnx("Mismatch of requested from received EID, resetting the pool");
+		peer->pool_size = 0;
+		peer->pool_start = 0;
 		rc = change_peer_eid(peer, new_eid);
 		if (rc == -EEXIST) {
 			sd_bus_error_setf(
@@ -2017,7 +2143,7 @@ static int get_endpoint_peer(struct ctx *ctx, sd_bus_error *berr,
 			return 0;
 		}
 		/* New endpoint */
-		rc = add_peer(ctx, dest, eid, net, &peer);
+		rc = add_peer(ctx, dest, eid, net, &peer, false);
 		if (rc < 0)
 			return rc;
 	}
@@ -2256,7 +2382,7 @@ static int method_setup_endpoint(sd_bus_message *call, void *data,
 	}
 
 	/* Set Endpoint ID */
-	rc = endpoint_assign_eid(ctx, berr, dest, &peer, 0);
+	rc = endpoint_assign_eid(ctx, berr, dest, &peer, 0, false);
 	if (rc < 0)
 		goto err;
 
@@ -2309,13 +2435,28 @@ static int method_assign_endpoint(sd_bus_message *call, void *data,
 						  peer->net, peer_path, 0);
 	}
 
-	rc = endpoint_assign_eid(ctx, berr, dest, &peer, 0);
+	rc = endpoint_assign_eid(ctx, berr, dest, &peer, 0, true);
 	if (rc < 0)
 		goto err;
 
 	peer_path = path_from_peer(peer);
 	if (!peer_path)
 		goto err;
+
+	if (peer->pool_size > 0) {
+		rc = endpoint_allocate_eid(peer);
+		if (rc < 0) {
+			warnx("Failed to allocate downstream EIDs");
+		} else {
+			if (peer->ctx->verbose) {
+				fprintf(stderr,
+					"Downstream EIDs assigned from %d to %d : pool size %d\n",
+					peer->pool_start,
+					peer->pool_start + peer->pool_size - 1,
+					peer->pool_size);
+			}
+		}
+	}
 
 	return sd_bus_reply_method_return(call, "yisb", peer->eid, peer->net,
 					  peer_path, 1);
@@ -2381,7 +2522,7 @@ static int method_assign_endpoint_static(sd_bus_message *call, void *data,
 		}
 	}
 
-	rc = endpoint_assign_eid(ctx, berr, dest, &peer, eid);
+	rc = endpoint_assign_eid(ctx, berr, dest, &peer, eid, false);
 	if (rc < 0) {
 		goto err;
 	}
@@ -2509,6 +2650,20 @@ static int peer_route_update(struct peer *peer, uint16_t type)
 		return mctp_nl_route_add(peer->ctx->nl, peer->eid, 0,
 					 peer->phys.ifindex, NULL, peer->mtu);
 	} else if (type == RTM_DELROUTE) {
+		if (peer->pool_size > 0) {
+			int rc = 0;
+			struct mctp_fq_addr gw_addr = { 0 };
+			gw_addr.net = peer->net;
+			gw_addr.eid = peer->eid;
+			rc = mctp_nl_route_del(peer->ctx->nl, peer->pool_start,
+					       peer->pool_size - 1,
+					       peer->phys.ifindex, &gw_addr);
+			if (rc < 0)
+				warnx("failed to delete route for peer pool eids %d-%d %s",
+				      peer->pool_start,
+				      peer->pool_start + peer->pool_size - 1,
+				      strerror(-rc));
+		}
 		return mctp_nl_route_del(peer->ctx->nl, peer->eid, 0,
 					 peer->phys.ifindex, NULL);
 	}
@@ -2672,6 +2827,8 @@ static int unpublish_peer(struct peer *peer)
 		peer->slot_obmc_endpoint = NULL;
 		sd_bus_slot_unref(peer->slot_cc_endpoint);
 		peer->slot_cc_endpoint = NULL;
+		sd_bus_slot_unref(peer->slot_bridge);
+		peer->slot_bridge = NULL;
 		sd_bus_slot_unref(peer->slot_uuid);
 		peer->slot_uuid = NULL;
 		peer->published = false;
@@ -2791,7 +2948,8 @@ static int peer_endpoint_recover(sd_event_source *s, uint64_t usec,
 			 * after which we immediately return as there's no old peer state left to
 			 * maintain.
 			 */
-			return endpoint_assign_eid(ctx, NULL, &phys, &peer, 0);
+			return endpoint_assign_eid(ctx, NULL, &phys, &peer, 0,
+						   false);
 		}
 
 		/* Confirmation of the same device, apply its already allocated EID */
@@ -2952,7 +3110,7 @@ static int method_net_learn_endpoint(sd_bus_message *call, void *data,
 		return sd_bus_reply_method_return(call, "sb",
 						  path_from_peer(peer), false);
 
-	rc = add_peer(ctx, &dest, eid, net->net, &peer);
+	rc = add_peer(ctx, &dest, eid, net->net, &peer, true);
 	if (rc) {
 		warnx("can't add peer: %s", strerror(-rc));
 		goto err;
@@ -3049,6 +3207,28 @@ static int bus_endpoint_get_prop(sd_bus *bus, const char *path,
 	} else {
 		warnx("Unknown property '%s' for %s iface %s", property, path,
 		      interface);
+		rc = -ENOENT;
+	}
+
+	return rc;
+}
+
+static int bus_bridge_get_prop(sd_bus *bus, const char *path,
+			       const char *interface, const char *property,
+			       sd_bus_message *reply, void *userdata,
+			       sd_bus_error *berr)
+{
+	struct peer *peer = userdata;
+	int rc;
+
+	if (strcmp(property, "PoolStart") == 0) {
+		rc = sd_bus_message_append(reply, "y", peer->pool_start);
+	} else if (strcmp(property, "PoolEnd") == 0) {
+		uint8_t pool_end = peer->pool_start + peer->pool_size - 1;
+		rc = sd_bus_message_append(reply, "y", pool_end);
+	} else {
+		warnx("Unknown bridge property '%s' for %s iface %s", property,
+		      path, interface);
 		rc = -ENOENT;
 	}
 
@@ -3251,6 +3431,21 @@ static const sd_bus_vtable bus_endpoint_cc_vtable[] = {
 		0,
 		SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
 #endif
+	SD_BUS_VTABLE_END
+};
+
+static const sd_bus_vtable bus_endpoint_bridge[] = {
+	SD_BUS_VTABLE_START(0),
+	SD_BUS_PROPERTY("PoolStart",
+			"y",
+			bus_bridge_get_prop,
+			0,
+			SD_BUS_VTABLE_PROPERTY_CONST),
+	SD_BUS_PROPERTY("PoolEnd",
+			"y",
+			bus_bridge_get_prop,
+			0,
+			SD_BUS_VTABLE_PROPERTY_CONST),
 	SD_BUS_VTABLE_END
 };
 
@@ -3752,7 +3947,7 @@ static int add_local_eid(struct ctx *ctx, uint32_t net, int eid)
 		}
 	}
 
-	rc = add_peer(ctx, &local_phys, eid, net, &peer);
+	rc = add_peer(ctx, &local_phys, eid, net, &peer, false);
 	if (rc < 0) {
 		bug_warn("Error adding local eid %d net %d", eid, net);
 		return rc;
@@ -4232,6 +4427,140 @@ static void setup_config_defaults(struct ctx *ctx)
 static void free_config(struct ctx *ctx)
 {
 	free(ctx->config_filename);
+}
+
+static int endpoint_send_allocate_endpoint_id(struct peer *peer,
+					      mctp_eid_t eid_start,
+					      uint8_t eid_pool_size,
+					      mctp_ctrl_cmd_alloc_eid_op oper,
+					      uint8_t *allocated_pool_size,
+					      mctp_eid_t *allocated_pool_start)
+{
+	struct sockaddr_mctp_ext addr;
+	struct mctp_ctrl_cmd_alloc_eid req = { 0 };
+	struct mctp_ctrl_resp_alloc_eid *resp = NULL;
+	uint8_t *buf = NULL;
+	size_t buf_size;
+	uint8_t iid, stat;
+	int rc;
+
+	iid = mctp_next_iid(peer->ctx);
+	mctp_ctrl_msg_hdr_init_req(&req.ctrl_hdr, iid,
+				   MCTP_CTRL_CMD_ALLOCATE_ENDPOINT_IDS);
+	req.alloc_eid_op = (uint8_t)(oper & 0x03);
+	req.pool_size = eid_pool_size;
+	req.start_eid = eid_start;
+	rc = endpoint_query_peer(peer, MCTP_CTRL_HDR_MSG_TYPE, &req,
+				 sizeof(req), &buf, &buf_size, &addr);
+	if (rc < 0)
+		goto out;
+
+	rc = mctp_ctrl_validate_response(buf, buf_size, sizeof(*resp),
+					 peer_tostr_short(peer), iid,
+					 MCTP_CTRL_CMD_ALLOCATE_ENDPOINT_IDS);
+
+	if (rc)
+		goto out;
+
+	resp = (void *)buf;
+	if (!resp) {
+		warnx("Invalid response buffer");
+		return -ENOMEM;
+	}
+
+	stat = resp->status & 0x03;
+	if (stat == 0x00) {
+		if (peer->ctx->verbose) {
+			fprintf(stderr, "Allocation accepted\n");
+		}
+		if (resp->eid_pool_size != eid_pool_size ||
+		    resp->eid_set != eid_start) {
+			warnx("Unexpected pool start %d pool size %d",
+			      resp->eid_set, resp->eid_pool_size);
+			rc = -1;
+			goto out;
+		}
+		*allocated_pool_size = resp->eid_pool_size;
+		*allocated_pool_start = resp->eid_set;
+	} else {
+		if (stat == 0x1)
+			warnx("Allocation was rejected: already allocated by other bus"
+			      " pool size %d, pool start %d",
+			      resp->eid_pool_size, resp->eid_set);
+		rc = -1;
+		goto out;
+	}
+
+	if (peer->ctx->verbose) {
+		fprintf(stderr, "Allocated size of %d, starting from EID %d\n",
+			resp->eid_pool_size, resp->eid_set);
+	}
+
+out:
+	free(buf);
+	return rc;
+}
+
+static int endpoint_allocate_eid(struct peer *peer)
+{
+	uint8_t allocated_pool_size = 0;
+	mctp_eid_t allocated_pool_start = 0;
+	int rc = 0;
+
+	if (peer->pool_start >= peer->ctx->dyn_eid_max ||
+	    peer->pool_start <= 0) {
+		warnx("Invalid pool start %d", peer->pool_start);
+		return -1;
+	}
+	rc = endpoint_send_allocate_endpoint_id(
+		peer, peer->pool_start, peer->pool_size,
+		mctp_ctrl_cmd_alloc_eid_alloc_eid, &allocated_pool_size,
+		&allocated_pool_start);
+	if (rc) {
+		//reset peer pool
+		peer->pool_size = 0;
+		peer->pool_start = 0;
+		return rc;
+	} else {
+		peer->pool_size = allocated_pool_size;
+		peer->pool_start = allocated_pool_start;
+
+		// add gateway route for all bridge's downstream eids
+		if (peer->pool_size > 0) {
+			struct mctp_fq_addr gw_addr = { 0 };
+			gw_addr.net = peer->net;
+			gw_addr.eid = peer->eid;
+			rc = mctp_nl_route_add(peer->ctx->nl, peer->pool_start,
+					       peer->pool_size - 1,
+					       peer->phys.ifindex, &gw_addr,
+					       peer->mtu);
+			if (rc < 0) {
+				warnx("Failed to add gateway route for EID %d: %s",
+				      gw_addr.eid, strerror(-rc));
+				// If the route already exists, continue polling
+				if (rc == -EEXIST) {
+					rc = 0;
+				} else {
+					return rc;
+				}
+			}
+			sd_bus_add_object_vtable(peer->ctx->bus,
+						 &peer->slot_bridge, peer->path,
+						 CC_MCTP_DBUS_IFACE_BRIDGE,
+						 bus_endpoint_bridge, peer);
+			rc = sd_bus_emit_interfaces_added(
+				peer->ctx->bus, peer->path,
+				CC_MCTP_DBUS_IFACE_BRIDGE, NULL);
+			if (rc < 0) {
+				warnx("Failed to emit add %s signal for endpoint %d : %s",
+				      CC_MCTP_DBUS_IFACE_BRIDGE, peer->eid,
+				      strerror(-rc));
+			}
+			// TODO: Polling logic for downstream EID
+		}
+	}
+
+	return rc;
 }
 
 int main(int argc, char **argv)
