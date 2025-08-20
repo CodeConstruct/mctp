@@ -986,6 +986,37 @@ async def test_bridge_ep_conflict_static(dbus, mctpd):
 
     assert eid == static_eid
 
+""" Test that learnt allocations (ie, pre-assigned device EIDs) are not
+permitted, if they would conflict with a bridge pool """
+async def test_bridge_ep_conflict_learn(dbus, mctpd):
+    iface = mctpd.system.interfaces[0]
+    mctp = await mctpd_mctp_iface_obj(dbus, iface)
+    ep = mctpd.network.endpoints[0]
+    n_bridged = 3
+
+    # add downstream devices
+    for i in range(n_bridged):
+        br_ep = Endpoint(iface, bytes())
+        ep.add_bridged_ep(br_ep)
+
+    (eid, _, path, new) = await mctp.call_assign_endpoint(ep.lladdr)
+    assert ep.allocated_pool == (eid + 1, n_bridged)
+
+    # ensure no learnt assignment can be made from the bridged range
+    for i in range(n_bridged):
+        dev = Endpoint(iface, bytes([0x30 + i]), eid=ep.eid + 1 + i)
+        mctpd.network.add_endpoint(dev)
+        with pytest.raises(asyncdbus.errors.DBusError):
+            await mctp.call_learn_endpoint(dev.lladdr)
+
+    # ... but we're okay with the EID following
+    dev_eid = ep.eid + 1 + n_bridged
+    dev = Endpoint(iface, bytes([0x30 + n_bridged]), eid=dev_eid)
+    mctpd.network.add_endpoint(dev)
+    (eid, _, _, _) = await mctp.call_learn_endpoint(dev.lladdr)
+
+    assert eid == dev_eid
+
 """ Test that we truncate the requested pool size to
     the max_pool_size config """
 async def test_assign_dynamic_eid_limited_pool(nursery, dbus, sysnet):
