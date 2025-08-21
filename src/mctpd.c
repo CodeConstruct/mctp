@@ -1621,15 +1621,13 @@ static int add_peer(struct ctx *ctx, const dest_phys *dest, mctp_eid_t eid,
 		}
 		*ret_peer = peer;
 		return 0;
-	} else {
-		/* only LearnEndpoint methods of au.com.codeconstruct.MCTP.Network1
-		 * interface will approve peer structure if eid belongs to a bridge
-		 * pool space else never allow.
-		 */
-		if (!net_learn & is_eid_in_bridge_pool(n, ctx, eid)) {
-			return -EEXIST;
-		}
 	}
+	/* only LearnEndpoint methods of au.com.codeconstruct.MCTP.Network1
+	 * interface will approve peer structure if eid belongs to a bridge
+	 * pool space else never allow.
+	 */
+	if (!net_learn & is_eid_in_bridge_pool(n, ctx, eid))
+		return -EEXIST;
 
 	if (ctx->num_peers == MAX_PEER_SIZE)
 		return -ENOMEM;
