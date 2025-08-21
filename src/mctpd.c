@@ -2461,20 +2461,8 @@ static int method_assign_endpoint(sd_bus_message *call, void *data,
 	if (!peer_path)
 		goto err;
 
-	if (peer->pool_size > 0) {
-		rc = endpoint_allocate_eids(peer);
-		if (rc < 0) {
-			warnx("Failed to allocate downstream EIDs");
-		} else {
-			if (peer->ctx->verbose) {
-				fprintf(stderr,
-					"Downstream EIDs assigned from %d to %d : pool size %d\n",
-					peer->pool_start,
-					peer->pool_start + peer->pool_size - 1,
-					peer->pool_size);
-			}
-		}
-	}
+	if (peer->pool_size > 0)
+		endpoint_allocate_eids(peer);
 
 	return sd_bus_reply_method_return(call, "yisb", peer->eid, peer->net,
 					  peer_path, 1);
@@ -4532,6 +4520,7 @@ static int endpoint_allocate_eids(struct peer *peer)
 		mctp_ctrl_cmd_allocate_eids_alloc_eids, &allocated_pool_size,
 		&allocated_pool_start);
 	if (rc) {
+		warnx("Failed to allocate downstream EIDs");
 		//reset peer pool
 		peer->pool_size = 0;
 		peer->pool_start = 0;
@@ -4564,6 +4553,14 @@ static int endpoint_allocate_eids(struct peer *peer)
 	if (rc < 0) {
 		warnx("Failed to emit add %s signal for endpoint %d : %s",
 		      CC_MCTP_DBUS_IFACE_BRIDGE, peer->eid, strerror(-rc));
+	}
+
+	if (peer->ctx->verbose) {
+		fprintf(stderr,
+			"Bridge (eid %d) assigned pool [%d, %d], size %d\n",
+			peer->eid, peer->pool_start,
+			peer->pool_start + peer->pool_size - 1,
+			peer->pool_size);
 	}
 
 	// TODO: Polling logic for downstream EID
