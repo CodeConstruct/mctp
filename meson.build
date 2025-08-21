@@ -25,6 +25,10 @@ conf.set10('HAVE_STRUCT_MCTP_FQ_ADDR',
     cc.has_type('struct mctp_fq_addr', prefix: '#include <linux/mctp.h>'),
     description: 'Is struct mctp_fq_addr available?'
 )
+conf.set10('HAVE_IFLA_MCTP_PHYS_BINDING',
+    cc.has_header_symbol('linux/if_link.h', 'IFLA_MCTP_PHYS_BINDING'),
+    description: 'Is IFLA_MCTP_PHYS_BINDING enum member available?'
+)
 conf.set10('MCTPD_RECOVER_NIL_UUID',
     get_option('unsafe-recover-nil-uuid'),
     description: 'Consider a nil UUID to be valid for endpoint recovery purposes',
