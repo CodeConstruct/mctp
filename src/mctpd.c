@@ -1627,7 +1627,7 @@ static int add_peer(struct ctx *ctx, const dest_phys *dest, mctp_eid_t eid,
 		 * pool space else never allow.
 		 */
 		if (!net_learn & is_eid_in_bridge_pool(n, ctx, eid)) {
-			return -EADDRNOTAVAIL;
+			return -EEXIST;
 		}
 	}
 
