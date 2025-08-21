@@ -1488,9 +1488,14 @@ static int endpoint_query_phys(struct ctx *ctx, const dest_phys *dest,
 				   resp_len, resp_addr);
 }
 
-/* returns -ECONNREFUSED if the endpoint returns failure. */
-static int endpoint_send_set_endpoint_id(struct peer *peer,
-					 mctp_eid_t *new_eidp)
+/* returns -ECONNREFUSED if the endpoint returns failure.
+ *
+ * Returns new EID (in @new_eidp) and the requested pool size (provided in the
+ * Set Endpoint ID reponse, in @req_pool_size) on success.
+ */
+static int endpoint_send_set_endpoint_id(const struct peer *peer,
+					 mctp_eid_t *new_eidp,
+					 uint8_t *req_pool_size)
 {
 	struct sockaddr_mctp_ext addr;
 	struct mctp_ctrl_cmd_set_eid req = { 0 };
@@ -1498,7 +1503,7 @@ static int endpoint_send_set_endpoint_id(struct peer *peer,
 	int rc;
 	uint8_t *buf = NULL;
 	size_t buf_size;
-	uint8_t iid, stat, alloc;
+	uint8_t iid, stat, alloc, pool_size = 0;
 	const dest_phys *dest = &peer->phys;
 	mctp_eid_t new_eid;
 
@@ -1557,21 +1562,16 @@ static int endpoint_send_set_endpoint_id(struct peer *peer,
 
 	alloc = resp->status & 0x3;
 	if (alloc != 0) {
-		peer->pool_size = resp->eid_pool_size;
+		pool_size = resp->eid_pool_size;
 		if (peer->ctx->verbose) {
 			fprintf(stderr,
 				"%s requested allocation of pool size = %d\n",
-				dest_phys_tostr(dest), peer->pool_size);
+				dest_phys_tostr(dest), pool_size);
 		}
-		if (peer->pool_size > peer->ctx->max_pool_size) {
-			warnx("Truncate: requested pool size > max pool size config");
-			peer->pool_size = peer->ctx->max_pool_size;
-		}
-	} else {
-		// reset previous assumed pool
-		peer->pool_size = 0;
-		peer->pool_start = 0;
 	}
+
+	if (req_pool_size)
+		*req_pool_size = pool_size;
 
 	rc = 0;
 out:
@@ -1900,6 +1900,7 @@ static int endpoint_assign_eid(struct ctx *ctx, sd_bus_error *berr,
 	mctp_eid_t new_eid;
 	struct net *n = NULL;
 	struct peer *peer = NULL;
+	uint8_t req_pool_size;
 	uint32_t net;
 	int rc;
 
@@ -1966,7 +1967,7 @@ static int endpoint_assign_eid(struct ctx *ctx, sd_bus_error *berr,
 	 * it should be routable. */
 	add_peer_route(peer);
 
-	rc = endpoint_send_set_endpoint_id(peer, &new_eid);
+	rc = endpoint_send_set_endpoint_id(peer, &new_eid, &req_pool_size);
 	if (rc == -ECONNREFUSED)
 		sd_bus_error_setf(
 			berr, SD_BUS_ERROR_FAILED,
@@ -1975,6 +1976,17 @@ static int endpoint_assign_eid(struct ctx *ctx, sd_bus_error *berr,
 		remove_peer(peer);
 		return rc;
 	}
+
+	if (req_pool_size > peer->pool_size) {
+		warnx("EID %d: requested pool size (%d) > pool size available (%d)",
+		      peer->eid, req_pool_size, peer->pool_size);
+		req_pool_size = peer->pool_size;
+	}
+	// peer will likely have requested less than the available range
+	peer->pool_size = req_pool_size;
+
+	if (!peer->pool_size)
+		peer->pool_start = 0;
 
 	if (new_eid != peer->eid) {
 		// avoid allocation for any different EID in response
@@ -2926,7 +2938,7 @@ static int peer_endpoint_recover(sd_event_source *s, uint64_t usec,
 		}
 
 		/* Confirmation of the same device, apply its already allocated EID */
-		rc = endpoint_send_set_endpoint_id(peer, &new_eid);
+		rc = endpoint_send_set_endpoint_id(peer, &new_eid, NULL);
 		if (rc < 0) {
 			goto reschedule;
 		}
