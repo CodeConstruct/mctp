@@ -1132,3 +1132,28 @@ async def test_assign_dynamic_eid_allocation_failure(dbus, mctpd):
     with pytest.raises(asyncdbus.errors.InterfaceNotFoundError):
         bridge_obj = await dbus.get_proxy_object(MCTPD_C, path)
         await bridge_obj.get_interface(MCTPD_ENDPOINT_BRIDGE_I)
+
+""" Test assigning a non-bridge endpoint, when we don't have capacity for
+the speculatively-allocated bridge range"""
+async def test_assign_without_bridge_range(dbus, sysnet, nursery):
+    (dyn_eid_min, dyn_eid_max) = (10, 20)
+    max_pool_size = (dyn_eid_max - dyn_eid_min) + 1
+    config = f"""
+    [bus-owner]
+    dynamic_eid_range = [{dyn_eid_min}, {dyn_eid_max}]
+    max_pool_size = {max_pool_size}
+    """
+
+    mctpd = MctpdWrapper(dbus, sysnet, config = config)
+    await mctpd.start_mctpd(nursery)
+
+    iface = mctpd.system.interfaces[0]
+    ep = mctpd.network.endpoints[0]
+
+    mctp = await mctpd_mctp_iface_obj(dbus, iface)
+
+    (eid, _, _, _) = await mctp.call_assign_endpoint(ep.lladdr)
+
+    assert eid == dyn_eid_min
+    res = await mctpd.stop_mctpd()
+    assert res == 0
