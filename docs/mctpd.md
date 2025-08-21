@@ -152,6 +152,14 @@ Like SetupEndpoint but will not assign EIDs, will only query endpoints for a
 current EID. The `new` return value is set to `false` for an already known
 endpoint, or `true` when an endpoint's EID is newly discovered.
 
+Because we are not issuing a Set Endpoint ID as part of the LearnEndpoint call,
+we do not have any details of the endpoint's bridge pool range. So,
+LearnEndpoint is unsuitable for use with bridge endpoints - it cannot provide
+the bridge with its own EID pool. `mctpd` will warn if the device type
+reports as a bridge.
+
+Bridge endpoints should be initialised with `AssignEndpoint` instead.
+
 ## Network objects: `/au/com/codeconstruct/networks/<net>`
 
 These objects represent MCTP networks which have been added use `mctp link`
