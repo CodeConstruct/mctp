@@ -4482,8 +4482,7 @@ static int endpoint_allocate_eid(struct peer *peer)
 	mctp_eid_t allocated_pool_start = 0;
 	int rc = 0;
 
-	if (peer->pool_start >= peer->ctx->dyn_eid_max ||
-	    peer->pool_start <= 0) {
+	if (!mctp_eid_is_valid_unicast(peer->pool_start)) {
 		warnx("Invalid pool start %d", peer->pool_start);
 		return -1;
 	}
@@ -4500,28 +4499,25 @@ static int endpoint_allocate_eid(struct peer *peer)
 	peer->pool_size = allocated_pool_size;
 	peer->pool_start = allocated_pool_start;
 
+	if (!peer->pool_size)
+		return 0;
+
 	// add gateway route for all bridge's downstream eids
-	if (peer->pool_size > 0) {
-		struct mctp_fq_addr gw_addr = { 0 };
-		gw_addr.net = peer->net;
-		gw_addr.eid = peer->eid;
-		rc = mctp_nl_route_add(peer->ctx->nl, peer->pool_start,
-				       peer->pool_size - 1, peer->phys.ifindex,
-				       &gw_addr, peer->mtu);
-		if (rc < 0) {
-			warnx("Failed to add gateway route for EID %d: %s",
-			      gw_addr.eid, strerror(-rc));
-			// If the route already exists, continue polling
-			if (rc == -EEXIST) {
-				rc = 0;
-			} else {
-				return rc;
-			}
-		}
-		// TODO: Polling logic for downstream EID
+	struct mctp_fq_addr gw_addr = { 0 };
+	gw_addr.net = peer->net;
+	gw_addr.eid = peer->eid;
+	rc = mctp_nl_route_add(peer->ctx->nl, peer->pool_start,
+			       peer->pool_size - 1, peer->phys.ifindex,
+			       &gw_addr, peer->mtu);
+	if (rc < 0 && rc != -EEXIST) {
+		warnx("Failed to add gateway route for EID %d: %s", gw_addr.eid,
+		      strerror(-rc));
+		return rc;
 	}
 
-	return rc;
+	// TODO: Polling logic for downstream EID
+
+	return 0;
 }
 
 int main(int argc, char **argv)
