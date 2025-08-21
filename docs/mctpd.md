@@ -128,9 +128,9 @@ Similar to SetupEndpoint, but will always assign an EID rather than querying for
 existing ones. Will return `new = false` when an endpoint is already known to
 `mctpd`. If the endpoint is an MCTP bridge (indicated by requesting a pool size
 in its Set Endpoint ID response), this method attempts to allocate a contiguous
-range of EIDs for the bridge's downstream endpoints. If sufficient contiguous EIDs
-are not available within the dynamic allocation pool for the network, only the
-bridge's own EID will be assigned, and downstream EID allocation will fail.
+range of EIDs for the bridge's downstream endpoints. If sufficient contiguous
+EIDs are not available within the dynamic allocation pool for the network, only
+the bridge's own EID will be assigned, and downstream EID allocation will fail.
 
 #### `.AssignEndpointStatic`: `ayy` → `yisb`
 
@@ -220,19 +220,20 @@ busctl call au.com.codeconstruct.MCTP1 \
 Removes the MCTP endpoint from `mctpd`, and deletes routes and neighbour entries.
 
 ### MCTP bridge interface: `au.com.codeconstruct.MCTP.Bridge1` interface
-For any endpoint which also happens to be an MCTP Bridge, if dynamic eid is
-assgined to it via d-bus method `.AssignEndpoint`, such endpoint's pool
-allocation details would be reflected into `au.com.codeconstruct.MCTP.Bridge1`
-interface of bridge's endpoint object.
 
-### `.PoolEnd`: `y`
-
-A constant property representing last EID in the contiguous range allocated
-for downstream endpoints.
+MCTP endpoints that are set up as a bridge device (and therefore have an
+EID pool allocated to them, for downstream devices) also carry the
+`MCTP.Bridge1` interface. This provides details of the allocated EID pool, via
+two properties:
 
 ### `.PoolStart`: `y`
 
-A constant property representing first EID in the contiguous range allocated
+A constant property representing the first EID in the contiguous range allocated
+for downstream endpoints.
+
+### `.PoolEnd`: `y`
+
+A constant property representing the last EID in the contiguous range allocated
 for downstream endpoints.
 
 ## Configuration
