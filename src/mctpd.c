@@ -2360,10 +2360,14 @@ static int method_setup_endpoint(sd_bus_message *call, void *data,
 				 sd_bus_error *berr)
 {
 	dest_phys desti = { 0 }, *dest = &desti;
+	uint8_t ep_type, medium_spec;
 	const char *peer_path = NULL;
 	struct link *link = data;
 	struct ctx *ctx = link->ctx;
 	struct peer *peer = NULL;
+	bool new = true;
+	mctp_eid_t eid;
+	uint32_t net;
 	int rc;
 
 	dest->ifindex = link->ifindex;
@@ -2380,38 +2384,74 @@ static int method_setup_endpoint(sd_bus_message *call, void *data,
 		return sd_bus_error_setf(berr, SD_BUS_ERROR_INVALID_ARGS,
 					 "Bad physaddr");
 
-	/* Get Endpoint ID */
-	rc = get_endpoint_peer(ctx, berr, dest, &peer, NULL);
-	if (rc >= 0 && peer) {
-		uint8_t ep_type = GET_MCTP_GET_EID_EP_TYPE(peer->endpoint_type);
-		if (ep_type == MCTP_GET_EID_EP_TYPE_BRIDGE) {
-			fprintf(stderr,
-				"SetupEndpoint, eid %d: Get EID "
-				"response indicated a bridge with existing "
-				"EID, reassigning\n",
-				peer->eid);
-			remove_peer(peer);
-			peer = NULL;
-		} else {
-			if (ctx->verbose)
-				fprintf(stderr,
-					"%s returning from get_endpoint_peer %s\n",
-					__func__, peer_tostr(peer));
-			peer_path = path_from_peer(peer);
-			if (!peer_path)
-				goto err;
-			return sd_bus_reply_method_return(call, "yisb",
-							  peer->eid, peer->net,
-							  peer_path, 0);
-		}
-	} else if (rc == -EEXIST) {
-		// EEXISTS is OK, we will assign a new eid instead.
-	} else if (rc < 0) {
-		// Unhandled error, fail.
+	net = mctp_nl_net_byindex(ctx->nl, dest->ifindex);
+	if (!net) {
+		rc = -EINVAL;
 		goto err;
 	}
 
-	/* Set Endpoint ID */
+	/* Get Endpoint ID */
+	rc = query_get_endpoint_id(ctx, dest, &eid, &ep_type, &medium_spec);
+	if (rc)
+		goto err;
+
+	/* does it exist already? */
+	peer = find_peer_by_phys(ctx, dest);
+
+	/* we have a few cases:
+	 *
+	 * - no peer, no eid
+	 *    --> set up both
+	 * - no peer, eid, not a bridge:
+	 *    --> create a peer with the given EID
+	 * - no peer, eid, bridge:
+	 *    --> reassign, including bridge
+	 * - peer, eid (but not matching)
+	 *    --> change EID if possible, or reassign
+	 * - peer, no eid:
+	 *    --> remove peer, reassign
+	 */
+
+	bool is_bridge = GET_MCTP_GET_EID_EP_TYPE(ep_type) ==
+			 MCTP_GET_EID_EP_TYPE_BRIDGE;
+
+	printf("%s: peer %p, eid %d, is_bridge %d ep type %x\n", __func__, peer,
+	       eid, is_bridge, ep_type);
+
+	if (peer) {
+		/* TODO: we could check the bridge allocation through the
+		 * Get Allocation Information op of Allocate Endpoint IDs,
+		 * and be slightly more accurate with persisting the EID...
+		 */
+		if (eid && peer->eid == eid && is_bridge == !!peer->pool_size) {
+			/* all matching: no action required */
+			new = false;
+			goto out;
+		}
+		/* we have some difference in EID / bridge config, remove and
+		 * reassign */
+		remove_peer(peer);
+		peer = NULL;
+	}
+
+	/* simple allocation: try to use existing EID */
+	if (eid && !is_bridge) {
+		rc = add_peer(ctx, dest, eid, net, &peer, false);
+		if (rc == -EEXIST) {
+			/* proposed EID already present on a different peer,
+			 * fall back to assigning */
+		} else if (rc < 0) {
+			goto err;
+		} else {
+			peer->endpoint_type = ep_type;
+			peer->medium_spec = medium_spec;
+			rc = setup_added_peer(peer);
+			if (rc)
+				goto err;
+			goto out;
+		}
+	}
+
 	rc = endpoint_assign_eid(ctx, berr, dest, &peer, 0, true);
 	if (rc < 0)
 		goto err;
@@ -2419,14 +2459,14 @@ static int method_setup_endpoint(sd_bus_message *call, void *data,
 	if (peer->pool_size)
 		endpoint_allocate_eids(peer);
 
+out:
 	peer_path = path_from_peer(peer);
-	if (!peer_path)
+	if (!peer_path) {
+		rc = -EPROTO;
 		goto err;
-	if (ctx->verbose)
-		fprintf(stderr, "%s returning from endpoint_assign_eid %s\n",
-			__func__, peer_tostr(peer));
+	}
 	return sd_bus_reply_method_return(call, "yisb", peer->eid, peer->net,
-					  peer_path, 1);
+					  peer_path, new);
 
 err:
 	set_berr(ctx, rc, berr);
