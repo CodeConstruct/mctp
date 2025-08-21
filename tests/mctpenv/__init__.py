@@ -361,7 +361,10 @@ class Endpoint:
 
             elif opcode == 2:
                 # Get Endpoint ID
-                data = bytes(hdr + [0x00, self.eid, 0x00, 0x00])
+                ep_type = 0
+                if len(self.bridged_eps) > 0:
+                    ep_type = 0x1 << 4
+                data = bytes(hdr + [0x00, self.eid, ep_type, 0x00])
                 await sock.send(raddr, data)
 
             elif opcode == 3:

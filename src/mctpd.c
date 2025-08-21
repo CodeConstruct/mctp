@@ -2383,15 +2383,27 @@ static int method_setup_endpoint(sd_bus_message *call, void *data,
 	/* Get Endpoint ID */
 	rc = get_endpoint_peer(ctx, berr, dest, &peer, NULL);
 	if (rc >= 0 && peer) {
-		if (ctx->verbose)
+		uint8_t ep_type = GET_MCTP_GET_EID_EP_TYPE(peer->endpoint_type);
+		if (ep_type == MCTP_GET_EID_EP_TYPE_BRIDGE) {
 			fprintf(stderr,
-				"%s returning from get_endpoint_peer %s\n",
-				__func__, peer_tostr(peer));
-		peer_path = path_from_peer(peer);
-		if (!peer_path)
-			goto err;
-		return sd_bus_reply_method_return(call, "yisb", peer->eid,
-						  peer->net, peer_path, 0);
+				"SetupEndpoint, eid %d: Get EID "
+				"response indicated a bridge with existing "
+				"EID, reassigning\n",
+				peer->eid);
+			remove_peer(peer);
+			peer = NULL;
+		} else {
+			if (ctx->verbose)
+				fprintf(stderr,
+					"%s returning from get_endpoint_peer %s\n",
+					__func__, peer_tostr(peer));
+			peer_path = path_from_peer(peer);
+			if (!peer_path)
+				goto err;
+			return sd_bus_reply_method_return(call, "yisb",
+							  peer->eid, peer->net,
+							  peer_path, 0);
+		}
 	} else if (rc == -EEXIST) {
 		// EEXISTS is OK, we will assign a new eid instead.
 	} else if (rc < 0) {
@@ -2400,9 +2412,12 @@ static int method_setup_endpoint(sd_bus_message *call, void *data,
 	}
 
 	/* Set Endpoint ID */
-	rc = endpoint_assign_eid(ctx, berr, dest, &peer, 0, false);
+	rc = endpoint_assign_eid(ctx, berr, dest, &peer, 0, true);
 	if (rc < 0)
 		goto err;
+
+	if (peer->pool_size)
+		endpoint_allocate_eids(peer);
 
 	peer_path = path_from_peer(peer);
 	if (!peer_path)
@@ -2581,6 +2596,14 @@ static int method_learn_endpoint(sd_bus_message *call, void *data,
 		goto err;
 	if (!peer)
 		return sd_bus_reply_method_return(call, "yisb", 0, 0, "", 0);
+
+	uint8_t ep_type = GET_MCTP_GET_EID_EP_TYPE(peer->endpoint_type);
+	if (ep_type == MCTP_GET_EID_EP_TYPE_BRIDGE) {
+		warnx("LearnEndpoint, eid %d: Get EID response "
+		      "indicated a bridge with existing EID, "
+		      "but no pool is assignable",
+		      peer->eid);
+	}
 
 	peer_path = path_from_peer(peer);
 	if (!peer_path)

@@ -1042,6 +1042,33 @@ async def test_bridge_ep_conflict_setup(dbus, mctpd):
         (eid, _, _, _) = await mctp.call_setup_endpoint(dev.lladdr)
         assert eid not in pool_range
 
+""" Test that mctpd will reassign a bridge endpoints (pre-configured) EID
+if necessary to satisfy the bridge pool allocation"""
+async def test_bridge_setup_reassign(dbus, mctpd):
+    iface = mctpd.system.interfaces[0]
+    mctp = await mctpd_mctp_iface_obj(dbus, iface)
+
+    # ep: regular endpoint, will conflict with a bridge pool
+    ep = mctpd.network.endpoints[0]
+    static_eid = 10
+    (eid, _, _, _) = await mctp.call_assign_endpoint_static(
+        ep.lladdr,
+        static_eid
+    )
+
+    assert eid == static_eid
+
+    # br: our bridge
+    conflict_eid = 9
+    br = Endpoint(iface, bytes([ep.lladdr[0] + 1]), eid=conflict_eid)
+    br.add_bridged_ep(Endpoint(iface, bytes()))
+    mctpd.network.add_endpoint(br)
+
+    (eid, _, _, _) = await mctp.call_setup_endpoint(br.lladdr)
+    assert eid != conflict_eid
+    assert br.allocated_pool is not None
+    assert br.allocated_pool[0] == eid + 1
+
 """ Test that we truncate the requested pool size to
     the max_pool_size config """
 async def test_assign_dynamic_eid_limited_pool(nursery, dbus, sysnet):

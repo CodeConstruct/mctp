@@ -279,6 +279,28 @@ struct mctp_ctrl_resp_allocate_eids {
 #define MCTP_SET_EID_ACCEPTED 0x0
 #define MCTP_SET_EID_REJECTED 0x1
 
+/* MCTP Get Endpoint ID request and response fields
+ * See DSP0236 v1.3.0 Table 15.
+ */
+#define MCTP_GET_EID_EP_TYPE_SHIFT 4
+#define MCTP_GET_EID_EP_TYPE_MASK 0x03
+#define GET_MCTP_GET_EID_EP_TYPE(field) \
+	(((field) >> MCTP_GET_EID_EP_TYPE_SHIFT) & MCTP_GET_EID_EP_TYPE_MASK)
+#define MCTP_GET_EID_EP_TYPE_EP 0
+#define MCTP_GET_EID_EP_TYPE_BRIDGE 1
+
+#define MCTP_GET_EID_EID_TYPE_SHIFT 0
+#define MCTP_GET_EID_EID_TYPE_MASK 0x03
+#define GET_MCTP_GET_EID_EID_TYPE(field) \
+	(((field) >> MCTP_GET_EID_EID_TYPE_SHIFT) & MCTP_GET_EID_EID_TYPE_MASK)
+#define MCTP_GET_EID_EID_TYPE_DYNAMIC 0
+/* Static EID is supported, may or may not match current */
+#define MCTP_GET_EID_EID_TYPE_STATIC 1
+/* Current eid is the same as static */
+#define MCTP_GET_EID_EID_TYPE_STATIC_SAME 2
+/* Current eid is different from static */
+#define MCTP_GET_EID_EID_TYPE_STATIC_DIFFERENT 3
+
 #define MCTP_EID_ALLOCATION_STATUS_SHIFT 0x0
 #define MCTP_EID_ALLOCATION_STATUS_MASK 0x3
 #define SET_MCTP_EID_ALLOCATION_STATUS(status)        \
