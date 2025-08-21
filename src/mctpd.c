@@ -1881,7 +1881,7 @@ static int allocate_eid(struct ctx *ctx, struct net *net,
 			return 0;
 		}
 
-		if (cur.extent > best.extent)
+		if (cur.extent > best.extent || !best.start)
 			best = cur;
 	}
 
