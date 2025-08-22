@@ -259,7 +259,7 @@ static int del_local_eid(struct ctx *ctx, uint32_t net, int eid);
 static int add_net(struct ctx *ctx, uint32_t net);
 static void del_net(struct net *net);
 static int add_interface(struct ctx *ctx, int ifindex);
-static int endpoint_allocate_eid(struct peer *peer);
+static int endpoint_allocate_eids(struct peer *peer);
 
 static const sd_bus_vtable bus_endpoint_obmc_vtable[];
 static const sd_bus_vtable bus_endpoint_cc_vtable[];
@@ -2458,7 +2458,7 @@ static int method_assign_endpoint(sd_bus_message *call, void *data,
 		goto err;
 
 	if (peer->pool_size > 0) {
-		rc = endpoint_allocate_eid(peer);
+		rc = endpoint_allocate_eids(peer);
 		if (rc < 0) {
 			warnx("Failed to allocate downstream EIDs");
 		} else {
@@ -4404,12 +4404,10 @@ static void free_config(struct ctx *ctx)
 	free(ctx->config_filename);
 }
 
-static int endpoint_send_allocate_endpoint_id(struct peer *peer,
-					      mctp_eid_t eid_start,
-					      uint8_t eid_pool_size,
-					      mctp_ctrl_cmd_allocate_eids_op op,
-					      uint8_t *allocated_pool_size,
-					      mctp_eid_t *allocated_pool_start)
+static int endpoint_send_allocate_endpoint_ids(
+	struct peer *peer, mctp_eid_t eid_start, uint8_t eid_pool_size,
+	mctp_ctrl_cmd_allocate_eids_op op, uint8_t *allocated_pool_size,
+	mctp_eid_t *allocated_pool_start)
 {
 	struct sockaddr_mctp_ext addr;
 	struct mctp_ctrl_cmd_allocate_eids req = { 0 };
@@ -4476,7 +4474,7 @@ out:
 	return rc;
 }
 
-static int endpoint_allocate_eid(struct peer *peer)
+static int endpoint_allocate_eids(struct peer *peer)
 {
 	uint8_t allocated_pool_size = 0;
 	mctp_eid_t allocated_pool_start = 0;
@@ -4486,7 +4484,7 @@ static int endpoint_allocate_eid(struct peer *peer)
 		warnx("Invalid pool start %d", peer->pool_start);
 		return -1;
 	}
-	rc = endpoint_send_allocate_endpoint_id(
+	rc = endpoint_send_allocate_endpoint_ids(
 		peer, peer->pool_start, peer->pool_size,
 		mctp_ctrl_cmd_allocate_eids_alloc_eids, &allocated_pool_size,
 		&allocated_pool_start);
