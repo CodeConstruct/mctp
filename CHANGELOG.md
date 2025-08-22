@@ -27,6 +27,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 5. When in endpoint mode, `mctpd` now handles to Set Endpoint ID messages,
    assigning an EID to local interfaces.
 
+6. `mctpd` now handles downstream MCTP bridges, which may request an EID
+   pool from their Set Endpoint ID response. It will attempt an EID allocation
+   from the dynamic range, and pass this to the bridge using a subsequent
+   Allocate Endpoint IDs command.
+
 ## [2.2] - 2025-07-28
 
 ### Fixed
