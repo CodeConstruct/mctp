@@ -239,7 +239,7 @@ static int emit_interface_removed(struct link *link);
 static int emit_net_added(struct ctx *ctx, struct net *net);
 static int emit_net_removed(struct ctx *ctx, struct net *net);
 static int add_peer(struct ctx *ctx, const dest_phys *dest, mctp_eid_t eid,
-		    uint32_t net, struct peer **ret_peer, bool net_learn);
+		    uint32_t net, struct peer **ret_peer, bool allow_bridged);
 static int add_peer_from_addr(struct ctx *ctx,
 			      const struct sockaddr_mctp_ext *addr,
 			      struct peer **ret_peer);
@@ -1600,10 +1600,13 @@ static bool is_eid_in_bridge_pool(const struct net *n, const struct ctx *ctx,
 	return false;
 }
 
-/* Returns the newly added peer.
- * Error is -EEXISTS if it exists */
+/* Returns the newly added peer. If @allow_bridged is set, we do not conflict
+ * with EIDs that are within bridge pool allocations.
+ *
+ * Error is -EEXISTS if it exists
+ */
 static int add_peer(struct ctx *ctx, const dest_phys *dest, mctp_eid_t eid,
-		    uint32_t net, struct peer **ret_peer, bool net_learn)
+		    uint32_t net, struct peer **ret_peer, bool allow_bridged)
 {
 	struct peer *peer, **tmp;
 	struct net *n;
@@ -1622,11 +1625,10 @@ static int add_peer(struct ctx *ctx, const dest_phys *dest, mctp_eid_t eid,
 		*ret_peer = peer;
 		return 0;
 	}
-	/* only LearnEndpoint methods of au.com.codeconstruct.MCTP.Network1
-	 * interface will approve peer structure if eid belongs to a bridge
-	 * pool space else never allow.
+	/* In some cases, we want to allow adding a peer that exists within
+	 * a bridged range - typically when the peer is behind that bridge.
 	 */
-	if (!net_learn && is_eid_in_bridge_pool(n, ctx, eid))
+	if (!allow_bridged && is_eid_in_bridge_pool(n, ctx, eid))
 		return -EEXIST;
 
 	if (ctx->num_peers == MAX_PEER_SIZE)
