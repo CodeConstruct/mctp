@@ -1943,19 +1943,6 @@ static int endpoint_assign_eid(struct ctx *ctx, sd_bus_error *berr,
 			return -EADDRNOTAVAIL;
 		}
 
-		/* Only allow complete pools for now. In future we could reserve
-		 * this range, in the assumption that the subsequent pool
-		 * request (in the Set Endpoint ID response) will fit in this
-		 * reservation.
-		 */
-		if (alloc.extent < alloc_size) {
-			warnx("Cannot allocate sufficient EIDs (+pool %d) on net %d for %s"
-			      " (largest span %d at %d)",
-			      alloc_size, net, dest_phys_tostr(dest),
-			      alloc.extent, alloc.start);
-			alloc.extent = 0;
-		}
-
 		new_eid = alloc.start;
 
 		rc = add_peer(ctx, dest, new_eid, net, &peer, false);
@@ -1983,12 +1970,12 @@ static int endpoint_assign_eid(struct ctx *ctx, sd_bus_error *berr,
 	}
 
 	if (req_pool_size > peer->pool_size) {
-		warnx("EID %d: requested pool size (%d) > pool size available (%d)",
+		warnx("EID %d: requested pool size (%d) > pool size available (%d), limiting.",
 		      peer->eid, req_pool_size, peer->pool_size);
-		req_pool_size = peer->pool_size;
+	} else {
+		// peer will likely have requested less than the available range
+		peer->pool_size = req_pool_size;
 	}
-	// peer will likely have requested less than the available range
-	peer->pool_size = req_pool_size;
 
 	if (!peer->pool_size)
 		peer->pool_start = 0;
