@@ -184,20 +184,20 @@ struct mctp_ctrl_resp_resolve_endpoint_id {
 } __attribute__((__packed__));
 
 typedef enum {
-	mctp_ctrl_cmd_alloc_eid_alloc_eid = 0,
-	mctp_ctrl_cmd_alloc_eid_force_alloc = 1,
-	mctp_ctrl_cmd_alloc_eid_get_alloc_info = 2,
-	mctp_ctrl_cmd_alloc_eid_reserved = 3
-} mctp_ctrl_cmd_alloc_eid_op;
+	mctp_ctrl_cmd_allocate_eids_alloc_eids = 0,
+	mctp_ctrl_cmd_allocate_eids_force_alloc = 1,
+	mctp_ctrl_cmd_allocate_eids_get_alloc_info = 2,
+	mctp_ctrl_cmd_allocate_eids_reserved = 3
+} mctp_ctrl_cmd_allocate_eids_op;
 
-struct mctp_ctrl_cmd_alloc_eid {
+struct mctp_ctrl_cmd_allocate_eids {
 	struct mctp_ctrl_msg_hdr ctrl_hdr;
 	uint8_t alloc_eid_op;
 	uint8_t pool_size;
 	uint8_t start_eid;
 } __attribute__((__packed__));
 
-struct mctp_ctrl_resp_alloc_eid {
+struct mctp_ctrl_resp_allocate_eids {
 	struct mctp_ctrl_msg_hdr ctrl_hdr;
 	uint8_t completion_code;
 	uint8_t status;
