@@ -1584,11 +1584,11 @@ out:
 }
 
 // Checks if given EID belongs to any bridge's pool range
-static bool is_eid_in_bridge_pool(struct net *n, struct ctx *ctx,
+static bool is_eid_in_bridge_pool(const struct net *n, const struct ctx *ctx,
 				  mctp_eid_t eid)
 {
 	for (int i = ctx->dyn_eid_min; i <= eid; i++) {
-		struct peer *peer = n->peers[i];
+		const struct peer *peer = n->peers[i];
 		if (peer && peer->pool_size > 0) {
 			if (eid >= peer->pool_start &&
 			    eid < peer->pool_start + peer->pool_size) {
