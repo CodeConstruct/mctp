@@ -82,10 +82,21 @@ struct sockaddr_mctp_ext {
 enum {
 	IFLA_MCTP_UNSPEC,
 	IFLA_MCTP_NET,
+	IFLA_MCTP_PHYS_BINDING,
 	__IFLA_MCTP_MAX,
 };
 
 #define IFLA_MCTP_MAX (__IFLA_MCTP_MAX - 1)
+
+#else /* IFLA_MCTP_MAX */
+
+#if !HAVE_IFLA_MCTP_PHYS_BINDING
+enum {
+	IFLA_MCTP_PHYS_BINDING = IFLA_MCTP_NET + 1,
+};
+#undef IFLA_MCTP_MAX
+#define IFLA_MCTP_MAX IFLA_MCTP_PHYS_BINDING
+#endif /* HAVE_IFLA_MCTP_PHYS_BINDING */
 
 #endif /* IFLA_MCTP_MAX */
 

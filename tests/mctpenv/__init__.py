@@ -1,5 +1,6 @@
 
 import array
+import enum
 import errno
 import os
 import signal
@@ -37,13 +38,27 @@ class NetlinkError(Exception):
             resp['attrs'] = [['NLMSGERR_ATTR_MSG', self.msg]]
         return resp
 
+class PhysicalBinding(enum.Enum):
+    UNSPEC = 0x00
+    SMBUS = 0x01
+    PCIE_VDM = 0x02
+    USB = 0x03
+    KCS = 0x04
+    SERIAL = 0x05
+    I3C = 0x06
+    MMBI = 0x07
+    PCC = 0x08
+    UCIE = 0x09
+    VENDOR = 0xFF
+
 class System:
     class Interface:
         """Interface constructor.
 
         Initial mtu is set to max_mtu.
         """
-        def __init__(self, name, ifindex, net, lladdr, min_mtu, max_mtu, up = False):
+        def __init__(self, name, ifindex, net, lladdr, min_mtu, max_mtu,
+                     up = False, phys_binding = PhysicalBinding.UNSPEC):
             self.name = name
             self.ifindex = ifindex
             self.net = net
@@ -52,10 +67,16 @@ class System:
             self.max_mtu = max_mtu
             self.mtu = max_mtu
             self.up = up
+            self.phys_binding = phys_binding
 
         def __str__(self):
             lladdrstr = ':'.join('%02x' % b for b in self.lladdr)
-            return f"{self.name}: net {self.net} lladdr {lladdrstr}"
+            return (
+                f"{self.name}: "
+                f"net {self.net} "
+                f"lladdr {lladdrstr} "
+                f"binding {self.phys_binding.name}"
+            )
 
     class Address:
         def __init__(self, iface, eid):
@@ -446,6 +467,7 @@ class ifinfmsg_mctp(rtnl.ifinfmsg.ifinfmsg):
             nla_map = (
                 ('IFLA_MCTP_UNSPEC', 'none'),
                 ('IFLA_MCTP_NET', 'uint32'),
+                ('IFLA_MCTP_PHYS_BINDING', 'uint8'),
             )
 
     class l2addr(netlink.nla_base):
@@ -777,7 +799,13 @@ class NLSocket(BaseSocket):
                 ['IFLA_MAX_MTU', iface.max_mtu],
                 ['IFLA_AF_SPEC', {
                     'attrs': [['AF_MCTP', {
-                        'attrs': [['IFLA_MCTP_NET', iface.net]],
+                        'attrs': [
+                            ['IFLA_MCTP_NET', iface.net],
+                            [
+                                'IFLA_MCTP_PHYS_BINDING',
+                                iface.phys_binding.value,
+                            ],
+                        ],
                     }]],
                 }],
             ]

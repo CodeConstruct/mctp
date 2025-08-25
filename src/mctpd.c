@@ -119,7 +119,14 @@ static const struct role roles[] = {
 	},
 };
 
+enum discovery_state {
+	DISCOVERY_UNSUPPORTED,
+	DISCOVERY_DISCOVERED,
+	DISCOVERY_UNDISCOVERED,
+};
+
 struct link {
+	enum discovery_state discovered;
 	bool published;
 	int ifindex;
 	enum endpoint_role role;
@@ -786,6 +793,9 @@ static int handle_control_set_endpoint_id(struct ctx *ctx, int sd,
 			warnx("ERR: cannot add bus owner to object lists");
 		}
 
+		if (link_data->discovered != DISCOVERY_UNSUPPORTED) {
+			link_data->discovered = DISCOVERY_DISCOVERED;
+		}
 		resp->status =
 			SET_MCTP_EID_ASSIGNMENT_STATUS(MCTP_SET_EID_ACCEPTED) |
 			SET_MCTP_EID_ALLOCATION_STATUS(MCTP_SET_EID_POOL_NONE);
@@ -795,6 +805,20 @@ static int handle_control_set_endpoint_id(struct ctx *ctx, int sd,
 		return reply_message(ctx, sd, resp, resp_len, addr);
 
 	case MCTP_SET_EID_DISCOVERED:
+		if (link_data->discovered == DISCOVERY_UNSUPPORTED) {
+			resp->completion_code = MCTP_CTRL_CC_ERROR_INVALID_DATA;
+			resp_len = sizeof(struct mctp_ctrl_resp);
+			return reply_message(ctx, sd, resp, resp_len, addr);
+		}
+
+		link_data->discovered = DISCOVERY_DISCOVERED;
+		resp->status =
+			SET_MCTP_EID_ASSIGNMENT_STATUS(MCTP_SET_EID_REJECTED) |
+			SET_MCTP_EID_ALLOCATION_STATUS(MCTP_SET_EID_POOL_NONE);
+		resp->eid_set = req->eid;
+		resp->eid_pool_size = 0;
+		return reply_message(ctx, sd, resp, resp_len, addr);
+
 	case MCTP_SET_EID_RESET:
 		// unsupported
 		resp->completion_code = MCTP_CTRL_CC_ERROR_INVALID_DATA;
@@ -957,6 +981,97 @@ handle_control_resolve_endpoint_id(struct ctx *ctx, int sd,
 	return reply_message(ctx, sd, resp, resp_len, addr);
 }
 
+static int handle_control_prepare_endpoint_discovery(
+	struct ctx *ctx, int sd, const struct sockaddr_mctp_ext *addr,
+	const uint8_t *buf, const size_t buf_size)
+{
+	struct mctp_ctrl_msg_hdr *req = NULL;
+	struct mctp_ctrl_resp_prepare_discovery respi = { 0 }, *resp = &respi;
+	struct link *link_data;
+
+	if (buf_size < sizeof(*req)) {
+		warnx("short Prepare for Endpoint Discovery message");
+		return -ENOMSG;
+	}
+
+	link_data = mctp_nl_get_link_userdata(ctx->nl, addr->smctp_ifindex);
+	if (!link_data) {
+		bug_warn("unconfigured interface %d", addr->smctp_ifindex);
+		return -ENOENT;
+	}
+
+	if (link_data->role == ENDPOINT_ROLE_BUS_OWNER) {
+		// ignore message if we are bus owner
+		return 0;
+	}
+
+	req = (void *)buf;
+	resp = (void *)resp;
+	mctp_ctrl_msg_hdr_init_resp(&resp->ctrl_hdr, *req);
+
+	if (link_data->discovered == DISCOVERY_UNSUPPORTED) {
+		warnx("received prepare for discovery request to unsupported interface %d",
+		      addr->smctp_ifindex);
+		resp->completion_code = MCTP_CTRL_CC_ERROR_UNSUPPORTED_CMD;
+		return reply_message_phys(ctx, sd, resp,
+					  sizeof(struct mctp_ctrl_resp), addr);
+	}
+
+	if (link_data->discovered == DISCOVERY_DISCOVERED) {
+		link_data->discovered = DISCOVERY_UNDISCOVERED;
+		warnx("clear discovered flag of interface %d",
+		      addr->smctp_ifindex);
+	}
+
+	// we need to send using physical addressing, no entry in routing table yet
+	resp->completion_code = MCTP_CTRL_CC_SUCCESS;
+	return reply_message_phys(ctx, sd, resp, sizeof(*resp), addr);
+}
+
+static int
+handle_control_endpoint_discovery(struct ctx *ctx, int sd,
+				  const struct sockaddr_mctp_ext *addr,
+				  const uint8_t *buf, const size_t buf_size)
+{
+	struct mctp_ctrl_msg_hdr *req = NULL;
+	struct mctp_ctrl_resp_endpoint_discovery respi = { 0 }, *resp = &respi;
+	struct link *link_data;
+
+	if (buf_size < sizeof(*req)) {
+		warnx("short Endpoint Discovery message");
+		return -ENOMSG;
+	}
+
+	link_data = mctp_nl_get_link_userdata(ctx->nl, addr->smctp_ifindex);
+	if (!link_data) {
+		bug_warn("unconfigured interface %d", addr->smctp_ifindex);
+		return -ENOENT;
+	}
+
+	if (link_data->role == ENDPOINT_ROLE_BUS_OWNER) {
+		// ignore message if we are bus owner
+		return 0;
+	}
+
+	if (link_data->discovered == DISCOVERY_UNSUPPORTED) {
+		resp->completion_code = MCTP_CTRL_CC_ERROR_INVALID_DATA;
+		return reply_message(ctx, sd, resp,
+				     sizeof(struct mctp_ctrl_resp), addr);
+	}
+
+	if (link_data->discovered == DISCOVERY_DISCOVERED) {
+		// if we are already discovered (i.e, assigned an EID), then no reply
+		return 0;
+	}
+
+	req = (void *)buf;
+	resp = (void *)resp;
+	mctp_ctrl_msg_hdr_init_resp(&resp->ctrl_hdr, *req);
+
+	// we need to send using physical addressing, no entry in routing table yet
+	return reply_message_phys(ctx, sd, resp, sizeof(*resp), addr);
+}
+
 static int handle_control_unsupported(struct ctx *ctx, int sd,
 				      const struct sockaddr_mctp_ext *addr,
 				      const uint8_t *buf, const size_t buf_size)
@@ -1038,6 +1153,14 @@ static int cb_listen_control_msg(sd_event_source *s, int sd, uint32_t revents,
 	case MCTP_CTRL_CMD_RESOLVE_ENDPOINT_ID:
 		rc = handle_control_resolve_endpoint_id(ctx, sd, &addr, buf,
 							buf_size);
+		break;
+	case MCTP_CTRL_CMD_PREPARE_ENDPOINT_DISCOVERY:
+		rc = handle_control_prepare_endpoint_discovery(ctx, sd, &addr,
+							       buf, buf_size);
+		break;
+	case MCTP_CTRL_CMD_ENDPOINT_DISCOVERY:
+		rc = handle_control_endpoint_discovery(ctx, sd, &addr, buf,
+						       buf_size);
 		break;
 	default:
 		if (ctx->verbose) {
@@ -4150,10 +4273,13 @@ static int add_interface(struct ctx *ctx, int ifindex)
 		return -ENOENT;
 	}
 
+	uint8_t phys_binding = mctp_nl_phys_binding_byindex(ctx->nl, ifindex);
+
 	struct link *link = calloc(1, sizeof(*link));
 	if (!link)
 		return -ENOMEM;
 
+	link->discovered = DISCOVERY_UNSUPPORTED;
 	link->published = false;
 	link->ifindex = ifindex;
 	link->ctx = ctx;
@@ -4180,6 +4306,10 @@ static int add_interface(struct ctx *ctx, int ifindex)
 					 link->path,
 					 CC_MCTP_DBUS_IFACE_BUSOWNER,
 					 bus_link_owner_vtable, link);
+	}
+
+	if (phys_binding == MCTP_PHYS_BINDING_PCIE_VDM) {
+		link->discovered = DISCOVERY_UNDISCOVERED;
 	}
 
 	link->published = true;

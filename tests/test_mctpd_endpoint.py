@@ -15,10 +15,15 @@ def config():
     mode = "endpoint"
     """
 
+
 @pytest.fixture
-async def sysnet():
+async def iface():
+    return System.Interface("mctp0", 1, 1, bytes([0x1D]), 68, 254, True)
+
+
+@pytest.fixture
+async def sysnet(iface):
     system = System()
-    iface = System.Interface("mctp0", 1, 1, bytes([0x1D]), 68, 254, True)
     await system.add_interface(iface)
     network = Network()
     network.add_endpoint(Endpoint(iface, bytes([0x10]), eid=8))
@@ -101,3 +106,50 @@ async def test_accept_multiple_set_eids_for_single_interface(dbus, mctpd):
 
     # expect new EID on D-Bus
     assert await mctpd_mctp_endpoint_control_obj(dbus, f"/au/com/codeconstruct/mctp1/networks/1/endpoints/{second_eid}")
+
+
+class TestDiscovery:
+    @pytest.fixture
+    async def iface(self):
+        return System.Interface("mctp0", 1, 1, bytes([0x1D]), 68, 254, True, PhysicalBinding.PCIE_VDM)
+
+    """ Test simple Discovery sequence """
+    async def test_simple_discovery_sequence(self, dbus, mctpd):
+        bo = mctpd.network.endpoints[0]
+
+        assert len(mctpd.system.addresses) == 0
+
+        # no EID yet
+        rsp = await bo.send_control(mctpd.network.mctp_socket, MCTPControlCommand(True, 0, 0x02))
+        assert rsp.hex(' ') == '00 02 00 00 02 00'
+
+        # BMC response to Prepare for Discovery
+        rsp = await bo.send_control(mctpd.network.mctp_socket, MCTPControlCommand(True, 0, 0x0B))
+        assert rsp.hex(' ') == '00 0b 00'
+
+        # BMC response to Endpoint Discovery
+        rsp = await bo.send_control(mctpd.network.mctp_socket, MCTPControlCommand(True, 0, 0x0C))
+        assert rsp.hex(' ') == '00 0c 00'
+
+        # set EID = 42
+        eid = 42
+        rsp = await bo.send_control(mctpd.network.mctp_socket, MCTPControlCommand(True, 0, 0x01, bytes([0x00, eid])))
+        assert rsp.hex(' ') == f'00 01 00 00 {eid:02x} 00'
+
+        # BMC should contains two object paths: bus owner and itself
+        assert await mctpd_mctp_endpoint_control_obj(dbus, f"/au/com/codeconstruct/mctp1/networks/1/endpoints/{bo.eid}")
+        assert await mctpd_mctp_endpoint_control_obj(dbus, f"/au/com/codeconstruct/mctp1/networks/1/endpoints/{eid}")
+
+
+class TestUnsupportedDiscovery:
+    @pytest.fixture
+    async def iface(self):
+        return System.Interface("mctp0", 1, 1, bytes([0x1D]), 68, 254, True, PhysicalBinding.SMBUS)
+
+    """ Discovery command on unsupported interface """
+    async def test_simple(self, dbus, mctpd):
+        bo = mctpd.network.endpoints[0]
+
+        # BMC response ERROR_UNSUPPORTED_CMD to Prepare for Discovery
+        rsp = await bo.send_control(mctpd.network.mctp_socket, MCTPControlCommand(True, 0, 0x0B))
+        assert rsp.hex(' ') == '00 0b 05'

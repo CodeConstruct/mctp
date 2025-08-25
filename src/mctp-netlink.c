@@ -15,6 +15,7 @@
 #include <linux/rtnetlink.h>
 #include <linux/netdevice.h>
 
+#include "mctp-control-spec.h"
 #include "mctp-netlink.h"
 #include "mctp.h"
 #include "mctp-util.h"
@@ -29,6 +30,7 @@ struct linkmap_entry {
 	uint32_t min_mtu;
 	uint32_t max_mtu;
 	uint32_t hwaddr_len;
+	uint8_t phys_binding;
 
 	mctp_eid_t *local_eids;
 	size_t num_local;
@@ -59,7 +61,8 @@ static void sort_linkmap(mctp_nl *nl);
 static int linkmap_add_entry(mctp_nl *nl, struct ifinfomsg *info,
 			     const char *ifname, size_t ifname_len,
 			     uint32_t net, bool up, uint32_t min_mtu,
-			     uint32_t max_mtu, size_t hwaddr_len);
+			     uint32_t max_mtu, size_t hwaddr_len,
+			     uint8_t phys_binding);
 static struct linkmap_entry *entry_byindex(const mctp_nl *nl, int index);
 
 static int open_nl_socket(void)
@@ -727,6 +730,7 @@ static int parse_getlink_dump(mctp_nl *nl, struct nlmsghdr *nlh, uint32_t len)
 		char *ifname = NULL;
 		size_t ifname_len, rlen, nlen, mlen, hwaddr_len;
 		uint32_t net, min_mtu = 0, max_mtu = 0;
+		uint8_t phys_binding;
 		bool up;
 
 		if (nlh->nlmsg_type == NLMSG_DONE)
@@ -785,11 +789,14 @@ static int parse_getlink_dump(mctp_nl *nl, struct nlmsghdr *nlh, uint32_t len)
 		hwaddr_len = 0;
 		mctp_get_rtnlmsg_attr(IFLA_ADDRESS, rta, rlen, &hwaddr_len);
 
-		/* TODO: media type */
+		/* Treat missing physical binding type attribute as UNSPEC */
+		phys_binding = MCTP_PHYS_BINDING_UNSPEC;
+		mctp_get_rtnlmsg_attr_u8(IFLA_MCTP_PHYS_BINDING, rt_mctp, mlen,
+					 &phys_binding);
 
 		up = info->ifi_flags & IFF_UP;
 		linkmap_add_entry(nl, info, ifname, ifname_len, net, up,
-				  min_mtu, max_mtu, hwaddr_len);
+				  min_mtu, max_mtu, hwaddr_len, phys_binding);
 	}
 	// Not done.
 	return 1;
@@ -1068,6 +1075,15 @@ int mctp_nl_hwaddr_len_byindex(const mctp_nl *nl, int index,
 	return 0;
 }
 
+uint8_t mctp_nl_phys_binding_byindex(const mctp_nl *nl, int index)
+{
+	struct linkmap_entry *entry = entry_byindex(nl, index);
+	if (!entry) {
+		return MCTP_PHYS_BINDING_UNSPEC;
+	}
+	return entry->phys_binding;
+}
+
 mctp_eid_t *mctp_nl_addrs_byindex(const mctp_nl *nl, int index, size_t *ret_num)
 {
 	struct linkmap_entry *entry = entry_byindex(nl, index);
@@ -1151,7 +1167,8 @@ bool mctp_nl_if_exists(const mctp_nl *nl, int ifindex)
 static int linkmap_add_entry(mctp_nl *nl, struct ifinfomsg *info,
 			     const char *ifname, size_t ifname_len,
 			     uint32_t net, bool up, uint32_t min_mtu,
-			     uint32_t max_mtu, size_t hwaddr_len)
+			     uint32_t max_mtu, size_t hwaddr_len,
+			     uint8_t phys_binding)
 {
 	struct linkmap_entry *entry;
 	size_t newsz;
@@ -1192,6 +1209,7 @@ static int linkmap_add_entry(mctp_nl *nl, struct ifinfomsg *info,
 	entry->max_mtu = max_mtu;
 	entry->min_mtu = min_mtu;
 	entry->hwaddr_len = hwaddr_len;
+	entry->phys_binding = phys_binding;
 	return 0;
 }
 

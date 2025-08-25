@@ -395,3 +395,21 @@ static inline void mctp_ctrl_msg_hdr_init_resp(struct mctp_ctrl_msg_hdr *resp,
 	resp->command_code = req.command_code;
 	resp->rq_dgram_inst = (req.rq_dgram_inst & RQDI_IID_MASK) | RQDI_RESP;
 }
+
+/* MCTP IDs and Codes from DMTF specification
+ * "DSP0239 Management Component Transport Protocol (MCTP) IDs and Codes"
+ * https://www.dmtf.org/sites/default/files/standards/documents/DSP0239_1.11.1.pdf
+ */
+enum mctp_phys_binding {
+	MCTP_PHYS_BINDING_UNSPEC = 0x00,
+	MCTP_PHYS_BINDING_SMBUS = 0x01,
+	MCTP_PHYS_BINDING_PCIE_VDM = 0x02,
+	MCTP_PHYS_BINDING_USB = 0x03,
+	MCTP_PHYS_BINDING_KCS = 0x04,
+	MCTP_PHYS_BINDING_SERIAL = 0x05,
+	MCTP_PHYS_BINDING_I3C = 0x06,
+	MCTP_PHYS_BINDING_MMBI = 0x07,
+	MCTP_PHYS_BINDING_PCC = 0x08,
+	MCTP_PHYS_BINDING_UCIE = 0x09,
+	MCTP_PHYS_BINDING_VENDOR = 0xFF,
+};
