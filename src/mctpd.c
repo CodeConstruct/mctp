@@ -1626,7 +1626,7 @@ static int add_peer(struct ctx *ctx, const dest_phys *dest, mctp_eid_t eid,
 	 * interface will approve peer structure if eid belongs to a bridge
 	 * pool space else never allow.
 	 */
-	if (!net_learn & is_eid_in_bridge_pool(n, ctx, eid))
+	if (!net_learn && is_eid_in_bridge_pool(n, ctx, eid))
 		return -EEXIST;
 
 	if (ctx->num_peers == MAX_PEER_SIZE)
