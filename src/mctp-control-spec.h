@@ -183,6 +183,28 @@ struct mctp_ctrl_resp_resolve_endpoint_id {
 	// ... uint8_t physical_address[N]
 } __attribute__((__packed__));
 
+typedef enum {
+	mctp_ctrl_cmd_allocate_eids_alloc_eids = 0,
+	mctp_ctrl_cmd_allocate_eids_force_alloc = 1,
+	mctp_ctrl_cmd_allocate_eids_get_alloc_info = 2,
+	mctp_ctrl_cmd_allocate_eids_reserved = 3
+} mctp_ctrl_cmd_allocate_eids_op;
+
+struct mctp_ctrl_cmd_allocate_eids {
+	struct mctp_ctrl_msg_hdr ctrl_hdr;
+	uint8_t alloc_eid_op;
+	uint8_t pool_size;
+	uint8_t start_eid;
+} __attribute__((__packed__));
+
+struct mctp_ctrl_resp_allocate_eids {
+	struct mctp_ctrl_msg_hdr ctrl_hdr;
+	uint8_t completion_code;
+	uint8_t status;
+	uint8_t eid_pool_size;
+	uint8_t eid_set;
+} __attribute__((__packed__));
+
 #define MCTP_CTRL_HDR_MSG_TYPE 0
 #define MCTP_CTRL_HDR_FLAG_REQUEST (1 << 7)
 #define MCTP_CTRL_HDR_FLAG_DGRAM (1 << 6)
@@ -256,6 +278,28 @@ struct mctp_ctrl_resp_resolve_endpoint_id {
 	 << MCTP_EID_ASSIGNMENT_STATUS_SHIFT)
 #define MCTP_SET_EID_ACCEPTED 0x0
 #define MCTP_SET_EID_REJECTED 0x1
+
+/* MCTP Get Endpoint ID request and response fields
+ * See DSP0236 v1.3.0 Table 15.
+ */
+#define MCTP_GET_EID_EP_TYPE_SHIFT 4
+#define MCTP_GET_EID_EP_TYPE_MASK 0x03
+#define GET_MCTP_GET_EID_EP_TYPE(field) \
+	(((field) >> MCTP_GET_EID_EP_TYPE_SHIFT) & MCTP_GET_EID_EP_TYPE_MASK)
+#define MCTP_GET_EID_EP_TYPE_EP 0
+#define MCTP_GET_EID_EP_TYPE_BRIDGE 1
+
+#define MCTP_GET_EID_EID_TYPE_SHIFT 0
+#define MCTP_GET_EID_EID_TYPE_MASK 0x03
+#define GET_MCTP_GET_EID_EID_TYPE(field) \
+	(((field) >> MCTP_GET_EID_EID_TYPE_SHIFT) & MCTP_GET_EID_EID_TYPE_MASK)
+#define MCTP_GET_EID_EID_TYPE_DYNAMIC 0
+/* Static EID is supported, may or may not match current */
+#define MCTP_GET_EID_EID_TYPE_STATIC 1
+/* Current eid is the same as static */
+#define MCTP_GET_EID_EID_TYPE_STATIC_SAME 2
+/* Current eid is different from static */
+#define MCTP_GET_EID_EID_TYPE_STATIC_DIFFERENT 3
 
 #define MCTP_EID_ALLOCATION_STATUS_SHIFT 0x0
 #define MCTP_EID_ALLOCATION_STATUS_MASK 0x3

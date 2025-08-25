@@ -20,6 +20,7 @@ MCTPD_C = 'au.com.codeconstruct.MCTP1'
 MCTPD_MCTP_P = '/au/com/codeconstruct/mctp1'
 MCTPD_MCTP_I = 'au.com.codeconstruct.MCTP.BusOwner1'
 MCTPD_ENDPOINT_I = 'au.com.codeconstruct.MCTP.Endpoint1'
+MCTPD_ENDPOINT_BRIDGE_I = 'au.com.codeconstruct.MCTP.Bridge1'
 DBUS_OBJECT_MANAGER_I = 'org.freedesktop.DBus.ObjectManager'
 DBUS_PROPERTIES_I = 'org.freedesktop.DBus.Properties'
 
@@ -923,6 +924,331 @@ async def test_config_dyn_eid_range_max(nursery, dbus, sysnet):
 
     assert str(ex.value) == "Ran out of EIDs"
     assert mctpd.network.endpoints[2].eid == 0
+
+    res = await mctpd.stop_mctpd()
+    assert res == 0
+
+""" Test bridge endpoint dynamic EID assignment and downstream
+endpoint EID allocation
+
+Tests that:
+- Bridge endpoint can be assigned a dynamic EID
+- Downstream endpoints get contiguous EIDs after bridge's own eid
+"""
+async def test_assign_dynamic_bridge_eid(dbus, mctpd):
+    iface = mctpd.system.interfaces[0]
+    mctp = await mctpd_mctp_iface_obj(dbus, iface)
+    ep = mctpd.network.endpoints[0]
+    pool_size = 2
+
+    # Set up bridged endpoints as undiscovered EID 0
+    for i in range(pool_size):
+        br_ep = Endpoint(iface, bytes(), types=[0])
+        ep.add_bridged_ep(br_ep)
+        mctpd.network.add_endpoint(br_ep)
+
+    # dynamic EID assigment for dev1
+    (eid, _, path, new) = await mctp.call_assign_endpoint(ep.lladdr)
+
+    assert new
+    assert ep.allocated_pool == (eid + 1, pool_size)
+
+""" Test that static allocations are not permitted, if they would conflict
+with a bridge pool"""
+async def test_bridge_ep_conflict_static(dbus, mctpd):
+    iface = mctpd.system.interfaces[0]
+    mctp = await mctpd_mctp_iface_obj(dbus, iface)
+    ep = mctpd.network.endpoints[0]
+    n_bridged = 3
+
+    # add downstream devices
+    for i in range(n_bridged):
+        br_ep = Endpoint(iface, bytes())
+        ep.add_bridged_ep(br_ep)
+
+    (eid, _, path, new) = await mctp.call_assign_endpoint(ep.lladdr)
+    assert ep.allocated_pool == (eid + 1, n_bridged)
+
+    # ensure no static assignment can be made from the bridged range
+    for i in range(n_bridged):
+        dev = Endpoint(iface, bytes([0x30 + i]))
+        mctpd.network.add_endpoint(dev)
+        with pytest.raises(asyncdbus.errors.DBusError):
+            await mctp.call_assign_endpoint_static(dev.lladdr, ep.eid + 1 + i)
+
+    # ... but we're okay with the EID following
+    dev = Endpoint(iface, bytes([0x30 + n_bridged]))
+    mctpd.network.add_endpoint(dev)
+    static_eid = ep.eid + 1 + n_bridged
+    (eid, _, _, _) = await mctp.call_assign_endpoint_static(
+        dev.lladdr, static_eid
+    )
+
+    assert eid == static_eid
+
+""" Test that learnt allocations (ie, pre-assigned device EIDs) are not
+permitted, if they would conflict with a bridge pool """
+async def test_bridge_ep_conflict_learn(dbus, mctpd):
+    iface = mctpd.system.interfaces[0]
+    mctp = await mctpd_mctp_iface_obj(dbus, iface)
+    ep = mctpd.network.endpoints[0]
+    n_bridged = 3
+
+    # add downstream devices
+    for i in range(n_bridged):
+        br_ep = Endpoint(iface, bytes())
+        ep.add_bridged_ep(br_ep)
+
+    (eid, _, path, new) = await mctp.call_assign_endpoint(ep.lladdr)
+    assert ep.allocated_pool == (eid + 1, n_bridged)
+
+    # ensure no learnt assignment can be made from the bridged range
+    for i in range(n_bridged):
+        dev = Endpoint(iface, bytes([0x30 + i]), eid=ep.eid + 1 + i)
+        mctpd.network.add_endpoint(dev)
+        with pytest.raises(asyncdbus.errors.DBusError):
+            await mctp.call_learn_endpoint(dev.lladdr)
+
+    # ... but we're okay with the EID following
+    dev_eid = ep.eid + 1 + n_bridged
+    dev = Endpoint(iface, bytes([0x30 + n_bridged]), eid=dev_eid)
+    mctpd.network.add_endpoint(dev)
+    (eid, _, _, _) = await mctp.call_learn_endpoint(dev.lladdr)
+
+    assert eid == dev_eid
+
+""" Test that learnt allocations (ie, pre-assigned device EIDs) are not
+permitted through SetupEndpoint, if they would conflict with a bridge pool """
+async def test_bridge_ep_conflict_setup(dbus, mctpd):
+    iface = mctpd.system.interfaces[0]
+    mctp = await mctpd_mctp_iface_obj(dbus, iface)
+    ep = mctpd.network.endpoints[0]
+    n_bridged = 3
+
+    # add downstream devices
+    for i in range(n_bridged):
+        br_ep = Endpoint(iface, bytes())
+        ep.add_bridged_ep(br_ep)
+
+    (eid, _, path, new) = await mctp.call_assign_endpoint(ep.lladdr)
+    assert ep.allocated_pool == (eid + 1, n_bridged)
+    pool_range = range(ep.allocated_pool[0], ep.allocated_pool[1] + 1)
+
+    # ensure no SetupEndpoint assignment can be made from the bridged range;
+    # these should get reassigned elsewhere.
+    for i in range(n_bridged):
+        dev = Endpoint(iface, bytes([0x30 + i]), eid=ep.eid + 1 + i)
+        mctpd.network.add_endpoint(dev)
+        (eid, _, _, _) = await mctp.call_setup_endpoint(dev.lladdr)
+        assert eid not in pool_range
+
+""" Test that mctpd will reassign a bridge endpoints (pre-configured) EID
+if necessary to satisfy the bridge pool allocation"""
+async def test_bridge_setup_reassign(dbus, mctpd):
+    iface = mctpd.system.interfaces[0]
+    mctp = await mctpd_mctp_iface_obj(dbus, iface)
+
+    # ep: regular endpoint, will conflict with a bridge pool
+    ep = mctpd.network.endpoints[0]
+    static_eid = 10
+    (eid, _, _, _) = await mctp.call_assign_endpoint_static(
+        ep.lladdr,
+        static_eid
+    )
+
+    assert eid == static_eid
+
+    # br: our bridge
+    conflict_eid = 9
+    br = Endpoint(iface, bytes([ep.lladdr[0] + 1]), eid=conflict_eid)
+    br.add_bridged_ep(Endpoint(iface, bytes()))
+    mctpd.network.add_endpoint(br)
+
+    (eid, _, _, _) = await mctp.call_setup_endpoint(br.lladdr)
+    assert eid != conflict_eid
+    assert br.allocated_pool is not None
+    assert br.allocated_pool[0] == eid + 1
+
+""" Test that we truncate the requested pool size to
+    the max_pool_size config """
+async def test_assign_dynamic_eid_limited_pool(nursery, dbus, sysnet):
+    max_pool_size = 1
+    config = f"""
+    [bus-owner]
+    max_pool_size = {max_pool_size}
+    """
+
+    mctpd = MctpdWrapper(dbus, sysnet, config = config)
+    await mctpd.start_mctpd(nursery)
+
+    iface = mctpd.system.interfaces[0]
+    ep = mctpd.network.endpoints[0]
+    mctp = await mctpd_mctp_iface_obj(dbus, iface)
+
+    # Set up bridged endpoints as undiscovered EID 0
+    for i in range(0, 2):
+        br_ep = Endpoint(iface, bytes(), types=[0, 2])
+        ep.add_bridged_ep(br_ep)
+        mctpd.network.add_endpoint(br_ep)
+
+    # dynamic EID assigment for dev1
+    (eid, _, path, new) = await mctp.call_assign_endpoint(ep.lladdr)
+
+    assert new
+
+    bridge_obj = await dbus.get_proxy_object(MCTPD_C, path)
+    props_iface = await bridge_obj.get_interface(DBUS_PROPERTIES_I)
+    pool_end = await props_iface.call_get(MCTPD_ENDPOINT_BRIDGE_I, "PoolEnd")
+    pool_size = pool_end.value - eid
+    assert pool_size == max_pool_size
+
+    res = await mctpd.stop_mctpd()
+    assert res == 0
+
+""" Test that a limited pool is assigned if we run out of space for a full
+allocation"""
+async def test_bridge_pool_assign_limited(nursery, dbus, sysnet):
+    (min_dyn_eid, max_dyn_eid) = (8, 13)
+    config = f"""
+    [bus-owner]
+    dynamic_eid_range = [{min_dyn_eid}, {max_dyn_eid}]
+    """
+
+    mctpd = MctpdWrapper(dbus, sysnet, config = config)
+    await mctpd.start_mctpd(nursery)
+
+    iface = mctpd.system.interfaces[0]
+    ep = mctpd.network.endpoints[0]
+    mctp = await mctpd_mctp_iface_obj(dbus, iface)
+
+    # Set up bridged endpoints as undiscovered EID 0; three bridged EPs,
+    # which is larger than the available space
+    for i in range(0, 3):
+        br_ep = Endpoint(iface, bytes(), types=[0, 2])
+        ep.add_bridged_ep(br_ep)
+        mctpd.network.add_endpoint(br_ep)
+
+    # consume middle eid from the range to dev2
+    dev2 = Endpoint(iface, bytes([0x09]))
+    mctpd.network.add_endpoint(dev2)
+    (eid, _, path, new) = await mctp.call_assign_endpoint_static(
+        dev2.lladdr,
+        10
+    )
+    assert new
+
+    # dynamic EID assigment for dev1
+    (eid, _, path, new) = await mctp.call_assign_endpoint(ep.lladdr)
+    assert new
+    assert ep.allocated_pool is not None
+    # we should have the largest range possible; the 8,9-9 range is smaller
+    # than the 11,12-13
+    assert ep.allocated_pool == (12, 2)
+
+    res = await mctpd.stop_mctpd()
+    assert res == 0
+
+"""During Allocate Endpoint ID exchange, return completion code failure
+to indicate no pool has been assigned to the bridge"""
+async def test_assign_dynamic_eid_allocation_failure(dbus, mctpd):
+    class BridgeEndpoint(Endpoint):
+        async def handle_mctp_control(self, sock, src_addr, msg):
+            flags, opcode = msg[0:2]
+            if opcode != 0x8:
+                return await super().handle_mctp_control(sock, src_addr, msg)
+            dst_addr = MCTPSockAddr.for_ep_resp(self, src_addr, sock.addr_ext)
+
+            msg = bytes([
+                flags & 0x1f, # Rsp
+                0x08, # opcode: Allocate Endpoint ID
+                0x01, # cc: failure
+                0x01, # allocation rejected
+                0x00, # pool size
+                0x00, # pool start
+            ])
+            await sock.send(dst_addr, msg)
+
+    iface = mctpd.system.interfaces[0]
+    ep = BridgeEndpoint(iface, bytes([0x1e]))
+    mctpd.network.add_endpoint(ep)
+    # Set up downstream endpoints as undiscovered EID 0
+    for i in range(0, 2):
+        br_ep = Endpoint(iface, bytes(), types=[0, 2])
+        ep.add_bridged_ep(br_ep)
+        mctpd.network.add_endpoint(br_ep)
+    mctp = await mctpd_mctp_iface_obj(dbus, iface)
+
+    # dynamic EID assigment for dev1
+    (eid, _, path, new) = await mctp.call_assign_endpoint(ep.lladdr)
+    assert new
+    # Interface should not be present for failed pool allocation
+    with pytest.raises(asyncdbus.errors.InterfaceNotFoundError):
+        bridge_obj = await dbus.get_proxy_object(MCTPD_C, path)
+        await bridge_obj.get_interface(MCTPD_ENDPOINT_BRIDGE_I)
+
+""" Test assigning a non-bridge endpoint, when we don't have capacity for
+the speculatively-allocated bridge range"""
+async def test_assign_without_bridge_range(dbus, sysnet, nursery):
+    (dyn_eid_min, dyn_eid_max) = (10, 20)
+    max_pool_size = (dyn_eid_max - dyn_eid_min) + 1
+    config = f"""
+    [bus-owner]
+    dynamic_eid_range = [{dyn_eid_min}, {dyn_eid_max}]
+    max_pool_size = {max_pool_size}
+    """
+
+    mctpd = MctpdWrapper(dbus, sysnet, config = config)
+    await mctpd.start_mctpd(nursery)
+
+    iface = mctpd.system.interfaces[0]
+    ep = mctpd.network.endpoints[0]
+
+    mctp = await mctpd_mctp_iface_obj(dbus, iface)
+
+    (eid, _, _, _) = await mctp.call_assign_endpoint(ep.lladdr)
+
+    assert eid == dyn_eid_min
+    res = await mctpd.stop_mctpd()
+    assert res == 0
+
+""" Test that we can still allocate a bridge pool even though we may not have
+the maximum EID range available. The bridge pool's full allocation is still
+possible, since it is smaller than the configured max"""
+async def test_bridge_pool_range_limited(dbus, sysnet, nursery):
+    # configure for:
+    #     10: bridge A
+    #  11-13: bridge A pool
+    #     14: bridge B
+    #  15-17: bridge B pool
+    (dyn_eid_min, dyn_eid_max) = (10, 17)
+    bridge_downstreams = 3
+    # max pool size would consume more than half of the range, so bridge B
+    # cannot be allocated this max
+    max_pool_size = 5
+    config = f"""
+    [bus-owner]
+    dynamic_eid_range = [{dyn_eid_min}, {dyn_eid_max}]
+    max_pool_size = {max_pool_size}
+    """
+
+    mctpd = MctpdWrapper(dbus, sysnet, config = config)
+    await mctpd.start_mctpd(nursery)
+
+    iface = mctpd.system.interfaces[0]
+    bridges = [
+        Endpoint(iface, bytes([0x30])),
+        Endpoint(iface, bytes([0x31])),
+    ]
+    for bridge in bridges:
+        mctpd.network.add_endpoint(bridge)
+        for i in range(bridge_downstreams):
+            bridge.add_bridged_ep(Endpoint(iface, bytes()))
+
+    iface_obj = await mctpd_mctp_iface_obj(dbus, iface)
+    for bridge in bridges:
+        (eid, _, _, _) = await iface_obj.call_assign_endpoint(bridge.lladdr)
+        assert bridge.allocated_pool is not None
+        assert bridge.allocated_pool[1] == 3
 
     res = await mctpd.stop_mctpd()
     assert res == 0

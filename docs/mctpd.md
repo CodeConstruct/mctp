@@ -126,7 +126,11 @@ busctl call au.com.codeconstruct.MCTP1 \
 
 Similar to SetupEndpoint, but will always assign an EID rather than querying for
 existing ones. Will return `new = false` when an endpoint is already known to
-`mctpd`.
+`mctpd`. If the endpoint is an MCTP bridge (indicated by requesting a pool size
+in its Set Endpoint ID response), this method attempts to allocate a contiguous
+range of EIDs for the bridge's downstream endpoints. If sufficient contiguous
+EIDs are not available within the dynamic allocation pool for the network, only
+the bridge's own EID will be assigned, and downstream EID allocation will fail.
 
 #### `.AssignEndpointStatic`: `ayy` → `yisb`
 
@@ -147,6 +151,14 @@ endpoint.
 Like SetupEndpoint but will not assign EIDs, will only query endpoints for a
 current EID. The `new` return value is set to `false` for an already known
 endpoint, or `true` when an endpoint's EID is newly discovered.
+
+Because we are not issuing a Set Endpoint ID as part of the LearnEndpoint call,
+we do not have any details of the endpoint's bridge pool range. So,
+LearnEndpoint is unsuitable for use with bridge endpoints - it cannot provide
+the bridge with its own EID pool. `mctpd` will warn if the device type
+reports as a bridge.
+
+Bridge endpoints should be initialised with `AssignEndpoint` instead.
 
 ## Network objects: `/au/com/codeconstruct/networks/<net>`
 
@@ -214,6 +226,23 @@ busctl call au.com.codeconstruct.MCTP1 \
 ### `.Remove`
 
 Removes the MCTP endpoint from `mctpd`, and deletes routes and neighbour entries.
+
+### MCTP bridge interface: `au.com.codeconstruct.MCTP.Bridge1` interface
+
+MCTP endpoints that are set up as a bridge device (and therefore have an
+EID pool allocated to them, for downstream devices) also carry the
+`MCTP.Bridge1` interface. This provides details of the allocated EID pool, via
+two properties:
+
+### `.PoolStart`: `y`
+
+A constant property representing the first EID in the range allocated for
+downstream endpoints.
+
+### `.PoolEnd`: `y`
+
+A constant property representing the last EID in the range allocated for
+downstream endpoints.
 
 ## Configuration
 
