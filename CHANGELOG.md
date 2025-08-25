@@ -32,6 +32,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
    from the dynamic range, and pass this to the bridge using a subsequent
    Allocate Endpoint IDs command.
 
+7. In endpoint mode, `mctpd` now supports the discovery process (Prepare
+   for Endpoint Discovery -> Endpoint Discovery), where permitted by transport
+   type.
+
 ## [2.2] - 2025-07-28
 
 ### Fixed
