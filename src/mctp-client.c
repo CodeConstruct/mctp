@@ -255,7 +255,7 @@ int main(int argc, char **argv)
 			valid_type = true;
 
 		} else
-			errx(EXIT_FAILURE, "invalid tag: %s", tag);
+			errx(EXIT_FAILURE, "invalid argument: %s", tag);
 	}
 
 	if (!valid_eid || !valid_type) {
