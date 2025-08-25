@@ -303,7 +303,6 @@ class Endpoint:
         self.eid = eid
         self.types = types or [0]
         self.bridged_eps = []
-        self.pool_size = 0
         self.allocated_pool = None # or (start, size)
 
         # keyed by (type, type-specific-instance)
