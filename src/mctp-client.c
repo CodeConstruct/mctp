@@ -209,8 +209,8 @@ static int find_data(int argc, char **argv)
 
 int main(int argc, char **argv)
 {
-	bool valid_parse, valid_eid, valid_type;
 	int ctr, data_idx, net = MCTP_NET_ANY;
+	bool valid_eid, valid_type;
 	struct data_t send_data;
 	char *tag, *endp, *val;
 	unsigned long int tmp;
@@ -235,6 +235,8 @@ int main(int argc, char **argv)
 	valid_type = false;
 
 	for (ctr = 1; ctr < argc; ctr += 2) {
+		bool valid_parse;
+
 		tag = argv[ctr];
 		val = argv[ctr + 1];
 		tmp = strtoul(val, &endp, 0);
@@ -257,9 +259,12 @@ int main(int argc, char **argv)
 			valid_type = true;
 		} else
 			errx(EXIT_FAILURE, "invalid tag: %s", tag);
+
+		if (!valid_parse)
+			errx(EXIT_FAILURE, "invalid argument: %s", val);
 	}
 
-	if (!valid_parse || !valid_eid || !valid_type) {
+	if (!valid_eid || !valid_type) {
 		print_usage();
 		return EXIT_FAILURE;
 	}
