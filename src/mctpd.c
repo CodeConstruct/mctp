@@ -2355,6 +2355,52 @@ static int get_endpoint_peer(struct ctx *ctx, sd_bus_error *berr,
 	return 0;
 }
 
+/* DSP0236 section 8.17.6 Reclaiming EIDs from hot-plug devices
+ *
+ * The bus owner/bridge can detect a removed device or devices by
+ * validating the EIDs that are presently allocated to endpoints that
+ * are directly on the bus and identifying which EIDs are missing.
+ * It can do this by attempting to access each endpoint that the bridge
+ * has listed in its routing table as being a device that is directly on
+ * the particular bus. Attempting to access each endpoint can be accomplished
+ * by issuing the Get Endpoint ID command...
+
+
+ * since bridged endpoints are routed from bridge, direct query
+ * to eid should work if gateway routes are in place.
+ */
+static int query_endpoint_poll_commmand(struct peer *peer, mctp_eid_t *resp_eid)
+{
+	struct sockaddr_mctp_ext addr = { 0 };
+	struct mctp_ctrl_cmd_get_eid req = { 0 };
+	struct mctp_ctrl_resp_get_eid *resp = NULL;
+
+	uint8_t *buf = NULL;
+	size_t buf_size;
+	uint8_t iid;
+	int rc;
+
+	iid = mctp_next_iid(peer->ctx);
+	mctp_ctrl_msg_hdr_init_req(&req.ctrl_hdr, iid,
+				   MCTP_CTRL_CMD_GET_ENDPOINT_ID);
+	rc = endpoint_query_peer(peer, MCTP_CTRL_HDR_MSG_TYPE, &req,
+				 sizeof(req), &buf, &buf_size, &addr);
+	if (rc < 0)
+		goto out;
+
+	rc = mctp_ctrl_validate_response(buf, buf_size, sizeof(*resp),
+					 peer_tostr_short(peer), iid,
+					 MCTP_CTRL_CMD_GET_ENDPOINT_ID);
+	if (!rc) {
+		resp = (void *)buf;
+		*resp_eid = resp->eid;
+	}
+
+out:
+	free(buf);
+	return rc;
+}
+
 static int query_get_peer_msgtypes(struct peer *peer)
 {
 	struct sockaddr_mctp_ext addr;
