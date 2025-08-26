@@ -248,6 +248,10 @@ struct ctx {
 
 	//  maximum pool size for assumed MCTP Bridge
 	uint8_t max_pool_size;
+
+	// bus owner/bridge polling interval in usecs for
+	// checking endpoint's accessibility.
+	uint64_t endpoint_poll;
 };
 
 static int emit_endpoint_added(const struct peer *peer);
@@ -4752,6 +4756,26 @@ static int parse_config_bus_owner(struct ctx *ctx, toml_table_t *bus_owner)
 			return rc;
 	}
 
+	val = toml_int_in(bus_owner, "endpoint_poll_ms");
+	if (val.ok) {
+		uint64_t i = val.u.i;
+		if (i == 0) {
+			ctx->endpoint_poll = 0;
+			fprintf(stderr, "Bridge poll is disabled\n");
+			return 0;
+		}
+
+		if ((i > 100 * 1000) ||
+		    (i * 1000) < (MCTP_I2C_TSYM_TRECLAIM_MIN_US / 2)) {
+			warnx("endpoint polling interval invalid (%u - %u ms)",
+			      (MCTP_I2C_TSYM_TRECLAIM_MIN_US / 2) / 1000,
+			      100 * 1000);
+			return -1;
+		}
+
+		ctx->endpoint_poll = i * 1000;
+	}
+
 	return 0;
 }
 
@@ -4853,6 +4877,7 @@ static void setup_config_defaults(struct ctx *ctx)
 	ctx->max_pool_size = 15;
 	ctx->dyn_eid_min = eid_alloc_min;
 	ctx->dyn_eid_max = eid_alloc_max;
+	ctx->endpoint_poll = 2500000; //2.5s
 }
 
 static void free_config(struct ctx *ctx)
