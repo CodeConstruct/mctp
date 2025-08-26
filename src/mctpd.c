@@ -276,6 +276,7 @@ static int add_peer_from_addr(struct ctx *ctx,
 			      const struct sockaddr_mctp_ext *addr,
 			      struct peer **ret_peer);
 static int remove_peer(struct peer *peer);
+static int remove_bridged_peers(struct peer *bridge);
 static int query_peer_properties(struct peer *peer);
 static int setup_added_peer(struct peer *peer);
 static void add_peer_route(struct peer *peer);
@@ -1882,6 +1883,54 @@ static int check_peer_struct(const struct peer *peer, const struct net *n)
 	return 0;
 }
 
+/* Stops downstream endpoint polling and removes
+ * peer structure when bridge endpoint is being removed.
+ */
+static int remove_bridged_peers(struct peer *bridge)
+{
+	mctp_eid_t ep, pool_start, pool_end;
+	struct poll_ctx *pctx = NULL;
+	struct peer *peer = NULL;
+	struct net *n = NULL;
+	int rc = 0;
+
+	pool_end = bridge->pool_start + bridge->pool_size - 1;
+	n = lookup_net(bridge->ctx, bridge->net);
+	pool_start = bridge->pool_start;
+	for (ep = pool_start; ep <= pool_end; ep++) {
+		// stop endpoint polling before removing peer
+		// else next trigger will create peer again.
+		int idx = ep - pool_start;
+
+		if (bridge->poll.sources && bridge->poll.sources[idx]) {
+			pctx = sd_event_source_get_userdata(
+				bridge->poll.sources[idx]);
+			rc = sd_event_source_set_enabled(
+				bridge->poll.sources[idx], SD_EVENT_OFF);
+			if (rc < 0) {
+				warnx("Failed to stop polling timer while removing peer %d: %s",
+				      ep, strerror(-rc));
+			}
+
+			sd_event_source_unref(bridge->poll.sources[idx]);
+			bridge->poll.sources[idx] = NULL;
+			free(pctx);
+		}
+		peer = n->peers[ep];
+		if (!peer)
+			continue;
+
+		rc = remove_peer(peer);
+		if (rc < 0) {
+			warnx("Failed to remove peer %d from bridge eid %d pool [%d - %d]: %s",
+			      ep, bridge->eid, pool_start, pool_end,
+			      strerror(-rc));
+		}
+	}
+
+	return 0;
+}
+
 static int remove_peer(struct peer *peer)
 {
 	struct ctx *ctx = peer->ctx;
@@ -1914,6 +1963,12 @@ static int remove_peer(struct peer *peer)
 			      rc);
 		}
 		sd_event_source_unref(peer->recovery.source);
+	}
+
+	if (peer->pool_size) {
+		remove_bridged_peers(peer);
+		free(peer->poll.sources);
+		peer->poll.sources = NULL;
 	}
 
 	n->peers[peer->eid] = NULL;
@@ -1962,6 +2017,7 @@ static void free_peers(struct ctx *ctx)
 		free(peer->message_types);
 		free(peer->uuid);
 		free(peer->path);
+		free(peer->poll.sources);
 		sd_bus_slot_unref(peer->slot_obmc_endpoint);
 		sd_bus_slot_unref(peer->slot_cc_endpoint);
 		sd_bus_slot_unref(peer->slot_bridge);
