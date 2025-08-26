@@ -2855,14 +2855,21 @@ static int peer_route_update(struct peer *peer, uint16_t type)
  * The peer's route has already been set up */
 static int setup_added_peer(struct peer *peer)
 {
+	struct net *n = lookup_net(peer->ctx, peer->net);
 	int rc;
 
+	if (!n) {
+		bug_warn("%s Bad net %u", __func__, peer->net);
+		return -EPROTO;
+	}
 	// Set minimum MTU by default for compatibility. Clients can increase
 	// this with .SetMTU as needed
 	peer->mtu = mctp_nl_min_mtu_byindex(peer->ctx->nl, peer->phys.ifindex);
 
-	// add route before querying
-	add_peer_route(peer);
+	// add route before querying for non-bridged endpoints.
+	// bridged endpoints will use the bridge's pool range route.
+	if (!is_eid_in_bridge_pool(n, peer->ctx, peer->eid))
+		add_peer_route(peer);
 
 	rc = query_peer_properties(peer);
 	if (rc < 0)
