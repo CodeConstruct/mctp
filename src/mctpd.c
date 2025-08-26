@@ -101,6 +101,12 @@ struct role {
 	const char *dbus_val;
 };
 
+// Endpoint poll context for bridged endpoint polling
+struct poll_ctx {
+	struct peer *bridge;
+	mctp_eid_t poll_eid;
+};
+
 static const struct role roles[] = {
 	[ENDPOINT_ROLE_UNKNOWN] = {
 		.role = ENDPOINT_ROLE_UNKNOWN,
@@ -199,6 +205,10 @@ struct peer {
 	// Pool size
 	uint8_t pool_size;
 	uint8_t pool_start;
+
+	struct {
+		sd_event_source **sources;
+	} poll;
 };
 
 struct msg_type_support {
@@ -5011,6 +5021,136 @@ out:
 	return rc;
 }
 
+static int peer_endpoint_poll(sd_event_source *s, uint64_t usec, void *userdata)
+{
+	struct poll_ctx *pctx = userdata;
+	struct peer *bridge = pctx->bridge;
+	mctp_eid_t ep = pctx->poll_eid;
+	mctp_eid_t pool_start, idx;
+	struct peer *peer = NULL;
+	mctp_eid_t ret_eid = 0;
+	struct net *n;
+	int rc = 0;
+
+	if (!bridge) {
+		free(pctx);
+		return 0;
+	}
+
+	pool_start = bridge->pool_start;
+	idx = ep - pool_start;
+
+	/* Polling policy :
+	 *
+	 * Once bridge eid pool space is allocated and gateway
+	 * routes for downstream endpoints are in place, busowner
+	 * would initiate periodic GET_ENDPOINT_ID command at an
+	 * interval of atleast 1/2 * TRECLAIM.
+
+	 1. The downstream endpoint if present behind the bridge,
+	    responds to send poll command, that endpoint path is
+		considered accessible.
+		The endpoint path would be published as reachable to d-bus and
+		polling will no longer continue.
+
+	 2. If endpoint is not present or doesn't responds to send poll
+	    commmand, then it has not been establed yet that endpoint
+		path from the bridge is accessible or not, thus continue
+		to poll.
+	 */
+
+	n = lookup_net(bridge->ctx, bridge->net);
+	peer = n->peers[ep];
+	if (!peer) {
+		rc = add_peer(bridge->ctx, &(bridge->phys), ep, bridge->net,
+			      &peer, true);
+		if (rc < 0)
+			goto exit;
+	}
+
+	rc = query_endpoint_poll_commmand(peer, &ret_eid);
+	if (rc < 0) {
+		goto reschedule;
+	}
+
+	if (ret_eid != ep) {
+		warnx("Unexpected eid %d abort polling for eid %d", ret_eid,
+		      ep);
+		goto exit;
+	}
+
+	if (bridge->ctx->verbose) {
+		fprintf(stderr, "Endpoint %d is accessible\n", ep);
+	}
+
+	rc = setup_added_peer(peer);
+	if (rc < 0)
+		goto reschedule;
+
+exit:
+	if (bridge) {
+		assert(sd_event_source_get_enabled(bridge->poll.sources[idx],
+						   NULL) == 0);
+		sd_event_source_unref(bridge->poll.sources[idx]);
+		bridge->poll.sources[idx] = NULL;
+	}
+	free(pctx);
+	return rc < 0 ? rc : 0;
+
+reschedule:
+	rc = mctp_ops.sd_event.source_set_time_relative(
+		bridge->poll.sources[idx], bridge->ctx->endpoint_poll);
+	if (rc >= 0) {
+		rc = sd_event_source_set_enabled(bridge->poll.sources[idx],
+						 SD_EVENT_ONESHOT);
+	}
+	return 0;
+}
+
+static int bridge_poll_start(struct peer *bridge)
+{
+	mctp_eid_t pool_start = bridge->pool_start;
+	mctp_eid_t pool_size = bridge->pool_size;
+	sd_event_source **sources = NULL;
+	struct ctx *ctx;
+	int rc;
+	int i;
+
+	sources = calloc(pool_size, sizeof(sd_event_source *));
+	ctx = bridge->ctx;
+
+	if (!sources) {
+		rc = -ENOMEM;
+		warnx("Failed to setup periodic polling for bridge (eid %d)",
+		      bridge->eid);
+		return rc;
+	}
+
+	bridge->poll.sources = sources;
+	for (i = 0; i < pool_size; i++) {
+		struct poll_ctx *pctx = calloc(1, sizeof(struct poll_ctx));
+		if (!pctx) {
+			warnx("Failed to memory, skip polling for eid %d",
+			      pool_start + i);
+			continue;
+		}
+
+		pctx->bridge = bridge;
+		pctx->poll_eid = pool_start + i;
+		rc = mctp_ops.sd_event.add_time_relative(
+			ctx->event, &bridge->poll.sources[i], CLOCK_MONOTONIC,
+			ctx->endpoint_poll, 0, peer_endpoint_poll, pctx);
+		if (rc < 0) {
+			warnx("Failed to setup poll event source for eid %d",
+			      (pool_start + i));
+			free(pctx);
+			continue;
+		}
+	}
+
+	return 0;
+}
+
 static int endpoint_allocate_eids(struct peer *peer)
 {
 	uint8_t allocated_pool_size = 0;
@@ -5079,7 +5219,10 @@ static int endpoint_allocate_eids(struct peer *peer)
 			peer->pool_size);
 	}
 
-	// TODO: Polling logic for downstream EID
+	// Poll for downstream endpoint accessibility
+	if (peer->ctx->endpoint_poll) {
+		bridge_poll_start(peer);
+	}
 
 	return 0;
 }
