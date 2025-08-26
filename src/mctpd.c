@@ -59,6 +59,8 @@ static const char *mctpd_appid = "67369c05-4b97-4b7e-be72-65cfd8639f10";
 
 static const char *conf_file_default = MCTPD_CONF_FILE_DEFAULT;
 
+static const uint64_t max_poll_interval_ms = 10000;
+static const uint64_t min_poll_interval_ms = 2500;
 static const mctp_eid_t eid_alloc_min = 0x08;
 static const mctp_eid_t eid_alloc_max = 0xfe;
 static const uint8_t MCTP_TYPE_VENDOR_PCIE = 0x7e;
@@ -268,6 +270,10 @@ struct ctx {
 
 	//  maximum pool size for assumed MCTP Bridge
 	uint8_t max_pool_size;
+
+	// bus owner/bridge polling interval in usecs for
+	// checking endpoint's accessibility.
+	uint64_t endpoint_poll;
 };
 
 static int emit_endpoint_added(const struct peer *peer);
@@ -5050,6 +5056,18 @@ static int parse_config_bus_owner(struct ctx *ctx, toml_table_t *bus_owner)
 			return rc;
 	}
 
+	val = toml_int_in(bus_owner, "endpoint_poll_ms");
+	if (val.ok && val.u.i) {
+		uint64_t i = val.u.i;
+		if ((i > max_poll_interval_ms) || (i < min_poll_interval_ms)) {
+			warnx("endpoint polling interval invalid (%lu - %lu ms)",
+			      min_poll_interval_ms, max_poll_interval_ms);
+			return -1;
+		}
+
+		ctx->endpoint_poll = i * 1000;
+	}
+
 	return 0;
 }
 
@@ -5154,6 +5172,7 @@ static void setup_config_defaults(struct ctx *ctx)
 	ctx->max_pool_size = 15;
 	ctx->dyn_eid_min = eid_alloc_min;
 	ctx->dyn_eid_max = eid_alloc_max;
+	ctx->endpoint_poll = 0;
 }
 
 static void free_config(struct ctx *ctx)
