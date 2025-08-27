@@ -2087,7 +2087,12 @@ static int endpoint_assign_eid(struct ctx *ctx, sd_bus_error *berr,
 		sd_bus_error_setf(
 			berr, SD_BUS_ERROR_FAILED,
 			"Endpoint returned failure to Set Endpoint ID");
+
 	if (rc < 0) {
+		// we have not yet created the pool route, reset here so that
+		// remove_peer() does not attempt to remove it
+		peer->pool_size = 0;
+		peer->pool_start = 0;
 		remove_peer(peer);
 		return rc;
 	}
