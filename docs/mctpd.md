@@ -283,6 +283,8 @@ busctl call au.com.codeconstruct.MCTP1 \
 ### `.Remove`
 
 Removes the MCTP endpoint from `mctpd`, and deletes routes and neighbour entries.
+If endpoint is a bridge (have EID pool allocated for downstream devices) removing
+it will cause removal of all downstream devices endpoint objects as well.
 
 ### MCTP bridge interface: `au.com.codeconstruct.MCTP.Bridge1` interface
 
@@ -384,3 +386,15 @@ allocations.
 This setting determines the maximum EID pool size that a bridge peer may request
 via their Set Endpoint ID response. Requests larger than this size will be
 truncated.
+
+#### `endpoint_poll_ms`: Periodic polling interval for briged peers.
+
+* type: integer, in milliseconds
+* default: 0
+
+This is periodic polling interval time in milliseconds, which bus owner/bridge
+needs to perform to identify accessible bridged eid among the allocated pool
+space. Value should be between [```0.5 * TRECLAIM (5)```- ```10```] seconds.
+Such periodic polling is common for all the briged endpoints among allocated
+pool space [`.PoolStart` - `.PoolEnd`] of the bridge.
+Polling could be provisioned to be disabled via setting the value as ```0```.
