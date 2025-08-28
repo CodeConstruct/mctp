@@ -1506,3 +1506,205 @@ async def test_query_peer_properties_retry_timeout(nursery, dbus, sysnet):
     # exit mctpd
     res = await mctpd.stop_mctpd()
     assert res == 0
+""" Test that we use endpoint poll interval from the config and
+    that we discover bridged endpoints via polling"""
+async def test_bridged_endpoint_poll(dbus, sysnet, nursery, autojump_clock):
+    poll_interval = 2500
+    config = f"""
+    [bus-owner]
+    endpoint_poll_ms = {poll_interval}
+    """
+
+    mctpd = MctpdWrapper(dbus, sysnet, config = config)
+    await mctpd.start_mctpd(nursery)
+
+    iface = mctpd.system.interfaces[0]
+    ep = mctpd.network.endpoints[0]
+    mctp = await mctpd_mctp_iface_obj(dbus, iface)
+
+    bridged_ep = [
+        Endpoint(iface, bytes(), types = [0, 1]),
+        Endpoint(iface, bytes(), types = [0, 1])
+    ]
+    for bep in bridged_ep:
+        mctpd.network.add_endpoint(bep)
+        ep.add_bridged_ep(bep)
+
+    mctp_obj = await dbus.get_proxy_object(MCTPD_C, MCTPD_MCTP_P)
+    mctp_objmgr = await mctp_obj.get_interface(DBUS_OBJECT_MANAGER_I)
+    endpoint_added = trio.Semaphore(initial_value=0)
+
+    # We expect two bridged endpoints to be discovered
+    expected_bridged_eps = len(bridged_ep)
+    bridged_endpoints_found = []
+
+    def ep_added(ep_path, content):
+        if MCTPD_ENDPOINT_I in content:
+            bridged_endpoints_found.append(ep_path)
+            endpoint_added.release()
+
+    await mctp_objmgr.on_interfaces_added(ep_added)
+    (eid, _, path, new) = await mctp.call_assign_endpoint(ep.lladdr)
+    assert new
+
+    # Wait for all expected bridged endpoints to be discovered
+    with trio.move_on_after(poll_interval / 1000 * 2) as expected:
+        for i in range(expected_bridged_eps):
+            await endpoint_added.acquire()
+
+    # Verify we found all expected bridged endpoints
+    assert not expected.cancelled_caught, "Timeout waiting for bridged endpoints"
+    assert len(bridged_endpoints_found) == expected_bridged_eps
+
+    res = await mctpd.stop_mctpd()
+    assert res == 0
+
+""" Test that all downstream endpoints are removed when the bridge
+    endpoint is removed"""
+async def test_bridged_endpoint_remove(dbus, sysnet, nursery, autojump_clock):
+    poll_interval = 2500
+    config = f"""
+    [bus-owner]
+    endpoint_poll_ms = {poll_interval}
+    """
+
+    mctpd = MctpdWrapper(dbus, sysnet, config = config)
+    await mctpd.start_mctpd(nursery)
+
+    iface = mctpd.system.interfaces[0]
+    ep = mctpd.network.endpoints[0]
+    mctp = await mctpd_mctp_iface_obj(dbus, iface)
+
+    bridged_ep = [
+        Endpoint(iface, bytes(), types = [0, 1]),
+        Endpoint(iface, bytes(), types = [0, 1])
+    ]
+    for bep in bridged_ep:
+        mctpd.network.add_endpoint(bep)
+        ep.add_bridged_ep(bep)
+
+    (eid, _, path, new) = await mctp.call_assign_endpoint(ep.lladdr)
+    assert new
+
+    # Wait for the bridged endpoints to be discovered
+    await trio.sleep((poll_interval * 2) / 1000)
+    removed = trio.Semaphore(initial_value = 0)
+    removed_eps = []
+
+    # Capture the removed endpoints
+    def ep_removed(ep_path, interfaces):
+        if MCTPD_ENDPOINT_I in interfaces:
+            removed.release()
+            removed_eps.append(ep_path)
+
+    mctp_obj = await dbus.get_proxy_object(MCTPD_C, MCTPD_MCTP_P)
+    mctp_objmgr = await mctp_obj.get_interface(DBUS_OBJECT_MANAGER_I)
+    await mctp_objmgr.on_interfaces_removed(ep_removed)
+
+    # Remove the bridge endpoint
+    bridge_obj = await mctpd_mctp_endpoint_control_obj(dbus, path)
+    await bridge_obj.call_remove()
+
+    # Assert that all downstream endpoints were removed
+    assert len(removed_eps) == (len(bridged_ep) + 1)
+    res = await mctpd.stop_mctpd()
+    assert res == 0
+
+""" Test that polling stops once endponit has been discovered """
+async def test_bridged_endpoint_poll_stop(dbus, sysnet, nursery, autojump_clock):
+    poll_interval = 2500
+    config = f"""
+    [bus-owner]
+    endpoint_poll_ms = {poll_interval}
+    """
+
+    mctpd = MctpdWrapper(dbus, sysnet, config = config)
+    await mctpd.start_mctpd(nursery)
+
+    iface = mctpd.system.interfaces[0]
+    ep = mctpd.network.endpoints[0]
+    mctp = await mctpd_mctp_iface_obj(dbus, iface)
+    poll_count = 0
+
+    class BridgedEndpoint(Endpoint):
+        async def handle_mctp_control(self, sock, src_addr, msg):
+            flags, opcode = msg[0:2]
+            if opcode == 0x2: # Get Endpoint ID
+                nonlocal poll_count
+                poll_count += 1
+            return await super().handle_mctp_control(sock, src_addr, msg)
+
+    bridged_ep = BridgedEndpoint(iface, bytes(), types = [0, 1])
+    mctpd.network.add_endpoint(bridged_ep)
+    ep.add_bridged_ep(bridged_ep)
+
+    (eid, _, path, new) = await mctp.call_assign_endpoint(ep.lladdr)
+    assert new
+
+    mctp_obj = await dbus.get_proxy_object(MCTPD_C, MCTPD_MCTP_P)
+    mctp_objmgr = await mctp_obj.get_interface(DBUS_OBJECT_MANAGER_I)
+    endpoint_added = trio.Semaphore(initial_value=0)
+    poll_count_by_discovery = 0
+
+    def ep_added(ep_path, content):
+        if MCTPD_ENDPOINT_I in content:
+            nonlocal poll_count_by_discovery
+            poll_count_by_discovery = poll_count
+            endpoint_added.release()
+
+    await mctp_objmgr.on_interfaces_added(ep_added)
+
+    # Wait longer than the poll interval for the bridged endpoint
+    # to be discovered
+    await trio.sleep(poll_interval / 1000)
+
+    # We should have only poll until the discovery thus count should
+    # be the same even after longer wait.
+    assert poll_count == poll_count_by_discovery
+
+    res = await mctpd.stop_mctpd()
+    assert res == 0
+
+""" Test that polling continues until the endpoint is discovered """
+async def test_bridged_endpoint_poll_continue(dbus, sysnet, nursery, autojump_clock):
+    poll_interval = 2500
+    config = f"""
+    [bus-owner]
+    endpoint_poll_ms = {poll_interval}
+    """
+
+    mctpd = MctpdWrapper(dbus, sysnet, config = config)
+    await mctpd.start_mctpd(nursery)
+
+    iface = mctpd.system.interfaces[0]
+    ep = mctpd.network.endpoints[0]
+    mctp = await mctpd_mctp_iface_obj(dbus, iface)
+    poll_count = 0
+
+    class BridgedEndpoint(Endpoint):
+        async def handle_mctp_control(self, sock, src_addr, msg):
+            flags, opcode = msg[0:2]
+            # dont respond to simiulate device not accessible
+            # but increment poll count for the Get Endpoint ID
+            if opcode == 0x2: # Get Endpoint ID
+                nonlocal poll_count
+                poll_count += 1
+            return None
+
+    bridged_ep = BridgedEndpoint(iface, bytes(), types = [0, 1])
+    mctpd.network.add_endpoint(bridged_ep)
+    ep.add_bridged_ep(bridged_ep)
+
+    (eid, _, path, new) = await mctp.call_assign_endpoint(ep.lladdr)
+    assert new
+
+    # Wait for sometime to continue polling
+    await trio.sleep(poll_interval / 1000)
+
+    poll_count_before = poll_count
+    # Wait more to see if poll count increments
+    await trio.sleep(1)
+    assert poll_count > poll_count_before
+
+    res = await mctpd.stop_mctpd()
+    assert res == 0
