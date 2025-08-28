@@ -2840,8 +2840,8 @@ static int peer_route_update(struct peer *peer, uint16_t type)
 			gw_addr.net = peer->net;
 			gw_addr.eid = peer->eid;
 			rc = mctp_nl_route_del(peer->ctx->nl, peer->pool_start,
-					       peer->pool_size - 1,
-					       peer->phys.ifindex, &gw_addr);
+					       peer->pool_size - 1, 0,
+					       &gw_addr);
 			if (rc < 0)
 				warnx("failed to delete route for peer pool eids %d-%d %s",
 				      peer->pool_start,
@@ -4707,12 +4707,35 @@ static int endpoint_allocate_eids(struct peer *peer)
 		warnx("Invalid pool start %d", peer->pool_start);
 		return -1;
 	}
+	/* Add gateway route for all bridge's downstream EIDs.
+	 * After allocation, the endpoint may initiate communication
+	 * immediately, so set up routes for downstream endpoints beforehand.
+	 */
+	struct mctp_fq_addr gw_addr = { 0 };
+	gw_addr.net = peer->net;
+	gw_addr.eid = peer->eid;
+	rc = mctp_nl_route_add(peer->ctx->nl, peer->pool_start,
+			       peer->pool_size - 1, 0, &gw_addr, peer->mtu);
+	if (rc < 0 && rc != -EEXIST) {
+		warnx("Failed to add gateway route for EID %d: %s", gw_addr.eid,
+		      strerror(-rc));
+		return rc;
+	}
+
 	rc = endpoint_send_allocate_endpoint_ids(
 		peer, peer->pool_start, peer->pool_size,
 		mctp_ctrl_cmd_allocate_eids_alloc_eids, &allocated_pool_size,
 		&allocated_pool_start);
 	if (rc) {
 		warnx("Failed to allocate downstream EIDs");
+		// delete prior set routes for downstream endpoints
+		rc = mctp_nl_route_del(peer->ctx->nl, peer->pool_start,
+				       peer->pool_size - 1, 0, &gw_addr);
+		if (rc < 0)
+			warnx("failed to delete route for peer pool eids %d-%d %s",
+			      peer->pool_start,
+			      peer->pool_start + peer->pool_size - 1,
+			      strerror(-rc));
 		//reset peer pool
 		peer->pool_size = 0;
 		peer->pool_start = 0;
@@ -4723,19 +4746,6 @@ static int endpoint_allocate_eids(struct peer *peer)
 
 	if (!peer->pool_size)
 		return 0;
-
-	// add gateway route for all bridge's downstream eids
-	struct mctp_fq_addr gw_addr = { 0 };
-	gw_addr.net = peer->net;
-	gw_addr.eid = peer->eid;
-	rc = mctp_nl_route_add(peer->ctx->nl, peer->pool_start,
-			       peer->pool_size - 1, peer->phys.ifindex,
-			       &gw_addr, peer->mtu);
-	if (rc < 0 && rc != -EEXIST) {
-		warnx("Failed to add gateway route for EID %d: %s", gw_addr.eid,
-		      strerror(-rc));
-		return rc;
-	}
 
 	sd_bus_add_object_vtable(peer->ctx->bus, &peer->slot_bridge, peer->path,
 				 CC_MCTP_DBUS_IFACE_BRIDGE, bus_endpoint_bridge,
