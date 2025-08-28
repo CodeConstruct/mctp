@@ -53,6 +53,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 9. `mctpd`'s Network1.LearnEndpoint method will now check for endpoint
    presence before publishing an endpoint.
 
+10. `mctpd` now implements bridge endpoint polling after successful dynamic pool
+   space allocation. Once endpoint is establised as accessible i.e if it responds
+   to send poll command, polling on that endpoint would stop.
+
 ## [2.2] - 2025-07-28
 
 ### Fixed
