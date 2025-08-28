@@ -259,11 +259,23 @@ class System:
             route = self.lookup_route(addr.net, addr.eid)
             if route is None:
                 return None
-            iface = route.iface
-
-            neigh = self.lookup_neighbour(route.iface, addr.eid)
-            # if no neighbour, return an empty lladdr (eg mctpusb)
-            lladdr = neigh.lladdr if neigh else bytes()
+            if route.gw is not None:
+                # In case of gateway routes, we need not have neighbours
+                # for the gated endpoints, but only need to find the
+                # gateway's physical address
+				# TODO: handle recursive gateway and alternate routes
+				# for downstream endpoints
+                gw_net, gw_eid = route.gw
+                gw_route = self.lookup_route(gw_net, gw_eid)
+                if gw_route is None or gw_route.iface is None:
+                    return None
+                iface = gw_route.iface
+                neigh = self.lookup_neighbour(gw_route.iface, gw_eid)
+                lladdr = neigh.lladdr if neigh else bytes()
+            else:
+                iface = route.iface
+                neigh = self.lookup_neighbour(route.iface, addr.eid)
+                lladdr = neigh.lladdr if neigh else bytes()
 
         if iface is None or lladdr is None:
             return None
