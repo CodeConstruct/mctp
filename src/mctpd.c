@@ -3370,7 +3370,7 @@ err:
 	return rc;
 }
 
-int on_dbus_peer_removed(sd_bus_track *track, void *userdata)
+static int on_dbus_peer_removed(sd_bus_track *track, void *userdata)
 {
 	struct ctx *ctx = userdata;
 	size_t i, msg_types = ctx->num_supported_msg_types;
