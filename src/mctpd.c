@@ -3376,17 +3376,19 @@ static int on_dbus_peer_removed(sd_bus_track *track, void *userdata)
 	size_t i, msg_types = ctx->num_supported_msg_types;
 
 	for (i = 0; i < msg_types; i++) {
-		if (ctx->supported_msg_types[i].source_peer == track) {
-			free(ctx->supported_msg_types[i].versions);
-			if (i < (msg_types - 1)) {
-				ctx->supported_msg_types[i] =
-					ctx->supported_msg_types[msg_types - 1];
-			}
-			ctx->num_supported_msg_types--;
-			break;
-		}
+		struct msg_type_support *msg_type =
+			&ctx->supported_msg_types[i];
+
+		if (msg_type->source_peer != track)
+			continue;
+
+		free(msg_type->versions);
+		*msg_type = ctx->supported_msg_types[msg_types - 1];
+		ctx->num_supported_msg_types--;
+		break;
 	}
 	sd_bus_track_unref(track);
+
 	return 0;
 }
 
