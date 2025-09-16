@@ -36,6 +36,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
    for Endpoint Discovery -> Endpoint Discovery), where permitted by transport
    type.
 
+8. `mctpd` now has a facility for applications to register support for MCTP
+   message types. Those types are reported in `mctpd`'s responses to
+   Get Message Type Support and Get MCTP Version support commands.
+
 ## [2.2] - 2025-07-28
 
 ### Fixed
