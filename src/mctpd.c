@@ -3395,10 +3395,11 @@ static int on_dbus_peer_removed(sd_bus_track *track, void *userdata)
 static int method_register_responder(sd_bus_message *call, void *data,
 				     sd_bus_error *berr)
 {
-	struct ctx *ctx = data;
-	uint8_t msg_type;
+	struct msg_type_support *msg_types, *cur_msg_type;
 	const uint32_t *versions = NULL;
 	size_t i, versions_len;
+	struct ctx *ctx = data;
+	uint8_t msg_type;
 	int rc;
 
 	rc = sd_bus_message_read(call, "y", &msg_type);
@@ -3425,19 +3426,17 @@ static int method_register_responder(sd_bus_message *call, void *data,
 		}
 	}
 
-	struct msg_type_support *msg_types =
-		realloc(ctx->supported_msg_types,
-			(ctx->num_supported_msg_types + 1) *
-				sizeof(struct msg_type_support));
+	msg_types = realloc(ctx->supported_msg_types,
+			    (ctx->num_supported_msg_types + 1) *
+				    sizeof(struct msg_type_support));
 	if (!msg_types) {
 		return sd_bus_error_setf(
 			berr, SD_BUS_ERROR_NO_MEMORY,
 			"Failed to allocate memory for message types");
 	}
 	ctx->supported_msg_types = msg_types;
-	struct msg_type_support *cur_msg_type =
-		&ctx->supported_msg_types[ctx->num_supported_msg_types];
 
+	cur_msg_type = &ctx->supported_msg_types[ctx->num_supported_msg_types];
 	cur_msg_type->source_peer = NULL;
 	cur_msg_type->versions = NULL;
 	rc = sd_bus_track_new(ctx->bus, &cur_msg_type->source_peer,
