@@ -846,13 +846,13 @@ handle_control_get_version_support(struct ctx *ctx, int sd,
 				   const struct sockaddr_mctp_ext *addr,
 				   const uint8_t *buf, const size_t buf_size)
 {
-	struct mctp_ctrl_cmd_get_mctp_ver_support *req = NULL;
 	struct mctp_ctrl_resp_get_mctp_ver_support *resp = NULL;
+	struct mctp_ctrl_cmd_get_mctp_ver_support *req = NULL;
+	size_t resp_len, i, ver_count = 0, ver_bytes_count;
 	uint32_t *versions = NULL;
 	uint8_t *respbuf = NULL;
-	size_t resp_len, i, ver_count = 0, ver_bytes_count;
 	ssize_t ver_idx = -1;
-	int status;
+	int rc;
 
 	if (buf_size < sizeof(struct mctp_ctrl_cmd_get_mctp_ver_support)) {
 		warnx("short Get Version Support message");
@@ -902,9 +902,10 @@ handle_control_get_version_support(struct ctx *ctx, int sd,
 
 	mctp_ctrl_msg_hdr_init_resp(&resp->ctrl_hdr, req->ctrl_hdr);
 
-	status = reply_message(ctx, sd, resp, resp_len, addr);
+	rc = reply_message(ctx, sd, resp, resp_len, addr);
 	free(respbuf);
-	return status;
+
+	return rc;
 }
 
 static int handle_control_get_endpoint_id(struct ctx *ctx, int sd,
@@ -959,11 +960,11 @@ static int handle_control_get_message_type_support(
 	struct ctx *ctx, int sd, const struct sockaddr_mctp_ext *addr,
 	const uint8_t *buf, const size_t buf_size)
 {
-	struct mctp_ctrl_cmd_get_msg_type_support *req = NULL;
 	struct mctp_ctrl_resp_get_msg_type_support *resp = NULL;
+	struct mctp_ctrl_cmd_get_msg_type_support *req = NULL;
+	size_t i, resp_len, type_count;
 	uint8_t *resp_buf, *msg_types;
-	size_t resp_len, type_count;
-	size_t i;
+	int rc;
 
 	if (buf_size < sizeof(*req)) {
 		warnx("short Get Message Type Support message");
@@ -991,9 +992,10 @@ static int handle_control_get_message_type_support(
 		msg_types[i] = ctx->supported_msg_types[i].msg_type;
 	}
 
-	int result = reply_message(ctx, sd, resp, resp_len, addr);
+	rc = reply_message(ctx, sd, resp, resp_len, addr);
 	free(resp_buf);
-	return result;
+
+	return rc;
 }
 
 static int
