@@ -50,12 +50,9 @@ If message type is already registered then dbus call will fail
 `<versions>` Versions supported for this message type formatted as uint32 integers as
 specified in DSP0236
 
-Example for PLDM type with two versions:
-
-```shell
-busctl call au.com.codeconstruct.MCTP1 /au/com/codeconstruct/mctp1 \
-  au.com.codeconstruct.MCTP1 RegisterTypeSupport yau 1 2 0xF1F2F3F4 0xF0F0F0F1
-```
+De-registration is automatic - the specified types (and versions) are registered
+for as long as the dbus sender remains attached to the message bus, and are
+unregistered on disconnect.
 
 Also it hosts two trees of MCTP objects:
 
