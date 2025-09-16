@@ -3392,8 +3392,8 @@ static int on_dbus_peer_removed(sd_bus_track *track, void *userdata)
 	return 0;
 }
 
-static int method_register_responder(sd_bus_message *call, void *data,
-				     sd_bus_error *berr)
+static int method_register_type_support(sd_bus_message *call, void *data,
+					sd_bus_error *berr)
 {
 	struct msg_type_support *msg_types, *cur_msg_type;
 	const uint32_t *versions = NULL;
@@ -3838,7 +3838,7 @@ static const sd_bus_vtable mctp_base_vtable[] = {
 	SD_BUS_ARGS("y", msg_type,
 	            "au", versions),
 	SD_BUS_NO_RESULT,
-	method_register_responder,
+	method_register_type_support,
 	0),
 	SD_BUS_VTABLE_END,
 };
