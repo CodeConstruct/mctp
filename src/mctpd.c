@@ -2242,7 +2242,7 @@ static void set_berr(struct ctx *ctx, int errcode, sd_bus_error *berr)
 
 static int query_get_endpoint_id(struct ctx *ctx, const dest_phys *dest,
 				 mctp_eid_t *ret_eid, uint8_t *ret_ep_type,
-				 uint8_t *ret_media_spec)
+				 uint8_t *ret_media_spec, struct peer *peer)
 {
 	struct sockaddr_mctp_ext addr;
 	struct mctp_ctrl_cmd_get_eid req = { 0 };
@@ -2257,8 +2257,13 @@ static int query_get_endpoint_id(struct ctx *ctx, const dest_phys *dest,
 	mctp_ctrl_msg_hdr_init_req(&req.ctrl_hdr, iid,
 				   MCTP_CTRL_CMD_GET_ENDPOINT_ID);
 
-	rc = endpoint_query_phys(ctx, dest, MCTP_CTRL_HDR_MSG_TYPE, &req,
-				 sizeof(req), &buf, &buf_size, &addr);
+	if (peer)
+		rc = endpoint_query_peer(peer, MCTP_CTRL_HDR_MSG_TYPE, &req,
+					 sizeof(req), &buf, &buf_size, &addr);
+	else
+		rc = endpoint_query_phys(ctx, dest, MCTP_CTRL_HDR_MSG_TYPE,
+					 &req, sizeof(req), &buf, &buf_size,
+					 &addr);
 	if (rc < 0)
 		goto out;
 
@@ -2293,7 +2298,8 @@ static int get_endpoint_peer(struct ctx *ctx, sd_bus_error *berr,
 	int rc;
 
 	*ret_peer = NULL;
-	rc = query_get_endpoint_id(ctx, dest, &eid, &ep_type, &medium_spec);
+	rc = query_get_endpoint_id(ctx, dest, &eid, &ep_type, &medium_spec,
+				   /*peer=*/NULL);
 	if (rc)
 		return rc;
 
@@ -2559,7 +2565,8 @@ static int method_setup_endpoint(sd_bus_message *call, void *data,
 	}
 
 	/* Get Endpoint ID */
-	rc = query_get_endpoint_id(ctx, dest, &eid, &ep_type, &medium_spec);
+	rc = query_get_endpoint_id(ctx, dest, &eid, &ep_type, &medium_spec,
+				   /*peer=*/NULL);
 	if (rc)
 		goto err;
 
@@ -3144,7 +3151,7 @@ static int peer_endpoint_recover(sd_event_source *s, uint64_t usec,
 	 */
 	rc = query_get_endpoint_id(ctx, &peer->phys, &peer->recovery.eid,
 				   &peer->recovery.endpoint_type,
-				   &peer->recovery.medium_spec);
+				   &peer->recovery.medium_spec, /*peer=*/NULL);
 	if (rc < 0) {
 		goto reschedule;
 	}
@@ -3342,6 +3349,8 @@ static int method_net_learn_endpoint(sd_bus_message *call, void *data,
 	mctp_eid_t eid = 0;
 	struct peer *peer;
 	int rc;
+	mctp_eid_t ret_eid;
+	uint8_t ret_ep_type, ret_medium_spec;
 
 	rc = sd_bus_message_read(call, "y", &eid);
 	if (rc < 0)
@@ -3359,6 +3368,18 @@ static int method_net_learn_endpoint(sd_bus_message *call, void *data,
 		goto err;
 	}
 
+	rc = query_get_endpoint_id(peer->ctx, &dest, &ret_eid, &ret_ep_type,
+				   &ret_medium_spec, peer);
+	if (rc) {
+		warnx("Error getting endpoint id for %s. error %d %s",
+		      peer_tostr(peer), rc, strerror(-rc));
+		goto err;
+	} else if (ret_eid != eid) {
+		warnx("Error getting endpoint eid %u not match expected eid %u.",
+		      ret_eid, eid);
+		goto err;
+	}
+
 	query_peer_properties(peer);
 
 	publish_peer(peer);
@@ -3368,6 +3389,10 @@ static int method_net_learn_endpoint(sd_bus_message *call, void *data,
 		goto err;
 	return sd_bus_reply_method_return(call, "sb", peer_path, 1);
 err:
+	if (peer) {
+		remove_peer(peer);
+	}
+
 	set_berr(ctx, rc, berr);
 	return rc;
 }
