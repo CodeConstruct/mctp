@@ -1885,6 +1885,22 @@ static int remove_peer(struct peer *peer)
 		return -EPROTO;
 	}
 
+	// Remove peers after MCTP bridge
+	for (uint8_t i = 0; i < peer->pool_size; i++) {
+		// Avoids overflow
+		if (peer->pool_start > 255 - i)
+			break;
+		uint8_t eid = peer->pool_start + i;
+		if (n->peers[eid]) {
+			int rc = remove_peer(n->peers[eid]);
+			if (rc) {
+				bug_warn(
+					"Failed to remove bridged peer: net %u eid %u, rc = %d",
+					n->net, eid, rc);
+			}
+		}
+	}
+
 	unpublish_peer(peer);
 
 	// Clear it
