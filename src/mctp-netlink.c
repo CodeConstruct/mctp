@@ -345,8 +345,8 @@ void mctp_nl_changes_dump(mctp_nl *nl, mctp_nl_change *changes,
 			  size_t num_changes)
 {
 	const char *ops[MCTP_NL_OP_COUNT] = {
-		"ADD_LINK",  "DEL_LINK", "CHANGE_NET",
-		"CHANGE_UP", "ADD_EID",	 "DEL_EID",
+		"ADD_LINK",    "DEL_LINK", "CHANGE_NET", "CHANGE_UP",
+		"CHANGE_NAME", "ADD_EID",  "DEL_EID",
 	};
 
 	fprintf(stderr, "%zu changes:\n", num_changes);

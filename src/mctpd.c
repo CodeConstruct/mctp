@@ -1361,6 +1361,8 @@ static int cb_listen_monitor(sd_event_source *s, int sd, uint32_t revents,
 			// 'up' state is currently unused
 			break;
 		}
+		default:
+			bug_warn("Unhandled netlink change type %d", c->op);
 		}
 	}
 

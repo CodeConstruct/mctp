@@ -13,7 +13,7 @@ struct mctp_nl;
 typedef struct mctp_nl mctp_nl;
 
 struct mctp_nl_change {
-#define MCTP_NL_OP_COUNT 6
+#define MCTP_NL_OP_COUNT __MCTP_NL_OP_MAX
 	enum {
 		MCTP_NL_ADD_LINK,
 		MCTP_NL_DEL_LINK,
@@ -22,6 +22,7 @@ struct mctp_nl_change {
 		MCTP_NL_CHANGE_NAME,
 		MCTP_NL_ADD_EID,
 		MCTP_NL_DEL_EID,
+		__MCTP_NL_OP_MAX,
 	} op;
 
 	int ifindex;

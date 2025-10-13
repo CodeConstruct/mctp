@@ -13,6 +13,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 2. Header compatibility fixes for environments without a recent linux/mctp.h
 
+3. Fixed a potential array overrun when dumping netlink change events
+
 ## Added
 
 1. `mctp-bench` now supports a "request receive" mode, where
