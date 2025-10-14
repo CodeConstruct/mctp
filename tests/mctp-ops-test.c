@@ -7,6 +7,7 @@
 
 #define _GNU_SOURCE
 
+#include <assert.h>
 #include <err.h>
 #include <errno.h>
 #include <stdlib.h>
@@ -18,6 +19,9 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 
+#if HAVE_LIBSYSTEMD
+#include <systemd/sd-event.h>
+#endif
 #include <linux/netlink.h>
 
 #include "mctp-ops.h"
@@ -38,10 +42,12 @@ static int mctp_op_socket(int type)
 	struct iovec iov;
 	int rc, var, sd;
 
-	if (type == AF_MCTP)
+	if (type == CONTROL_OP_SOCKET_MCTP)
 		req.type = CONTROL_OP_SOCKET_MCTP;
-	else if (type == AF_NETLINK)
+	else if (type == CONTROL_OP_SOCKET_NL)
 		req.type = CONTROL_OP_SOCKET_NL;
+	else if (type == CONTROL_OP_TIMER)
+		req.type = CONTROL_OP_TIMER;
 	else
 		errx(EXIT_FAILURE, "invalid socket type?");
 
@@ -72,12 +78,12 @@ static int mctp_op_socket(int type)
 
 static int mctp_op_mctp_socket(void)
 {
-	return mctp_op_socket(AF_MCTP);
+	return mctp_op_socket(CONTROL_OP_SOCKET_MCTP);
 }
 
 static int mctp_op_netlink_socket(void)
 {
-	return mctp_op_socket(AF_NETLINK);
+	return mctp_op_socket(CONTROL_OP_SOCKET_NL);
 }
 
 static int mctp_op_bind(int sd, struct sockaddr *addr, socklen_t addrlen)
@@ -221,6 +227,115 @@ static void mctp_bug_warn(const char *fmt, va_list args)
 	abort();
 }
 
+#if HAVE_LIBSYSTEMD
+struct wrapped_time_userdata {
+	sd_event_time_handler_t callback;
+	void *userdata;
+};
+
+int wrapped_time_callback(sd_event_source *source, int fd, uint revents,
+			  void *userdata)
+{
+	struct wrapped_time_userdata *wrapud = userdata;
+	uint64_t usec;
+	ssize_t rc;
+
+	rc = read(fd, &usec, sizeof(usec));
+	if (rc != 8)
+		errx(EXIT_FAILURE, "ops protocol error");
+
+	rc = wrapud->callback(source, usec, wrapud->userdata);
+	warnx("%ld", rc);
+
+	return 0;
+}
+
+void wrapped_time_destroy(void *wrapud)
+{
+	free(wrapud);
+}
+
+static int mctp_op_sd_event_add_time_relative(
+	sd_event *e, sd_event_source **ret, clockid_t clock, uint64_t usec,
+	uint64_t accuracy, sd_event_time_handler_t callback, void *userdata)
+{
+	struct wrapped_time_userdata *wrapud = NULL;
+	sd_event_source *source = NULL;
+	int sd = -1;
+	int rc = 0;
+
+	sd = mctp_op_socket(CONTROL_OP_TIMER);
+	if (sd < 0)
+		return -errno;
+
+	rc = write(sd, &usec, sizeof(usec));
+	if (rc != 8)
+		errx(EXIT_FAILURE, "ops protocol error");
+
+	wrapud = malloc(sizeof(*wrapud));
+	if (!wrapud) {
+		rc = -ENOMEM;
+		goto fail;
+	}
+
+	wrapud->callback = callback;
+	wrapud->userdata = userdata;
+
+	rc = sd_event_add_io(e, &source, sd, EPOLLIN, wrapped_time_callback,
+			     wrapud);
+	if (rc < 0)
+		goto fail;
+
+	rc = sd_event_source_set_destroy_callback(source, wrapped_time_destroy);
+	if (rc < 0)
+		goto fail;
+
+	wrapud = NULL;
+
+	rc = sd_event_source_set_io_fd_own(source, 1);
+	if (rc < 0)
+		goto fail;
+
+	sd = -1;
+
+	rc = sd_event_source_set_enabled(source, SD_EVENT_ONESHOT);
+	if (rc < 0)
+		goto fail;
+
+	if (!ret) {
+		rc = sd_event_source_set_floating(source, 1);
+		if (rc < 0)
+			goto fail;
+
+		sd_event_source_unref(source);
+	} else {
+		*ret = source;
+	}
+
+	return 0;
+
+fail:
+	if (sd > 0)
+		close(sd);
+	free(wrapud);
+	sd_event_source_disable_unref(*ret);
+	return rc;
+}
+
+static int mctp_op_sd_event_source_set_time_relative(sd_event_source *s,
+						     uint64_t usec)
+{
+	int sd = sd_event_source_get_io_fd(s);
+	ssize_t rc;
+
+	rc = write(sd, &usec, sizeof(usec));
+	if (rc != 8)
+		errx(EXIT_FAILURE, "ops protocol error");
+
+	return 0;
+}
+#endif
+
 const struct mctp_ops mctp_ops = {
 	.mctp = {
 		.socket = mctp_op_mctp_socket,
@@ -238,6 +353,12 @@ const struct mctp_ops mctp_ops = {
 		.recvfrom = mctp_op_recvfrom,
 		.close = mctp_op_close,
 	},
+#if HAVE_LIBSYSTEMD
+	.sd_event = {
+		.add_time_relative = mctp_op_sd_event_add_time_relative,
+		.source_set_time_relative = mctp_op_sd_event_source_set_time_relative,
+	},
+#endif
 	.bug_warn = mctp_bug_warn,
 };
 

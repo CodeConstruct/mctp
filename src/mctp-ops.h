@@ -9,6 +9,9 @@
 
 #include <sys/socket.h>
 #include <stdarg.h>
+#if HAVE_LIBSYSTEMD
+#include <systemd/sd-event.h>
+#endif
 
 #define _GNU_SOURCE
 
@@ -24,9 +27,19 @@ struct socket_ops {
 	int (*close)(int sd);
 };
 
+#if HAVE_LIBSYSTEMD
+struct sd_event_ops {
+	typeof(sd_event_add_time_relative) *add_time_relative;
+	typeof(sd_event_source_set_time_relative) *source_set_time_relative;
+};
+#endif
+
 struct mctp_ops {
 	struct socket_ops mctp;
 	struct socket_ops nl;
+#if HAVE_LIBSYSTEMD
+	struct sd_event_ops sd_event;
+#endif
 	void (*bug_warn)(const char *fmt, va_list args);
 };
 

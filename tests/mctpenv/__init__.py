@@ -2,6 +2,7 @@
 import array
 import enum
 import errno
+import math
 import os
 import signal
 import socket
@@ -1113,6 +1114,31 @@ class NLSocket(BaseSocket):
         await self._notify_route(route, rtnl.RTM_DELROUTE);
 
 
+class TimerSocket(BaseSocket):
+    def __init__(self, sock):
+        super().__init__(sock)
+        self.delay = sys.maxsize
+
+    async def run(self):
+        while True:
+            try:
+                with trio.move_on_after(self.delay / 1000000) as scope:
+                    # mctpd requests a new uint64_t delay
+                    data = await self.sock.recv(8)
+                    if len(data) == 0:
+                        break
+
+                    (next_delay,) = struct.unpack('@Q', data)
+                    self.delay = next_delay
+
+                # timed out
+                if scope.cancelled_caught:
+                    await self.sock.send(struct.pack('@Q', math.floor(trio.current_time() * 1000000)))
+                    self.delay = sys.maxsize
+            except (ConnectionResetError, BrokenPipeError) as ex:
+                break
+
+
 async def send_fd(sock, fd):
     fdarray = array.array("i", [fd])
     await sock.sendmsg([b'x'], [
@@ -1157,6 +1183,14 @@ class MctpProcessWrapper:
                 await send_fd(self.sock_local, remote.fileno())
                 remote.close()
                 nursery.start_soon(nl.run)
+
+            elif op == 0x03:
+                # Timer socket
+                (local, remote) = self.socketpair()
+                sd = TimerSocket(local)
+                await send_fd(self.sock_local, remote.fileno())
+                remote.close()
+                nursery.start_soon(sd.run)
 
             else:
                 print(f"unknown op {op}")
