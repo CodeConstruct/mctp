@@ -29,6 +29,11 @@ jobs:
       - name: Test mctp
         run: meson test -C build --verbose
 
+      - uses: actions/upload-artifact@v4
+        with:
+          name: default-meson-testlog
+          path: build/meson-logs/testlog.txt
+
   no-libsystemd:
     runs-on: ubuntu-latest
     steps:
@@ -53,3 +58,8 @@ jobs:
 
       - name: Test mctp
         run: meson test -C build --verbose
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: no-libsystemd-meson-testlog
+          path: build/meson-logs/testlog.txt
