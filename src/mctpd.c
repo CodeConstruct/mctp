@@ -497,8 +497,9 @@ static int wait_fd_timeout(int fd, short events, uint64_t timeout_usec)
 	if (rc < 0)
 		goto out;
 
-	rc = sd_event_add_time_relative(ev, NULL, CLOCK_MONOTONIC, timeout_usec,
-					0, cb_exit_loop_timeout, NULL);
+	rc = mctp_ops.sd_event.add_time_relative(ev, NULL, CLOCK_MONOTONIC,
+						 timeout_usec, 0,
+						 cb_exit_loop_timeout, NULL);
 	if (rc < 0)
 		goto out;
 
@@ -3239,8 +3240,8 @@ static int peer_endpoint_recover(sd_event_source *s, uint64_t usec,
 
 reschedule:
 	if (peer->recovery.npolls > 0) {
-		rc = sd_event_source_set_time_relative(peer->recovery.source,
-						       peer->recovery.delay);
+		rc = mctp_ops.sd_event.source_set_time_relative(
+			peer->recovery.source, peer->recovery.delay);
 		if (rc >= 0) {
 			rc = sd_event_source_set_enabled(peer->recovery.source,
 							 SD_EVENT_ONESHOT);
@@ -3275,7 +3276,7 @@ static int method_endpoint_recover(sd_bus_message *call, void *data,
 		peer->recovery.npolls = MCTP_I2C_TSYM_MN1_MIN + 1;
 		peer->recovery.delay =
 			(MCTP_I2C_TSYM_TRECLAIM_MIN_US / 2) - ctx->mctp_timeout;
-		rc = sd_event_add_time_relative(
+		rc = mctp_ops.sd_event.add_time_relative(
 			ctx->event, &peer->recovery.source, CLOCK_MONOTONIC, 0,
 			ctx->mctp_timeout, peer_endpoint_recover, peer);
 		if (rc < 0) {

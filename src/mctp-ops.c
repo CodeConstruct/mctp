@@ -9,6 +9,7 @@
 
 #include <unistd.h>
 #include <linux/netlink.h>
+#include <systemd/sd-event.h>
 #include <err.h>
 
 #include "mctp.h"
@@ -73,6 +74,10 @@ const struct mctp_ops mctp_ops = {
 		.sendto = mctp_op_sendto,
 		.recvfrom = mctp_op_recvfrom,
 		.close = mctp_op_close,
+	},
+	.sd_event = {
+		.add_time_relative = sd_event_add_time_relative,
+		.source_set_time_relative = sd_event_source_set_time_relative,
 	},
 	.bug_warn = mctp_bug_warn,
 };

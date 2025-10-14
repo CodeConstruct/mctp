@@ -9,6 +9,7 @@ enum {
 	CONTROL_OP_INIT,
 	CONTROL_OP_SOCKET_MCTP,
 	CONTROL_OP_SOCKET_NL,
+	CONTROL_OP_TIMER,
 };
 
 struct control_msg_req {

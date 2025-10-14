@@ -65,6 +65,7 @@ executable('mctp',
 mctp_test = executable('test-mctp',
     sources: ['src/mctp.c'] + netlink_sources + util_sources + test_ops_sources,
     include_directories:  include_directories('src'),
+    dependencies: [libsystemd],
 )
 
 executable('mctp-req',
