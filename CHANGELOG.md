@@ -42,6 +42,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
    message types. Those types are reported in `mctpd`'s responses to
    Get Message Type Support and Get MCTP Version support commands.
 
+9. `mctpd`'s Network1.LearnEndpoint method will now check for endpoint
+   presence before publishing an endpoint.
+
 ## [2.2] - 2025-07-28
 
 ### Fixed
