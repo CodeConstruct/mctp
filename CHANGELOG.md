@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
-## Fixed
+### Fixed
 
 1. mctpd: fixed an issue where endpoints may persist when their dependent
    interface is deleted
@@ -15,7 +15,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 3. Fixed a potential array overrun when dumping netlink change events
 
-## Added
+### Added
 
 1. `mctp-bench` now supports a "request receive" mode, where
    `mctp-bench recv eid <...>` sends a command to start the benchmark session.
