@@ -711,6 +711,14 @@ async def test_bridged_learn_endpoint(dbus, mctpd):
     assert path == f'/au/com/codeconstruct/mctp1/networks/1/endpoints/{br_ep.eid}'
     assert new
 
+async def test_network_learn_endpoint_absent(dbus, mctpd):
+    iface = mctpd.system.interfaces[0]
+
+    net = await mctpd_mctp_network_obj(dbus, iface.net)
+
+    with pytest.raises(asyncdbus.errors.DBusError) as ex:
+        await net.call_learn_endpoint(10)
+
 """ Change a network id, while we have an active endpoint on that net """
 async def test_change_network(dbus, mctpd):
     iface = mctpd.system.interfaces[0];
