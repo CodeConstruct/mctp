@@ -19,7 +19,9 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 
+#if HAVE_LIBSYSTEMD
 #include <systemd/sd-event.h>
+#endif
 #include <linux/netlink.h>
 
 #include "mctp-ops.h"
@@ -225,6 +227,7 @@ static void mctp_bug_warn(const char *fmt, va_list args)
 	abort();
 }
 
+#if HAVE_LIBSYSTEMD
 struct wrapped_time_userdata {
 	sd_event_time_handler_t callback;
 	void *userdata;
@@ -331,6 +334,7 @@ static int mctp_op_sd_event_source_set_time_relative(sd_event_source *s,
 
 	return 0;
 }
+#endif
 
 const struct mctp_ops mctp_ops = {
 	.mctp = {
@@ -349,10 +353,12 @@ const struct mctp_ops mctp_ops = {
 		.recvfrom = mctp_op_recvfrom,
 		.close = mctp_op_close,
 	},
+#if HAVE_LIBSYSTEMD
 	.sd_event = {
 	    .add_time_relative = mctp_op_sd_event_add_time_relative,
 		.source_set_time_relative = mctp_op_sd_event_source_set_time_relative,
 	},
+#endif
 	.bug_warn = mctp_bug_warn,
 };
 

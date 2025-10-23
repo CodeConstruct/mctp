@@ -10,7 +10,6 @@
 #include <stdint.h>
 #include <sys/socket.h>
 #include <stdarg.h>
-#include <systemd/sd-event.h>
 
 #define _GNU_SOURCE
 
@@ -26,13 +25,17 @@ struct socket_ops {
 	int (*close)(int sd);
 };
 
+struct sd_event;
+struct sd_event_source;
 struct sd_event_ops {
-	int (*add_time_relative)(sd_event *e, sd_event_source **ret,
-				 clockid_t clock, uint64_t usec,
-				 uint64_t accuracy,
-				 sd_event_time_handler_t callback,
+	int (*add_time_relative)(struct sd_event *e,
+				 struct sd_event_source **ret, clockid_t clock,
+				 uint64_t usec, uint64_t accuracy,
+				 int (*callback)(struct sd_event_source *s,
+						 uint64_t usec, void *userdata),
 				 void *userdata);
-	int (*source_set_time_relative)(sd_event_source *s, uint64_t usec);
+	int (*source_set_time_relative)(struct sd_event_source *s,
+					uint64_t usec);
 };
 
 struct mctp_ops {
