@@ -208,6 +208,12 @@ struct msg_type_support {
 	sd_bus_track *source_peer;
 };
 
+struct msg_vdm_type_support {
+	uint8_t msg_type;
+	uint16_t vendor_subtype;
+	sd_bus_track *source_peer;
+};
+
 struct ctx {
 	sd_event *event;
 	sd_bus *bus;
@@ -242,6 +248,8 @@ struct ctx {
 	// Supported message types and their versions
 	struct msg_type_support *supported_msg_types;
 	size_t num_supported_msg_types;
+	struct msg_vdm_type_support *supported_vdm_msg_types;
+	size_t num_supported_vdm_msg_types;
 
 	// Verbose logging
 	bool verbose;
@@ -3480,6 +3488,89 @@ err:
 	return rc;
 }
 
+static int method_register_msg_vdm_type_support(sd_bus_message *call,
+						void *data, sd_bus_error *berr)
+{
+	struct ctx *ctx = data;
+	struct msg_vdm_type_support *vdm_types, *cur_vdm_type;
+	uint8_t msg_type;
+	uint16_t vendor_subtype;
+	int rc;
+	size_t i;
+
+	rc = sd_bus_message_read(call, "y", &msg_type);
+	if (rc < 0)
+		goto err;
+
+	rc = sd_bus_message_skip(call, "v"); // Skipping variant data for now
+	if (rc < 0)
+		goto err;
+
+	rc = sd_bus_message_read(call, "q", &vendor_subtype);
+	if (rc < 0)
+		goto err;
+
+	// Check for duplicates
+	for (i = 0; i < ctx->num_supported_vdm_msg_types; i++) {
+		if (ctx->supported_vdm_msg_types[i].msg_type == msg_type &&
+		    ctx->supported_vdm_msg_types[i].vendor_subtype ==
+			    vendor_subtype) {
+			warnx("VDM type %d with vendor subtype %d already registered",
+			      msg_type, vendor_subtype);
+			return sd_bus_error_setf(
+				berr, SD_BUS_ERROR_INVALID_ARGS,
+				"VDM type %d with vendor subtype %d already registered",
+				msg_type, vendor_subtype);
+		}
+	}
+
+	// Allocate space for new VDM type
+	vdm_types = realloc(ctx->supported_vdm_msg_types,
+			    (ctx->num_supported_vdm_msg_types + 1) *
+				    sizeof(struct msg_vdm_type_support));
+	if (!vdm_types) {
+		return sd_bus_error_setf(
+			berr, SD_BUS_ERROR_NO_MEMORY,
+			"Failed to allocate memory for VDM message types");
+	}
+	ctx->supported_vdm_msg_types = vdm_types;
+
+	cur_vdm_type =
+		&ctx->supported_vdm_msg_types[ctx->num_supported_vdm_msg_types];
+	cur_vdm_type->source_peer = NULL;
+
+	rc = sd_bus_track_new(ctx->bus, &cur_vdm_type->source_peer,
+			      on_dbus_peer_removed, ctx);
+	if (rc < 0) {
+		warnx("Failed to create dbus track for VDM type %d: %s",
+		      msg_type, strerror(-rc));
+		goto track_err;
+	}
+
+	rc = sd_bus_track_add_sender(cur_vdm_type->source_peer, call);
+	if (rc < 0) {
+		warnx("Failed to add dbus track for VDM type %d: %s", msg_type,
+		      strerror(-rc));
+		goto track_err;
+	}
+
+	cur_vdm_type->msg_type = msg_type;
+	cur_vdm_type->vendor_subtype = vendor_subtype;
+
+	ctx->num_supported_vdm_msg_types++;
+
+	return sd_bus_reply_method_return(call, "");
+
+track_err:
+	sd_bus_track_unref(cur_vdm_type->source_peer);
+	set_berr(ctx, rc, berr);
+	return rc;
+
+err:
+	set_berr(ctx, rc, berr);
+	return rc;
+}
+
 // clang-format off
 static const sd_bus_vtable bus_link_owner_vtable[] = {
 	SD_BUS_VTABLE_START(0),
@@ -3842,6 +3933,13 @@ static const sd_bus_vtable mctp_base_vtable[] = {
 	SD_BUS_NO_RESULT,
 	method_register_type_support,
 	0),
+        SD_BUS_METHOD_WITH_ARGS("RegisterVDMTypeSupport",
+        SD_BUS_ARGS("y", format,
+                    "v", format_data,
+                    "q", vendor_subtype),
+        SD_BUS_NO_RESULT,
+        method_register_msg_vdm_type_support,
+        0),
 	SD_BUS_VTABLE_END,
 };
 // clang-format on
@@ -4842,6 +4940,9 @@ static void free_ctrl_cmd_defaults(struct ctx *ctx)
 		free(ctx->supported_msg_types[i].versions);
 	}
 	free(ctx->supported_msg_types);
+
+	// Free VDM Types
+	free(ctx->supported_vdm_msg_types);
 }
 
 static int endpoint_send_allocate_endpoint_ids(
