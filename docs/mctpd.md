@@ -32,6 +32,7 @@ the MCTP stack, such as supported message types.
 NAME                                TYPE      SIGNATURE  RESULT/VALUE  FLAGS
 au.com.codeconstruct.MCTP1          interface -          -             -
 .RegisterTypeSupport                  method    yau        -             -
+.RegisterVDMTypeSupport               method    yvq        -             -
 ```
 
 #### `.RegisterTypeSupport`: `yau`
@@ -52,6 +53,28 @@ If the message type is already registered, then dbus call will fail.
 De-registration is automatic - the specified types (and versions) are registered
 for as long as the dbus sender remains attached to the message bus, and are
 unregistered on disconnect.
+
+#### `.RegisterVDMTypeSupport`: `yvq`
+
+This method is used to add support for MCTP Vendor Defined Message (VDM) types.
+Once called successfully, subsequent responses for Get Vendor Defined Message
+Support control commands will include this new VDM type.
+
+`RegisterVDMTypeSupport <vid format> <vendor id> <command set type>`
+
+If the VDM type is already registered, then dbus call will fail.
+
+ - `<vid format>` Vendor ID format:
+   - `0x00` - PCI/PCIe Vendor ID (16-bit)
+   - `0x01` - IANA Enterprise Number (32-bit)
+ - `<vendor id>` Vendor identifier as a variant type:
+   - For PCIe format: 16-bit unsigned integer (`q`)
+   - For IANA format: 32-bit unsigned integer (`u`)
+ - `<command set type>` Command set type (16-bit unsigned integer) as defined by the vendor
+
+De-registration is automatic - the specified VDM types are registered for as
+long as the dbus sender remains attached to the message bus, and are
+removed when the sender disconnects.
 
 Also it hosts two trees of MCTP objects:
 

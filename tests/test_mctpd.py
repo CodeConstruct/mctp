@@ -1290,3 +1290,135 @@ async def test_get_message_types(dbus, mctpd):
     cmd = MCTPControlCommand(True, 0, 0x04, bytes([0x05]))
     rsp = await ep.send_control(mctpd.network.mctp_socket, cmd)
     assert rsp.hex(' ') == '00 04 00 01 f4 f3 f2 f1'
+
+""" Test RegisterVDMTypeSupport when no responders are registered """
+async def test_register_vdm_type_support_empty(mctpd):
+    ep = mctpd.network.endpoints[0]
+    ep.eid = 12
+    iface = mctpd.system.interfaces[0]
+    await mctpd.system.add_route(mctpd.system.Route(ep.eid, 1, iface=iface))
+    await mctpd.system.add_neighbour(
+        mctpd.system.Neighbour(iface, ep.lladdr, ep.eid)
+    )
+
+    # Verify error response when no VDM is registered
+    cmd = MCTPControlCommand(True, 0, 0x06, bytes([0x00]))
+    rsp = await ep.send_control(mctpd.network.mctp_socket, cmd)
+    assert rsp.hex(' ') == '00 06 02'
+
+""" Test RegisterVDMTypeSupport when a single PCIe VDM is registered """
+async def test_register_vdm_type_support_pcie_only(dbus, mctpd):
+    ep = mctpd.network.endpoints[0]
+    ep.eid = 12
+    iface = mctpd.system.interfaces[0]
+    await mctpd.system.add_route(mctpd.system.Route(ep.eid, 1, iface=iface))
+    await mctpd.system.add_neighbour(
+        mctpd.system.Neighbour(iface, ep.lladdr, ep.eid)
+    )
+
+    mctp = await mctpd_mctp_base_iface_obj(dbus)
+
+    # Register PCIe VDM: format=0x00, VID=0xABCD, command_set=0x0001
+    await mctp.call_register_vdm_type_support(0x00,
+                                              asyncdbus.Variant('q', 0xABCD), 0x0001)
+
+    # Verify PCIe VDM (selector 0)
+    cmd = MCTPControlCommand(True, 0, 0x06, bytes([0x00]))
+    rsp = await ep.send_control(mctpd.network.mctp_socket, cmd)
+    assert rsp.hex(' ') == '00 06 00 ff 00 ab cd 00 01'
+
+    # Verify error with incorrect selector
+    cmd = MCTPControlCommand(True, 0, 0x06, bytes([0x05]))
+    rsp = await ep.send_control(mctpd.network.mctp_socket, cmd)
+    assert rsp.hex(' ') == '00 06 02'
+
+""" Test RegisterVDMTypeSupport when a single IANA VDM is registered """
+async def test_register_vdm_type_support_iana_only(dbus, mctpd):
+    ep = mctpd.network.endpoints[0]
+    ep.eid = 12
+    iface = mctpd.system.interfaces[0]
+    await mctpd.system.add_route(mctpd.system.Route(ep.eid, 1, iface=iface))
+    await mctpd.system.add_neighbour(
+        mctpd.system.Neighbour(iface, ep.lladdr, ep.eid)
+    )
+
+    mctp = await mctpd_mctp_base_iface_obj(dbus)
+
+    # Register IANA VDM: format=0x01, VID=0x1234ABCD, command_set=0x5678
+    await mctp.call_register_vdm_type_support(0x01,
+                                              asyncdbus.Variant('u', 0x1234ABCD), 0x5678)
+
+    # Verify IANA VDM (selector 0)
+    cmd = MCTPControlCommand(True, 0, 0x06, bytes([0x00]))
+    rsp = await ep.send_control(mctpd.network.mctp_socket, cmd)
+    assert rsp.hex(' ') == '00 06 00 ff 01 12 34 ab cd 56 78'
+
+""" Test RegisterVDMTypeSupport with dbus disconnect """
+async def test_register_vdm_type_support_dbus_disconnect(mctpd):
+    ep = mctpd.network.endpoints[0]
+    ep.eid = 12
+    iface = mctpd.system.interfaces[0]
+    await mctpd.system.add_route(mctpd.system.Route(ep.eid, 1, iface=iface))
+    await mctpd.system.add_neighbour(
+        mctpd.system.Neighbour(iface, ep.lladdr, ep.eid)
+    )
+
+    # Verify error response when no VDM is registered
+    cmd = MCTPControlCommand(True, 0, 0x06, bytes([0x00]))
+    rsp = await ep.send_control(mctpd.network.mctp_socket, cmd)
+    assert rsp.hex(' ') == '00 06 02'
+
+    async with asyncdbus.MessageBus().connect() as temp_bus:
+        mctp = await mctpd_mctp_base_iface_obj(temp_bus)
+
+        # Register PCIe VDM: format=0x00, VID=0xABCD, command_set=0x0001
+        await mctp.call_register_vdm_type_support(0x00,
+                                                  asyncdbus.Variant('q', 0xABCD), 0x0001)
+
+        # Verify PCIe VDM (selector 0)
+        cmd = MCTPControlCommand(True, 0, 0x06, bytes([0x00]))
+        rsp = await ep.send_control(mctpd.network.mctp_socket, cmd)
+        assert rsp.hex(' ') == '00 06 00 ff 00 ab cd 00 01'
+
+    # Give mctpd a moment to process the disconnection
+    await trio.sleep(0.1)
+
+    # Verify VDM type is removed after disconnect
+    cmd = MCTPControlCommand(True, 0, 0x06, bytes([0x00]))
+    rsp = await ep.send_control(mctpd.network.mctp_socket, cmd)
+    assert rsp.hex(' ') == '00 06 02'  # Should be error again
+
+""" Test RegisterVDMTypeSupport error handling """
+async def test_register_vdm_type_support_errors(dbus, mctpd):
+    ep = mctpd.network.endpoints[0]
+    ep.eid = 12
+    iface = mctpd.system.interfaces[0]
+    await mctpd.system.add_route(mctpd.system.Route(ep.eid, 1, iface=iface))
+    await mctpd.system.add_neighbour(
+        mctpd.system.Neighbour(iface, ep.lladdr, ep.eid)
+    )
+
+    mctp = await mctpd_mctp_base_iface_obj(dbus)
+    # Verify DBus call fails with invalid format 0x02
+    with pytest.raises(asyncdbus.errors.DBusError) as ex:
+        await mctp.call_register_vdm_type_support(0x02,
+                                                  asyncdbus.Variant('q', 0xABCD), 0x0001)
+    assert "Unsupported VID format" in str(ex.value)
+
+    # Verify incorrect VID type raises error
+    with pytest.raises(asyncdbus.errors.DBusError) as ex:
+        await mctp.call_register_vdm_type_support(0x00,
+                                                  asyncdbus.Variant('u', 0xABCDEF12), 0x0001)
+    assert "Expected format is PCIe but variant contains" in str(ex.value)
+    with pytest.raises(asyncdbus.errors.DBusError) as ex:
+        await mctp.call_register_vdm_type_support(0x01,
+                                                  asyncdbus.Variant('q', 0xABCD), 0x5678)
+    assert "Expected format is IANA but variant contains" in str(ex.value)
+
+    # Verify duplicate VDM raises error
+    await mctp.call_register_vdm_type_support(0x00,
+                                              asyncdbus.Variant('q', 0xABCD), 0x0001)
+    with pytest.raises(asyncdbus.errors.DBusError) as ex:
+        await mctp.call_register_vdm_type_support(0x00,
+                                                  asyncdbus.Variant('q', 0xABCD), 0x0001)
+    assert str(ex.value) == "VDM type already registered"
