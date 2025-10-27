@@ -1,4 +1,12 @@
+/* SPDX-License-Identifier: GPL-2.0 */
+/*
+ * mctp-bench: small MCTP benchmarking utility
+ *
+ * Copyright (c) 2024-2025 Code Construct
+ */
+
 #define _XOPEN_SOURCE 700
+
 #include <time.h>
 #include <err.h>
 #include <errno.h>
