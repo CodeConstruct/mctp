@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [2.4] - 2025-10-28
+
 ### Fixed
 
 1. Fixed `mctp-bench` compile on musl libc
