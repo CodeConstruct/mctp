@@ -318,7 +318,7 @@ class MCTPControlCommand(MCTPCommand):
         return bytes([flags, self.cmd]) + self.data
 
 class Endpoint:
-    def __init__(self, iface, lladdr, ep_uuid = None, eid = 0, types = None):
+    def __init__(self, iface, lladdr, ep_uuid = None, eid = 0, types = None, timeout_opcodes = set(), timeout_count = 0):
         self.iface = iface
         self.lladdr = lladdr
         self.uuid = ep_uuid or uuid.uuid1()
@@ -326,6 +326,8 @@ class Endpoint:
         self.types = types or [0]
         self.bridged_eps = []
         self.allocated_pool = None # or (start, size)
+        self.timeout_opcodes = timeout_opcodes
+        self.timeout_count = timeout_count
 
         # keyed by (type, type-specific-instance)
         self.commands = {}
@@ -367,6 +369,11 @@ class Endpoint:
             raddr = MCTPSockAddr.for_ep_resp(self, addr, sock.addr_ext)
             # Use IID from request, zero Rq and D bits
             hdr = [iid, opcode]
+
+            if opcode in self.timeout_opcodes:
+                if self.timeout_count > 0:
+                    self.timeout_count -= 1
+                    return
 
             if opcode == 1:
                 # Set Endpoint ID
@@ -1193,7 +1200,6 @@ class MctpProcessWrapper:
                 await send_fd(self.sock_local, remote.fileno())
                 remote.close()
                 nursery.start_soon(sd.run)
-
             else:
                 print(f"unknown op {op}")
 
