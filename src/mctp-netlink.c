@@ -952,13 +952,17 @@ static void sort_linkmap(mctp_nl *nl)
 {
 	size_t i;
 
-	qsort(nl->linkmap, nl->linkmap_count, sizeof(*nl->linkmap),
-	      cmp_ifindex);
+	if (nl->linkmap) {
+		qsort(nl->linkmap, nl->linkmap_count, sizeof(*nl->linkmap),
+		      cmp_ifindex);
+	}
 
 	for (i = 0; i < nl->linkmap_count; i++) {
 		struct linkmap_entry *entry = &nl->linkmap[i];
-		qsort(entry->local_eids, entry->num_local, sizeof(mctp_eid_t),
-		      cmp_eid);
+		if (entry->local_eids) {
+			qsort(entry->local_eids, entry->num_local,
+			      sizeof(mctp_eid_t), cmp_eid);
+		}
 	}
 }
 
