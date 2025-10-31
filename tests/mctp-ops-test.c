@@ -241,7 +241,7 @@ int wrapped_time_callback(sd_event_source *source, int fd, uint revents,
 	ssize_t rc;
 
 	rc = read(fd, &usec, sizeof(usec));
-	if (rc != 8)
+	if (rc != sizeof(usec))
 		errx(EXIT_FAILURE, "ops protocol error");
 
 	rc = wrapud->callback(source, usec, wrapud->userdata);
@@ -269,7 +269,7 @@ static int mctp_op_sd_event_add_time_relative(
 		return -errno;
 
 	rc = write(sd, &usec, sizeof(usec));
-	if (rc != 8)
+	if (rc != sizeof(usec))
 		errx(EXIT_FAILURE, "ops protocol error");
 
 	wrapud = malloc(sizeof(*wrapud));

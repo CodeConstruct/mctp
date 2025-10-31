@@ -1133,7 +1133,9 @@ class TimerSocket(BaseSocket):
 
                 # timed out
                 if scope.cancelled_caught:
-                    await self.sock.send(struct.pack('@Q', math.floor(trio.current_time() * 1000000)))
+                    data = struct.pack('@Q',
+                            math.floor(trio.current_time() * 1000000))
+                    await self.sock.send(data)
                     self.delay = sys.maxsize
             except (ConnectionResetError, BrokenPipeError) as ex:
                 break
