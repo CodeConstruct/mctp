@@ -413,3 +413,11 @@ enum mctp_phys_binding {
 	MCTP_PHYS_BINDING_UCIE = 0x09,
 	MCTP_PHYS_BINDING_VENDOR = 0xFF,
 };
+
+#define MCTP_GET_ROUTING_TABLE_MSG_PHYSICAL_ADDRESS(entryh) \
+	((void *)((char *)(entryh) + sizeof(struct get_routing_table_entry)))
+#define MCTP_GET_ROUTING_TABLE_MSG_NEXT(entryh)               \
+	((struct get_routing_table_entry                      \
+		  *)((char *)(entryh) +                       \
+		     sizeof(struct get_routing_table_entry) + \
+		     (entryh)->phys_address_size))

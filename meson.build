@@ -60,11 +60,13 @@ toml_dep = declare_dependency(
 executable('mctp',
     sources: ['src/mctp.c'] + netlink_sources + util_sources + ops_sources,
     install: true,
+    c_args: ['-DHAVE_LIBSYSTEMD=0'],
 )
 
 mctp_test = executable('test-mctp',
     sources: ['src/mctp.c'] + netlink_sources + util_sources + test_ops_sources,
     include_directories:  include_directories('src'),
+    c_args: ['-DHAVE_LIBSYSTEMD=0'],
 )
 
 executable('mctp-req',
@@ -92,6 +94,7 @@ if libsystemd.found()
         dependencies: [libsystemd, toml_dep],
         install: true,
         install_dir: get_option('sbindir'),
+        c_args: ['-DHAVE_LIBSYSTEMD=1'],
     )
 
     mctpd_test = executable('test-mctpd',
@@ -100,6 +103,7 @@ if libsystemd.found()
         ] + test_ops_sources + netlink_sources + util_sources,
         include_directories:  include_directories('src'),
         dependencies: [libsystemd, toml_dep],
+        c_args: ['-DHAVE_LIBSYSTEMD=1'],
     )
 endif
 

@@ -3,6 +3,7 @@ import sys
 
 import pytest
 import asyncdbus
+import trio.testing
 
 import mctpenv
 
@@ -35,3 +36,10 @@ async def mctpd(nursery, dbus, sysnet, config):
 @pytest.fixture
 async def mctp(nursery, sysnet):
     return mctpenv.MctpWrapper(nursery, sysnet)
+
+@pytest.fixture
+def autojump_clock():
+    """
+    Custom autojump clock with a reasonable threshold for non-time I/O waits
+    """
+    return trio.testing.MockClock(autojump_threshold=0.01)

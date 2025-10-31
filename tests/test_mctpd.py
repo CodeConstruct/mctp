@@ -50,6 +50,7 @@ async def _introspect_path_recursive(dbus, path, node_set):
 
     return dups
 
+
 """ Test that the dbus object tree is sensible: we can introspect all
 objects, and that there are no duplicates
 """
@@ -187,7 +188,7 @@ async def test_recover_endpoint_present(dbus, mctpd):
     # to transition 'Connectivity' to 'Available', which is a test failure.
     assert not expected.cancelled_caught
 
-async def test_recover_endpoint_removed(dbus, mctpd):
+async def test_recover_endpoint_removed(dbus, mctpd, autojump_clock):
     iface = mctpd.system.interfaces[0]
     dev = mctpd.network.endpoints[0]
     mctp = await dbus.get_proxy_object(MCTPD_C, MCTPD_MCTP_P)
@@ -224,7 +225,7 @@ async def test_recover_endpoint_removed(dbus, mctpd):
 
     assert not expected.cancelled_caught
 
-async def test_recover_endpoint_reset(dbus, mctpd):
+async def test_recover_endpoint_reset(dbus, mctpd, autojump_clock):
     iface = mctpd.system.interfaces[0]
     dev = mctpd.network.endpoints[0]
     mctp = await dbus.get_proxy_object(MCTPD_C, MCTPD_MCTP_P)
@@ -260,7 +261,7 @@ async def test_recover_endpoint_reset(dbus, mctpd):
 
     assert not expected.cancelled_caught
 
-async def test_recover_endpoint_exchange(dbus, mctpd):
+async def test_recover_endpoint_exchange(dbus, mctpd, autojump_clock):
     iface = mctpd.system.interfaces[0]
     dev = mctpd.network.endpoints[0]
     mctp = await dbus.get_proxy_object(MCTPD_C, MCTPD_MCTP_P)
@@ -628,7 +629,7 @@ async def test_network_local_eids_none(dbus, mctpd):
 
     assert eids == []
 
-async def test_concurrent_recovery_setup(dbus, mctpd):
+async def test_concurrent_recovery_setup(dbus, mctpd, autojump_clock):
     iface = mctpd.system.interfaces[0]
     mctp_i = await mctpd_mctp_iface_obj(dbus, iface)
 

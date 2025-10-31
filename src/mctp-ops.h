@@ -7,6 +7,7 @@
  */
 #pragma once
 
+#include <stdint.h>
 #include <sys/socket.h>
 #include <stdarg.h>
 
@@ -24,9 +25,23 @@ struct socket_ops {
 	int (*close)(int sd);
 };
 
+struct sd_event;
+struct sd_event_source;
+struct sd_event_ops {
+	int (*add_time_relative)(struct sd_event *e,
+				 struct sd_event_source **ret, clockid_t clock,
+				 uint64_t usec, uint64_t accuracy,
+				 int (*callback)(struct sd_event_source *s,
+						 uint64_t usec, void *userdata),
+				 void *userdata);
+	int (*source_set_time_relative)(struct sd_event_source *s,
+					uint64_t usec);
+};
+
 struct mctp_ops {
 	struct socket_ops mctp;
 	struct socket_ops nl;
+	struct sd_event_ops sd_event;
 	void (*bug_warn)(const char *fmt, va_list args);
 };
 
