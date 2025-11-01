@@ -82,7 +82,7 @@ static int mctp_req(unsigned int net, mctp_eid_t eid, unsigned int ifindex,
 		errx(EXIT_FAILURE, "timeout");
 	}
 
-	rc = recvfrom(sd, NULL, 0, MSG_PEEK | MSG_TRUNC,
+	rc = recvfrom(sd, &val, sizeof(val), MSG_PEEK | MSG_TRUNC,
 		      (struct sockaddr *)&addr, &addrlen);
 	if (rc < 0)
 		err(EXIT_FAILURE, "recvfrom");
