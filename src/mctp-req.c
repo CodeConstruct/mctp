@@ -75,8 +75,11 @@ static int mctp_req(unsigned int net, mctp_eid_t eid, unsigned int ifindex,
 		err(EXIT_FAILURE, "sendto(%zd)", len);
 
 	struct pollfd pfd = { .fd = sd, .events = POLLIN };
-	if (poll(&pfd, 1, timeout) <= 0) {
-		return -1;
+	rc = poll(&pfd, 1, timeout);
+	if (rc < 0) {
+		err(EXIT_FAILURE, "poll");
+	} else if (rc < 0) {
+		err(EXIT_FAILURE, "timeout");
 	}
 
 	rc = recvfrom(sd, NULL, 0, MSG_PEEK | MSG_TRUNC, NULL, 0);
@@ -117,7 +120,7 @@ static int mctp_req(unsigned int net, mctp_eid_t eid, unsigned int ifindex,
 	printf("data:");
 	for (i = 0; i < buf_len; i++) {
 		if (i % 16 == 0)
-			printf("\n%04X\t", i);
+			printf("\n%04lX\t", i);
 		printf("0x%02x ", buf[i]);
 	}
 	printf("\n");
@@ -165,7 +168,7 @@ static void usage(void)
 
 int main(int argc, char **argv)
 {
-	uint8_t *data = NULL, *buf, lladdr[MAX_ADDR_LEN];
+	uint8_t *data, *buf, lladdr[MAX_ADDR_LEN];
 	int lladdrlen = -1, datalen = -1;
 	unsigned int net = DEFAULT_NET;
 	mctp_eid_t eid = DEFAULT_EID;
@@ -252,7 +255,7 @@ int main(int argc, char **argv)
 			err(EXIT_FAILURE, "malloc");
 		buf = data + sizeof(VENDOR_TYPE_ECHO);
 		for (i = 0; i < len; i++)
-			*buf = i & 0xff;
+			*buf++ = i & 0xff;
 	}
 
 	if (echo_req) {
