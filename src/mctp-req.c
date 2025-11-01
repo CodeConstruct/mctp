@@ -78,11 +78,12 @@ static int mctp_req(unsigned int net, mctp_eid_t eid, unsigned int ifindex,
 	rc = poll(&pfd, 1, timeout);
 	if (rc < 0) {
 		err(EXIT_FAILURE, "poll");
-	} else if (rc < 0) {
-		err(EXIT_FAILURE, "timeout");
+	} else if (rc == 0) {
+		errx(EXIT_FAILURE, "timeout");
 	}
 
-	rc = recvfrom(sd, NULL, 0, MSG_PEEK | MSG_TRUNC, NULL, 0);
+	rc = recvfrom(sd, NULL, 0, MSG_PEEK | MSG_TRUNC,
+		      (struct sockaddr *)&addr, &addrlen);
 	if (rc < 0)
 		err(EXIT_FAILURE, "recvfrom");
 	buf_len = (size_t)rc;
@@ -162,8 +163,8 @@ static void usage(void)
 		DEFAULT_NET, DEFAULT_LEN);
 	fprintf(stderr,
 		"default to send <data> as payload of code construct echo command if"
-		" type is not specified");
-	fprintf(stderr, "<data> is colon separated hex bytes, e.g. cc:de:f0");
+		" type is not specified\n");
+	fprintf(stderr, "<data> is colon separated hex bytes, e.g. cc:de:f0\n");
 }
 
 int main(int argc, char **argv)
@@ -249,13 +250,15 @@ int main(int argc, char **argv)
 
 	if (data) {
 		len = datalen;
-	} else {
+	} else if (echo_req) {
 		data = malloc(len + sizeof(VENDOR_TYPE_ECHO));
 		if (!data)
 			err(EXIT_FAILURE, "malloc");
 		buf = data + sizeof(VENDOR_TYPE_ECHO);
 		for (i = 0; i < len; i++)
 			*buf++ = i & 0xff;
+	} else {
+		len = 0;
 	}
 
 	if (echo_req) {
