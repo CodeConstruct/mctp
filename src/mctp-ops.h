@@ -9,7 +9,7 @@
 
 #include <sys/socket.h>
 #include <stdarg.h>
-#if HAVE_LIBSYSTEMD
+#if OPS_SD_EVENT
 #include <systemd/sd-event.h>
 #endif
 
@@ -27,7 +27,7 @@ struct socket_ops {
 	int (*close)(int sd);
 };
 
-#if HAVE_LIBSYSTEMD
+#if OPS_SD_EVENT
 struct sd_event_ops {
 	typeof(sd_event_add_time_relative) *add_time_relative;
 	typeof(sd_event_source_set_time_relative) *source_set_time_relative;
@@ -37,7 +37,7 @@ struct sd_event_ops {
 struct mctp_ops {
 	struct socket_ops mctp;
 	struct socket_ops nl;
-#if HAVE_LIBSYSTEMD
+#if OPS_SD_EVENT
 	struct sd_event_ops sd_event;
 #endif
 	void (*bug_warn)(const char *fmt, va_list args);
