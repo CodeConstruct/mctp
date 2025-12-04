@@ -12,6 +12,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 1. Fixed `mctp-bench` compile on musl libc
 
+### Added
+
+1. `mctpd` now implements the Get Vendor Define Message Support control protocol
+   command, and allows registration of vendor-defined message types via
+   dbus.
+
 ## [2.3] - 2025-10-22
 
 ### Fixed
