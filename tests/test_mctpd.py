@@ -1319,8 +1319,8 @@ async def test_register_vdm_type_support_pcie_only(dbus, mctpd):
     mctp = await mctpd_mctp_base_iface_obj(dbus)
 
     # Register PCIe VDM: format=0x00, VID=0xABCD, command_set=0x0001
-    await mctp.call_register_vdm_type_support(0x00,
-                                              asyncdbus.Variant('q', 0xABCD), 0x0001)
+    v_type = asyncdbus.Variant('q', 0xABCD)
+    await mctp.call_register_vdm_type_support(0x00, v_type, 0x0001)
 
     # Verify PCIe VDM (selector 0)
     cmd = MCTPControlCommand(True, 0, 0x06, bytes([0x00]))
@@ -1345,8 +1345,8 @@ async def test_register_vdm_type_support_iana_only(dbus, mctpd):
     mctp = await mctpd_mctp_base_iface_obj(dbus)
 
     # Register IANA VDM: format=0x01, VID=0x1234ABCD, command_set=0x5678
-    await mctp.call_register_vdm_type_support(0x01,
-                                              asyncdbus.Variant('u', 0x1234ABCD), 0x5678)
+    v_type = asyncdbus.Variant('u', 0x1234ABCD)
+    await mctp.call_register_vdm_type_support(0x01, v_type, 0x5678)
 
     # Verify IANA VDM (selector 0)
     cmd = MCTPControlCommand(True, 0, 0x06, bytes([0x00]))
@@ -1372,8 +1372,8 @@ async def test_register_vdm_type_support_dbus_disconnect(mctpd):
         mctp = await mctpd_mctp_base_iface_obj(temp_bus)
 
         # Register PCIe VDM: format=0x00, VID=0xABCD, command_set=0x0001
-        await mctp.call_register_vdm_type_support(0x00,
-                                                  asyncdbus.Variant('q', 0xABCD), 0x0001)
+        v_type = asyncdbus.Variant('q', 0xABCD)
+        await mctp.call_register_vdm_type_support(0x00, v_type, 0x0001)
 
         # Verify PCIe VDM (selector 0)
         cmd = MCTPControlCommand(True, 0, 0x06, bytes([0x00]))
@@ -1400,25 +1400,24 @@ async def test_register_vdm_type_support_errors(dbus, mctpd):
 
     mctp = await mctpd_mctp_base_iface_obj(dbus)
     # Verify DBus call fails with invalid format 0x02
+    v_type = asyncdbus.Variant('q', 0xABCD)
     with pytest.raises(asyncdbus.errors.DBusError) as ex:
-        await mctp.call_register_vdm_type_support(0x02,
-                                                  asyncdbus.Variant('q', 0xABCD), 0x0001)
+        await mctp.call_register_vdm_type_support(0x02, v_type, 0x0001)
     assert "Unsupported VID format" in str(ex.value)
 
     # Verify incorrect VID type raises error
+    v_type = asyncdbus.Variant('u', 0xABCDEF12)
     with pytest.raises(asyncdbus.errors.DBusError) as ex:
-        await mctp.call_register_vdm_type_support(0x00,
-                                                  asyncdbus.Variant('u', 0xABCDEF12), 0x0001)
+        await mctp.call_register_vdm_type_support(0x00, v_type, 0x0001)
     assert "Expected format is PCIe but variant contains" in str(ex.value)
+
+    v_type = asyncdbus.Variant('q', 0xABCD)
     with pytest.raises(asyncdbus.errors.DBusError) as ex:
-        await mctp.call_register_vdm_type_support(0x01,
-                                                  asyncdbus.Variant('q', 0xABCD), 0x5678)
+        await mctp.call_register_vdm_type_support(0x01, v_type, 0x5678)
     assert "Expected format is IANA but variant contains" in str(ex.value)
 
     # Verify duplicate VDM raises error
-    await mctp.call_register_vdm_type_support(0x00,
-                                              asyncdbus.Variant('q', 0xABCD), 0x0001)
+    await mctp.call_register_vdm_type_support(0x00, v_type, 0x0001)
     with pytest.raises(asyncdbus.errors.DBusError) as ex:
-        await mctp.call_register_vdm_type_support(0x00,
-                                                  asyncdbus.Variant('q', 0xABCD), 0x0001)
+        await mctp.call_register_vdm_type_support(0x00, v_type, 0x0001)
     assert str(ex.value) == "VDM type already registered"
