@@ -61,6 +61,8 @@ static const char *conf_file_default = MCTPD_CONF_FILE_DEFAULT;
 
 static const mctp_eid_t eid_alloc_min = 0x08;
 static const mctp_eid_t eid_alloc_max = 0xfe;
+static const uint8_t MCTP_TYPE_VENDOR_PCIE = 0x7e;
+static const uint8_t MCTP_TYPE_VENDOR_IANA = 0x7f;
 
 // arbitrary sanity
 static size_t MAX_PEER_SIZE = 1000000;
@@ -981,6 +983,7 @@ static int handle_control_get_message_type_support(
 {
 	struct mctp_ctrl_resp_get_msg_type_support *resp = NULL;
 	struct mctp_ctrl_cmd_get_msg_type_support *req = NULL;
+	bool pcie_support = false, iana_support = false;
 	size_t i, resp_len, type_count;
 	uint8_t *resp_buf, *msg_types;
 	int rc;
@@ -992,6 +995,15 @@ static int handle_control_get_message_type_support(
 
 	req = (void *)buf;
 	type_count = ctx->num_supported_msg_types;
+
+	for (i = 0; i < ctx->num_supported_vdm_types; i++) {
+		pcie_support |= ctx->supported_vdm_types[i].format ==
+				VID_FORMAT_PCIE;
+		iana_support |= ctx->supported_vdm_types[i].format ==
+				VID_FORMAT_IANA;
+	}
+	type_count += (pcie_support + iana_support);
+
 	// Allocate extra space for the message types
 	resp_len = sizeof(*resp) + type_count;
 	resp_buf = malloc(resp_len);
@@ -1004,13 +1016,19 @@ static int handle_control_get_message_type_support(
 	mctp_ctrl_msg_hdr_init_resp(&resp->ctrl_hdr, req->ctrl_hdr);
 	resp->completion_code = MCTP_CTRL_CC_SUCCESS;
 
-	resp->msg_type_count = type_count;
 	// Append message types after msg_type_count
 	msg_types = (uint8_t *)(resp + 1);
-	for (i = 0; i < type_count; i++) {
+	for (i = 0; i < ctx->num_supported_msg_types; i++) {
 		msg_types[i] = ctx->supported_msg_types[i].msg_type;
 	}
+	if (pcie_support) {
+		msg_types[i++] = MCTP_TYPE_VENDOR_PCIE;
+	}
+	if (iana_support) {
+		msg_types[i++] = MCTP_TYPE_VENDOR_IANA;
+	}
 
+	resp->msg_type_count = type_count;
 	rc = reply_message(ctx, sd, resp, resp_len, addr);
 	free(resp_buf);
 
@@ -3551,6 +3569,10 @@ static int method_register_type_support(sd_bus_message *call, void *data,
 	rc = sd_bus_message_read(call, "y", &msg_type);
 	if (rc < 0)
 		goto err;
+	if (msg_type == 0 || msg_type >= MCTP_TYPE_VENDOR_PCIE) {
+		return sd_bus_error_setf(berr, SD_BUS_ERROR_INVALID_ARGS,
+					 "Invalid message type %d", msg_type);
+	}
 	rc = sd_bus_message_read_array(call, 'u', (const void **)&versions,
 				       &versions_len);
 	if (rc < 0)
