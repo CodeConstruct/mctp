@@ -125,12 +125,12 @@ during development:
 
 ```sh
 cd obj
-pytest
+pytest ../tests
 ```
 
 To run without an existing dbus session:
 ```sh
-dbus-run-session env DBUS_STARTER_BUS_TYPE=user pytest
+dbus-run-session env DBUS_STARTER_BUS_TYPE=user pytest ../tests
 ```
 
 The test infrastructure depends on a few python packages, including the pytest
