@@ -1342,6 +1342,11 @@ async def test_register_vdm_type_support_dbus_disconnect(mctpd, routed_ep):
         rsp = await ep.send_control(mctpd.network.mctp_socket, cmd)
         assert rsp.hex(' ') == '00 06 00 ff 00 ab cd 00 01'
 
+        # Verify GetMsgType includes VDM
+        cmd = MCTPControlCommand(True, 0, 0x05)
+        rsp = await ep.send_control(mctpd.network.mctp_socket, cmd)
+        assert rsp.hex(' ') == '00 05 00 02 00 7e'
+
     # Give mctpd a moment to process the disconnection
     await trio.sleep(0.1)
 
@@ -1349,6 +1354,11 @@ async def test_register_vdm_type_support_dbus_disconnect(mctpd, routed_ep):
     cmd = MCTPControlCommand(True, 0, 0x06, bytes([0x00]))
     rsp = await ep.send_control(mctpd.network.mctp_socket, cmd)
     assert rsp.hex(' ') == '00 06 02'  # Should be error again
+
+    # Verify GetMsgType has only control command
+    cmd = MCTPControlCommand(True, 0, 0x05)
+    rsp = await ep.send_control(mctpd.network.mctp_socket, cmd)
+    assert rsp.hex(' ') == '00 05 00 01 00'
 
 """ Test RegisterVDMTypeSupport error handling """
 async def test_register_vdm_type_support_errors(dbus, mctpd):
