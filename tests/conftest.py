@@ -43,3 +43,20 @@ def autojump_clock():
     Custom autojump clock with a reasonable threshold for non-time I/O waits
     """
     return trio.testing.MockClock(autojump_threshold=0.01)
+
+@pytest.fixture
+async def routed_ep(mctpd):
+    """
+    Return a routable endpoint (using the default sysnet ep that already
+    exists), with routing established, but no mctpd registration.
+    """
+    ep = mctpd.network.endpoints[0]
+    iface = mctpd.system.interfaces[0]
+
+    ep.eid = 9
+    route = mctpd.system.Route(ep.eid, 1, iface = iface)
+    neigh = mctpd.system.Neighbour(iface, ep.lladdr, ep.eid)
+    await mctpd.system.add_route(route)
+    await mctpd.system.add_neighbour(neigh)
+
+    return ep
