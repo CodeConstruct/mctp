@@ -2927,23 +2927,59 @@ err:
 // and routable.
 static int query_peer_properties(struct peer *peer)
 {
+	const unsigned int max_retries = 4;
 	int rc;
 
-	rc = query_get_peer_msgtypes(peer);
-	if (rc < 0) {
-		// Warn here, it's a mandatory command code.
-		// It might be too noisy if some devices don't implement it.
-		warnx("Error getting endpoint types for %s. Ignoring error %d %s",
-		      peer_tostr(peer), rc, strerror(-rc));
-		rc = 0;
+	for (unsigned int i = 0; i < max_retries; i++) {
+		rc = query_get_peer_msgtypes(peer);
+
+		// Success
+		if (rc == 0)
+			break;
+
+		// On timeout, retry
+		if (rc == -ETIMEDOUT) {
+			if (peer->ctx->verbose)
+				warnx("Retrying to get endpoint types for %s. Attempt %u",
+				      peer_tostr(peer), i + 1);
+			rc = 0;
+			continue;
+		}
+
+		// On other errors, warn and ignore
+		if (rc < 0) {
+			if (peer->ctx->verbose)
+				warnx("Error getting endpoint types for %s. Ignoring error %d %s",
+				      peer_tostr(peer), -rc, strerror(-rc));
+			rc = 0;
+			break;
+		}
 	}
 
-	rc = query_get_peer_uuid(peer);
-	if (rc < 0) {
-		if (peer->ctx->verbose)
-			warnx("Error getting UUID for %s. Ignoring error %d %s",
-			      peer_tostr(peer), rc, strerror(-rc));
-		rc = 0;
+	for (unsigned int i = 0; i < max_retries; i++) {
+		rc = query_get_peer_uuid(peer);
+
+		// Success
+		if (rc == 0)
+			break;
+
+		// On timeout, retry
+		if (rc == -ETIMEDOUT) {
+			if (peer->ctx->verbose)
+				warnx("Retrying to get peer UUID for %s. Attempt %u",
+				      peer_tostr(peer), i + 1);
+			rc = 0;
+			continue;
+		}
+
+		// On other errors, warn and ignore
+		if (rc < 0) {
+			if (peer->ctx->verbose)
+				warnx("Error getting UUID for %s. Ignoring error %d %s",
+				      peer_tostr(peer), -rc, strerror(-rc));
+			rc = 0;
+			break;
+		}
 	}
 
 	// TODO: emit property changed? Though currently they are all const.

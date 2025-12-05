@@ -318,7 +318,7 @@ class MCTPControlCommand(MCTPCommand):
         return bytes([flags, self.cmd]) + self.data
 
 class Endpoint:
-    def __init__(self, iface, lladdr, ep_uuid = None, eid = 0, types = None):
+    def __init__(self, iface, lladdr, ep_uuid = None, eid = 0, types = None, timeout_opcodes = set(), retry_count = 2):
         self.iface = iface
         self.lladdr = lladdr
         self.uuid = ep_uuid or uuid.uuid1()
@@ -326,6 +326,8 @@ class Endpoint:
         self.types = types or [0]
         self.bridged_eps = []
         self.allocated_pool = None # or (start, size)
+        self.timeout_opcodes = timeout_opcodes
+        self.retry_count = retry_count
 
         # keyed by (type, type-specific-instance)
         self.commands = {}
@@ -367,6 +369,11 @@ class Endpoint:
             raddr = MCTPSockAddr.for_ep_resp(self, addr, sock.addr_ext)
             # Use IID from request, zero Rq and D bits
             hdr = [iid, opcode]
+
+            if opcode in self.timeout_opcodes:
+                if self.retry_count > 0:
+                    self.retry_count -= 1
+                    return
 
             if opcode == 1:
                 # Set Endpoint ID
@@ -434,6 +441,9 @@ class Endpoint:
         await sock.send(addr, cmd.to_buf())
 
         return await cmd.wait()
+
+    def response_timeout_control(self, opcode):
+        self.timeout_opcodes.add(opcode)
 
 class Network:
     def __init__(self):
@@ -1197,12 +1207,17 @@ class MctpProcessWrapper:
             else:
                 print(f"unknown op {op}")
 
+import subprocess
+
 class MctpdWrapper(MctpProcessWrapper):
     def __init__(self, bus, sysnet, binary=None, config=None):
         super().__init__(sysnet)
         self.bus = bus
         self.binary = binary or './test-mctpd'
         self.config = config
+
+        self.stdout_logs = []
+        self.stderr_logs = []
 
     async def start_mctpd(self, nursery):
         nursery.start_soon(self.handle_control, nursery)
@@ -1253,10 +1268,13 @@ class MctpdWrapper(MctpProcessWrapper):
             config_file = None
             command = [self.binary, '-v']
 
+        import subprocess
         proc = await trio.lowlevel.open_process(
                 command = command,
                 pass_fds = (1, 2, self.sock_remote.fileno()),
                 env = env,
+                stdout = subprocess.PIPE,
+                stderr = subprocess.PIPE,
             )
         self.sock_remote.close()
 
@@ -1268,6 +1286,13 @@ class MctpdWrapper(MctpProcessWrapper):
         # nursery.start. The caller will want this to terminate the
         # process after the test has run.
         task_status.started(proc)
+
+        async def read_stream(stream, storage):
+            async for data in stream:
+                storage.append(data.decode(errors="replace"))
+
+        nursery.start_soon(read_stream, proc.stdout, self.stdout_logs)
+        nursery.start_soon(read_stream, proc.stderr, self.stderr_logs)
 
         proc_rc = await proc.wait()
 

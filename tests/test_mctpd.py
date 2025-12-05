@@ -1376,3 +1376,30 @@ async def test_register_vdm_type_support_errors(dbus, mctpd):
     with pytest.raises(asyncdbus.errors.DBusError) as ex:
         await mctp.call_register_vdm_type_support(0x00, v_type, 0x0001)
     assert str(ex.value) == "VDM type already registered"
+
+async def test_query_peer_properties_retry_timeout(nursery, dbus, sysnet):
+
+    # activate mctpd
+    mctpd = MctpdWrapper(dbus, sysnet)
+    await mctpd.start_mctpd(nursery)
+
+    iface = mctpd.system.interfaces[0]
+    ep = mctpd.network.endpoints[0]
+
+    mctp = await mctpd_mctp_iface_obj(dbus, iface)
+
+    # add a bridged endpoint to ep
+    fake_ep = Endpoint(iface, b'\x12\x34', types=[0, 2])
+    fake_ep.response_timeout_control(5)
+    ep.add_bridged_ep(fake_ep)
+    mctpd.network.add_endpoint(fake_ep)
+
+    # call assign_endpoint on ep, which will allocate a pool for fake_ep
+    mctp = await mctpd_mctp_iface_obj(dbus, iface)
+    await mctp.call_setup_endpoint(ep.lladdr)
+
+    assert any("Retrying to get endpoint types" in l for l in mctpd.stderr_logs)
+
+    # exit mctpd
+    res = await mctpd.stop_mctpd()
+    assert res == 0
