@@ -1376,3 +1376,56 @@ async def test_register_vdm_type_support_errors(dbus, mctpd):
     with pytest.raises(asyncdbus.errors.DBusError) as ex:
         await mctp.call_register_vdm_type_support(0x00, v_type, 0x0001)
     assert str(ex.value) == "VDM type already registered"
+
+async def test_query_peer_properties_retry_timeout(nursery, dbus, sysnet):
+
+    # activate mctpd
+    mctpd = MctpdWrapper(dbus, sysnet)
+    await mctpd.start_mctpd(nursery)
+
+    iface = mctpd.system.interfaces[0]
+    mctp = await mctpd_mctp_iface_obj(dbus, iface)
+
+    # define expected message types
+    # add a normal endpoint to network
+    expected_types = [0, 1, 2]
+    ep = Endpoint(iface, bytes([0x1a]), eid=15, types=expected_types)
+    mctpd.network.add_endpoint(ep)
+
+    # call setup_endpoint on ep, which will allocate a object path for it
+    (eid, net, path, new) = await mctp.call_setup_endpoint(ep.lladdr)
+
+    objep = await mctpd_mctp_endpoint_common_obj(dbus, path)
+    objtypes = list(await objep.get_supported_message_types())
+    objtypes.sort()
+    assert objtypes == expected_types
+
+    ep.lladdr = bytes([0x1b])     # change lladdr to force retry
+    ep.timeout_opcodes.add(0x05)  # set Message Type Support would timeout
+    ep.timeout_count = 2          # timeout twice before responding
+
+    # call setup_endpoint again, which will trigger query of peer properties
+    (eid, net, path, new) = await mctp.call_setup_endpoint(ep.lladdr)
+
+    # timeout twice does not prevent us from getting the correct message types
+    objep = await mctpd_mctp_endpoint_common_obj(dbus, path)
+    objtypes = list(await objep.get_supported_message_types())
+    objtypes.sort()
+    assert objtypes == expected_types
+
+    ep.lladdr = bytes([0x1c])  # change lladdr to force retry
+    ep.timeout_count = 5       # timeout five times before responding
+
+    # call setup_endpoint again, which will trigger query of peer properties
+    (eid, net, path, new) = await mctp.call_setup_endpoint(ep.lladdr)
+
+    # timeout five times does not prevent us from getting the correct message types
+    objep = await mctpd_mctp_endpoint_common_obj(dbus, path)
+    objtypes = list(await objep.get_supported_message_types())
+    objtypes.sort()
+    expected_types = []         # exceeded retry limit, so no types known
+    assert objtypes == expected_types
+
+    # exit mctpd
+    res = await mctpd.stop_mctpd()
+    assert res == 0
