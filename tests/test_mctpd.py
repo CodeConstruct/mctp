@@ -1269,6 +1269,14 @@ async def test_get_message_types(dbus, mctpd, routed_ep):
     mctp = await mctpd_mctp_base_iface_obj(dbus)
     await mctp.call_register_type_support(5, [0xF1F2F3F4])
 
+    # Verify invalid msg type causes error
+    with pytest.raises(asyncdbus.errors.DBusError) as ex:
+        await mctp.call_register_type_support(0x0, [0xF1F2F3F4])
+    assert str(ex.value) == "Invalid message type 0"
+    with pytest.raises(asyncdbus.errors.DBusError) as ex:
+        await mctp.call_register_type_support(0x7e, [0xF1F2F3F4])
+    assert str(ex.value) == "Invalid message type 126"
+
     # Verify get message type response includes spdm
     cmd = MCTPControlCommand(True, 0, 0x05, bytes([0x00]))
     rsp = await ep.send_control(mctpd.network.mctp_socket, cmd)
@@ -1333,14 +1341,24 @@ async def test_register_vdm_type_support_dbus_disconnect(mctpd, routed_ep):
     async with asyncdbus.MessageBus().connect() as temp_bus:
         mctp = await mctpd_mctp_base_iface_obj(temp_bus)
 
-        # Register PCIe VDM: format=0x00, VID=0xABCD, command_set=0x0001
+        # Register PCIe VDM: format=0x00, VID=0xABCD, command_set=1 and 2
         v_type = asyncdbus.Variant('q', 0xABCD)
         await mctp.call_register_vdm_type_support(0x00, v_type, 0x0001)
+        await mctp.call_register_vdm_type_support(0x00, v_type, 0x0002)
 
         # Verify PCIe VDM (selector 0)
         cmd = MCTPControlCommand(True, 0, 0x06, bytes([0x00]))
         rsp = await ep.send_control(mctpd.network.mctp_socket, cmd)
-        assert rsp.hex(' ') == '00 06 00 ff 00 ab cd 00 01'
+        assert rsp.hex(' ') == '00 06 00 01 00 ab cd 00 01'
+        # Verify PCIe VDM (selector 1)
+        cmd = MCTPControlCommand(True, 0, 0x06, bytes([0x01]))
+        rsp = await ep.send_control(mctpd.network.mctp_socket, cmd)
+        assert rsp.hex(' ') == '00 06 00 ff 00 ab cd 00 02'
+
+        # Verify GetMsgType includes VDM
+        cmd = MCTPControlCommand(True, 0, 0x05)
+        rsp = await ep.send_control(mctpd.network.mctp_socket, cmd)
+        assert rsp.hex(' ') == '00 05 00 02 00 7e'
 
     # Give mctpd a moment to process the disconnection
     await trio.sleep(0.1)
@@ -1349,6 +1367,11 @@ async def test_register_vdm_type_support_dbus_disconnect(mctpd, routed_ep):
     cmd = MCTPControlCommand(True, 0, 0x06, bytes([0x00]))
     rsp = await ep.send_control(mctpd.network.mctp_socket, cmd)
     assert rsp.hex(' ') == '00 06 02'  # Should be error again
+
+    # Verify GetMsgType has only control command
+    cmd = MCTPControlCommand(True, 0, 0x05)
+    rsp = await ep.send_control(mctpd.network.mctp_socket, cmd)
+    assert rsp.hex(' ') == '00 05 00 01 00'
 
 """ Test RegisterVDMTypeSupport error handling """
 async def test_register_vdm_type_support_errors(dbus, mctpd):
