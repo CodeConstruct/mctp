@@ -1,6 +1,4 @@
 
-from mctpenv import MctpWrapper
-
 async def test_link_simple(mctp):
     proc = await mctp.run(["link"])
     assert proc.returncode == 0

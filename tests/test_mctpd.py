@@ -1,6 +1,5 @@
 import pytest
 import trio
-import uuid
 import asyncdbus
 
 from mctp_test_utils import (

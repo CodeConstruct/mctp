@@ -1,6 +1,4 @@
 
-import sys
-
 import pytest
 import asyncdbus
 import trio.testing
