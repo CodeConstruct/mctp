@@ -1419,10 +1419,9 @@ async def test_query_peer_properties_retry_timeout(nursery, dbus, sysnet):
     # call setup_endpoint again, which will trigger query of peer properties
     (eid, net, path, new) = await mctp.call_setup_endpoint(ep.lladdr)
 
-    # timeout five times does not prevent us from getting the correct message types
+    # timeout five times does prevent us from getting the correct message types
     objep = await mctpd_mctp_endpoint_common_obj(dbus, path)
     objtypes = list(await objep.get_supported_message_types())
-    objtypes.sort()
     expected_types = []         # exceeded retry limit, so no types known
     assert objtypes == expected_types
 
