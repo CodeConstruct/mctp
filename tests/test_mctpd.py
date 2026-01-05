@@ -715,7 +715,7 @@ async def test_network_learn_endpoint_absent(dbus, mctpd):
 
 """ Change a network id, while we have an active endpoint on that net """
 async def test_change_network(dbus, mctpd):
-    iface = mctpd.system.interfaces[0];
+    iface = mctpd.system.interfaces[0]
     ep = mctpd.network.endpoints[0]
 
     net = await mctpd_mctp_network_obj(dbus, 1)

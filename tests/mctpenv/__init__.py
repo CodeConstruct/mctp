@@ -126,7 +126,7 @@ class System:
                 return self.gw[0]
             elif self.iface is not None:
                 return self.iface.net
-            raise ValueError("no gw or iface");
+            raise ValueError("no gw or iface")
 
         def __str__(self):
             s = f"{self.start_eid}-{self.end_eid} -> "
@@ -758,7 +758,7 @@ class NLSocket(BaseSocket):
         typ = header['type']
 
         if not header['flags'] & netlink.NLM_F_REQUEST:
-            print("error: not a request?");
+            print("error: not a request?")
             return
 
         if typ == rtnl.RTM_GETLINK:
@@ -1120,10 +1120,10 @@ class NLSocket(BaseSocket):
         await self._send_msg(buf)
 
     async def notify_newroute(self, route):
-        await self._notify_route(route, rtnl.RTM_NEWROUTE);
+        await self._notify_route(route, rtnl.RTM_NEWROUTE)
 
     async def notify_delroute(self, route):
-        await self._notify_route(route, rtnl.RTM_DELROUTE);
+        await self._notify_route(route, rtnl.RTM_DELROUTE)
 
 
 class TimerSocket(BaseSocket):
