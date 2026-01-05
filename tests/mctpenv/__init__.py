@@ -439,7 +439,7 @@ class Endpoint:
             addr.set_ext(self.iface.ifindex, self.lladdr)
 
         key = (typ, cmd.iid)
-        assert not key in self.commands
+        assert key not in self.commands
 
         self.commands[key] = cmd
 
