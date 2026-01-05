@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+
+1. `mctpd` will now retry endpoint query commands (Get Message Type Support and
+   Get Endpoint UUID) on initial endpoint enumeration.
+
 ## [2.4] - 2025-10-28
 
 ### Fixed
