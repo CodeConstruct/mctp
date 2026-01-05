@@ -1,7 +1,13 @@
 import pytest
 import asyncdbus
-from mctp_test_utils import *
-from mctpenv import *
+from mctp_test_utils import (
+    mctpd_mctp_iface_control_obj,
+    mctpd_mctp_endpoint_control_obj
+)
+from mctpenv import (
+    Endpoint, MCTPControlCommand, Network, PhysicalBinding, Sysnet, System
+)
+
 
 """Simple endpoint setup.
 
