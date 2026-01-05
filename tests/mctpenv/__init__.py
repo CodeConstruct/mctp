@@ -357,7 +357,7 @@ class Endpoint:
             if addr.type == 0:
                 await self.handle_mctp_control(sock, addr, data)
             else:
-                print(f"unknown MCTP message type {a.type}")
+                print(f"unknown MCTP message type {addr.type}")
         else:
             for br_ep in self.bridged_eps:
                 if addr.eid == br_ep.eid:
