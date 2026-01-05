@@ -1378,6 +1378,22 @@ async def test_register_vdm_type_support_errors(dbus, mctpd):
     assert str(ex.value) == "VDM type already registered"
 
 async def test_query_peer_properties_retry_timeout(nursery, dbus, sysnet):
+    class LossyEndpoint(Endpoint):
+        """An endpoint object that may drop a specific number (timeout_count)
+        of MCTP Control Protocol requests.
+        """
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.timeout_count = 0
+            self.timeout_opcode = 0x05 # Get Message Type Support
+
+        async def handle_mctp_control(self, sock, addr, data):
+            rq = data[0] & 0x80
+            opcode = data[1]
+            if rq and opcode == self.timeout_opcode and self.timeout_count:
+                self.timeout_count -= 1
+                return
+            return await super().handle_mctp_control(sock, addr, data)
 
     # activate mctpd
     mctpd = MctpdWrapper(dbus, sysnet)
@@ -1389,7 +1405,7 @@ async def test_query_peer_properties_retry_timeout(nursery, dbus, sysnet):
     # define expected message types
     # add a normal endpoint to network
     expected_types = [0, 1, 2]
-    ep = Endpoint(iface, bytes([0x1a]), eid=15, types=expected_types)
+    ep = LossyEndpoint(iface, bytes([0x1a]), eid=15, types=expected_types)
     mctpd.network.add_endpoint(ep)
 
     # call setup_endpoint on ep, which will allocate a object path for it
@@ -1401,7 +1417,6 @@ async def test_query_peer_properties_retry_timeout(nursery, dbus, sysnet):
     assert objtypes == expected_types
 
     ep.lladdr = bytes([0x1b])     # change lladdr to force retry
-    ep.timeout_opcodes.add(0x05)  # set Message Type Support would timeout
     ep.timeout_count = 2          # timeout twice before responding
 
     # call setup_endpoint again, which will trigger query of peer properties
