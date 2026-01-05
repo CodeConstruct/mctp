@@ -5,13 +5,13 @@ import trio.testing
 
 import mctpenv
 
-"""Simple system & network.
-
-Contains one interface (lladdr 0x10, local EID 8), and one endpoint (lladdr
-0x1d), that reports support for MCTP control and PLDM.
-"""
 @pytest.fixture
 async def sysnet():
+    """Simple system & network.
+
+    Contains one interface (lladdr 0x10, local EID 8), and one endpoint (lladdr
+    0x1d), that reports support for MCTP control and PLDM.
+    """
     return await mctpenv.default_sysnet()
 
 @pytest.fixture

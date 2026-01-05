@@ -36,15 +36,15 @@ async def sysnet(iface):
     return Sysnet(system, network)
 
 
-""" Test if mctpd is running as an endpoint """
 async def test_endpoint_role(dbus, mctpd):
+    """Test if mctpd is running as an endpoint"""
     obj = await mctpd_mctp_iface_control_obj(dbus, mctpd.system.interfaces[0])
     role = await obj.get_role()
     assert str(role) == "Endpoint"
 
 
-""" mctpd returns null EID on no EID """
 async def test_respond_get_eid_with_no_eid(dbus, mctpd):
+    """mctpd returns null EID on no EID"""
     bo = mctpd.network.endpoints[0]
 
     assert len(mctpd.system.addresses) == 0
@@ -55,8 +55,8 @@ async def test_respond_get_eid_with_no_eid(dbus, mctpd):
     assert rsp.hex(' ') == '00 02 00 00 02 00'
 
 
-""" Test if mctpd accepts Set EID when no EID """
 async def test_accept_set_eid(dbus, mctpd):
+    """Test if mctpd accepts Set EID when no EID"""
     bo = mctpd.network.endpoints[0]
 
     assert len(mctpd.system.addresses) == 0
@@ -119,8 +119,8 @@ class TestDiscovery:
     async def iface(self):
         return System.Interface("mctp0", 1, 1, bytes([0x1D]), 68, 254, True, PhysicalBinding.PCIE_VDM)
 
-    """ Test simple Discovery sequence """
     async def test_simple_discovery_sequence(self, dbus, mctpd):
+        """Test simple Discovery sequence"""
         bo = mctpd.network.endpoints[0]
 
         assert len(mctpd.system.addresses) == 0
@@ -152,8 +152,8 @@ class TestUnsupportedDiscovery:
     async def iface(self):
         return System.Interface("mctp0", 1, 1, bytes([0x1D]), 68, 254, True, PhysicalBinding.SMBUS)
 
-    """ Discovery command on unsupported interface """
     async def test_simple(self, dbus, mctpd):
+        """Discovery command on unsupported interface"""
         bo = mctpd.network.endpoints[0]
 
         # BMC response ERROR_UNSUPPORTED_CMD to Prepare for Discovery
