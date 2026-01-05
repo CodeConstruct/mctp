@@ -7,7 +7,7 @@ from mctp_test_utils import (
     mctpd_mctp_network_obj,
     mctpd_mctp_endpoint_common_obj,
     mctpd_mctp_endpoint_control_obj,
-    mctpd_mctp_base_iface_obj
+    mctpd_mctp_base_iface_obj,
 )
 from mctpenv import Endpoint, MCTPSockAddr, MCTPControlCommand, MctpdWrapper
 
@@ -25,6 +25,7 @@ DBUS_OBJECT_MANAGER_I = 'org.freedesktop.DBus.ObjectManager'
 DBUS_PROPERTIES_I = 'org.freedesktop.DBus.Properties'
 
 MCTPD_TRECLAIM = 5
+
 
 async def _introspect_path_recursive(dbus, path, node_set):
     node_set.add(path)
@@ -120,6 +121,7 @@ async def test_setup_endpoint(dbus, mctpd):
     # we should have a route for the new endpoint too
     assert len(mctpd.system.routes) == 2
 
+
 async def test_setup_endpoint_conflict(dbus, mctpd):
     """Test that we correctly handle address conflicts on EID assignment.
 
@@ -140,11 +142,12 @@ async def test_setup_endpoint_conflict(dbus, mctpd):
     (eid1, _, _, _) = await mctp.call_setup_endpoint(ep1.lladdr)
 
     # endpoint configured with eid1 already
-    ep2 = Endpoint(iface, bytes([0x1e]), eid=eid1)
+    ep2 = Endpoint(iface, bytes([0x1E]), eid=eid1)
     mctpd.network.add_endpoint(ep2)
 
     (eid2, _, _, _) = await mctp.call_setup_endpoint(ep2.lladdr)
     assert eid1 != eid2
+
 
 async def test_remove_endpoint(dbus, mctpd):
     """Test neighbour removal"""
@@ -154,12 +157,13 @@ async def test_remove_endpoint(dbus, mctpd):
     mctp = await mctpd_mctp_iface_obj(dbus, iface)
     (_, _, path, _) = await mctp.call_setup_endpoint(ep1.lladdr)
 
-    assert(len(mctpd.system.neighbours) == 1)
+    assert len(mctpd.system.neighbours) == 1
 
     ep = await mctpd_mctp_endpoint_control_obj(dbus, path)
 
     await ep.call_remove()
-    assert(len(mctpd.system.neighbours) == 0)
+    assert len(mctpd.system.neighbours) == 0
+
 
 async def test_recover_endpoint_present(dbus, mctpd):
     iface = mctpd.system.interfaces[0]
@@ -170,7 +174,8 @@ async def test_recover_endpoint_present(dbus, mctpd):
     ep = await dbus.get_proxy_object(MCTPD_C, path)
     ep_props = await ep.get_interface(DBUS_PROPERTIES_I)
 
-    recovered = trio.Semaphore(initial_value = 0)
+    recovered = trio.Semaphore(initial_value=0)
+
     def ep_connectivity_changed(iface, changed, invalidated):
         if iface == MCTPD_ENDPOINT_I and 'Connectivity' in changed:
             if 'Available' == changed['Connectivity'].value:
@@ -188,6 +193,7 @@ async def test_recover_endpoint_present(dbus, mctpd):
     # to transition 'Connectivity' to 'Available', which is a test failure.
     assert not expected.cancelled_caught
 
+
 async def test_recover_endpoint_removed(dbus, mctpd, autojump_clock):
     iface = mctpd.system.interfaces[0]
     dev = mctpd.network.endpoints[0]
@@ -198,7 +204,8 @@ async def test_recover_endpoint_removed(dbus, mctpd, autojump_clock):
     ep = await dbus.get_proxy_object(MCTPD_C, path)
     ep_props = await ep.get_interface(DBUS_PROPERTIES_I)
 
-    degraded = trio.Semaphore(initial_value = 0)
+    degraded = trio.Semaphore(initial_value=0)
+
     def ep_connectivity_changed(iface, changed, invalidated):
         if iface == MCTPD_ENDPOINT_I and 'Connectivity' in changed:
             if 'Degraded' == changed['Connectivity'].value:
@@ -208,7 +215,8 @@ async def test_recover_endpoint_removed(dbus, mctpd, autojump_clock):
 
     mctp_objmgr = await mctp.get_interface(DBUS_OBJECT_MANAGER_I)
 
-    removed = trio.Semaphore(initial_value = 0)
+    removed = trio.Semaphore(initial_value=0)
+
     def ep_removed(ep_path, interfaces):
         if ep_path == path and MCTPD_ENDPOINT_I in interfaces:
             removed.release()
@@ -225,6 +233,7 @@ async def test_recover_endpoint_removed(dbus, mctpd, autojump_clock):
 
     assert not expected.cancelled_caught
 
+
 async def test_recover_endpoint_reset(dbus, mctpd, autojump_clock):
     iface = mctpd.system.interfaces[0]
     dev = mctpd.network.endpoints[0]
@@ -234,7 +243,8 @@ async def test_recover_endpoint_reset(dbus, mctpd, autojump_clock):
     ep = await dbus.get_proxy_object(MCTPD_C, path)
     ep_props = await ep.get_interface(DBUS_PROPERTIES_I)
 
-    recovered = trio.Semaphore(initial_value = 0)
+    recovered = trio.Semaphore(initial_value=0)
+
     def ep_connectivity_changed(iface, changed, invalidated):
         if iface == MCTPD_ENDPOINT_I and 'Connectivity' in changed:
             if 'Available' == changed['Connectivity'].value:
@@ -260,6 +270,7 @@ async def test_recover_endpoint_reset(dbus, mctpd, autojump_clock):
 
     assert not expected.cancelled_caught
 
+
 async def test_recover_endpoint_exchange(dbus, mctpd, autojump_clock):
     iface = mctpd.system.interfaces[0]
     dev = mctpd.network.endpoints[0]
@@ -270,7 +281,8 @@ async def test_recover_endpoint_exchange(dbus, mctpd, autojump_clock):
     ep = await dbus.get_proxy_object(MCTPD_C, path)
     ep_props = await ep.get_interface(DBUS_PROPERTIES_I)
 
-    degraded = trio.Semaphore(initial_value = 0)
+    degraded = trio.Semaphore(initial_value=0)
+
     def ep_connectivity_changed(iface, changed, invalidated):
         if iface == MCTPD_ENDPOINT_I and 'Connectivity' in changed:
             if 'Degraded' == changed['Connectivity'].value:
@@ -280,14 +292,16 @@ async def test_recover_endpoint_exchange(dbus, mctpd, autojump_clock):
 
     mctp_objmgr = await mctp.get_interface(DBUS_OBJECT_MANAGER_I)
 
-    removed = trio.Semaphore(initial_value = 0)
+    removed = trio.Semaphore(initial_value=0)
+
     def ep_removed(ep_path, interfaces):
         if ep_path == path and MCTPD_ENDPOINT_I in interfaces:
             removed.release()
 
     await mctp_objmgr.on_interfaces_removed(ep_removed)
 
-    added = trio.Semaphore(initial_value = 0)
+    added = trio.Semaphore(initial_value=0)
+
     def ep_added(ep_path, content):
         if MCTPD_ENDPOINT_I in content:
             added.release()
@@ -304,7 +318,7 @@ async def test_recover_endpoint_exchange(dbus, mctpd, autojump_clock):
     await trio.sleep(1)
 
     # Add a new the endpoint device at the same physical address (different UUID)
-    mctpd.network.add_endpoint(Endpoint(dev.iface, dev.lladdr, types = dev.types))
+    mctpd.network.add_endpoint(Endpoint(dev.iface, dev.lladdr, types=dev.types))
 
     with trio.move_on_after(2 * MCTPD_TRECLAIM) as expected:
         await added.acquire()
@@ -312,6 +326,7 @@ async def test_recover_endpoint_exchange(dbus, mctpd, autojump_clock):
         await degraded.acquire()
 
     assert not expected.cancelled_caught
+
 
 async def test_assign_endpoint_static(dbus, mctpd):
     """Test that we get the correct EID allocated (and the usual route/neigh
@@ -323,8 +338,7 @@ async def test_assign_endpoint_static(dbus, mctpd):
     static_eid = 12
 
     (eid, _, _, new) = await mctp.call_assign_endpoint_static(
-        dev.lladdr,
-        static_eid
+        dev.lladdr, static_eid
     )
 
     assert eid == static_eid
@@ -335,6 +349,7 @@ async def test_assign_endpoint_static(dbus, mctpd):
     assert neigh.lladdr == dev.lladdr
     assert neigh.eid == static_eid
     assert len(mctpd.system.routes) == 2
+
 
 async def test_assign_endpoint_static_allocated(dbus, mctpd):
     """Test that we can repeat an AssignEndpointStatic call with the same
@@ -362,13 +377,14 @@ async def test_assign_endpoint_static_allocated(dbus, mctpd):
     assert eid == static_eid
     assert not new
 
+
 async def test_assign_endpoint_static_conflict(dbus, mctpd):
     """Test that we cannot assign a conflicting static EID"""
     iface = mctpd.system.interfaces[0]
     mctp = await mctpd_mctp_iface_obj(dbus, iface)
     dev1 = mctpd.network.endpoints[0]
 
-    dev2 = Endpoint(iface, bytes([0x1e]))
+    dev2 = Endpoint(iface, bytes([0x1E]))
     mctpd.network.add_endpoint(dev2)
 
     # dynamic EID assigment for dev1
@@ -384,6 +400,7 @@ async def test_assign_endpoint_static_conflict(dbus, mctpd):
 
     assert str(ex.value) == "Address in use"
 
+
 async def test_assign_endpoint_static_varies(dbus, mctpd):
     """Test that we cannot re-assign a static EID to an endpoint that already
     has a different EID allocated
@@ -394,8 +411,7 @@ async def test_assign_endpoint_static_varies(dbus, mctpd):
     static_eid = 12
 
     (eid, _, _, new) = await mctp.call_assign_endpoint_static(
-        dev.lladdr,
-        static_eid
+        dev.lladdr, static_eid
     )
 
     assert eid == static_eid
@@ -405,6 +421,7 @@ async def test_assign_endpoint_static_varies(dbus, mctpd):
         await mctp.call_assign_endpoint_static(dev.lladdr, 13)
 
     assert str(ex.value) == "Already assigned a different EID"
+
 
 async def test_get_endpoint_id(dbus, mctpd, routed_ep):
     """Test that the mctpd control protocol responder support has support for a
@@ -422,6 +439,7 @@ async def test_get_endpoint_id(dbus, mctpd, routed_ep):
     # EID matches the system
     assert rsp[3] == mctpd.system.addresses[0].eid
 
+
 async def test_response_iid(mctpd):
     """Test that instance ID is populated correctly on control protocol
     responses
@@ -432,22 +450,24 @@ async def test_response_iid(mctpd):
         rsp = await peer.send_control(mctpd.network.mctp_socket, cmd)
         assert rsp[0] == iid
 
+
 async def test_learn_endpoint_invalid_response_command(dbus, mctpd):
     """During a LearnEndpoint's Get Endpoint ID exchange, return a response
     from a different command; in this case Get Message Type Support, which
     happens to be the same length as a the expected Get Endpoint ID response.
     """
+
     class BusyEndpoint(Endpoint):
         async def handle_mctp_control(self, sock, src_addr, msg):
             flags, opcode = msg[0:2]
             if opcode != 2:
                 return await super().handle_mctp_control(sock, src_addr, msg)
             dst_addr = MCTPSockAddr.for_ep_resp(self, src_addr, sock.addr_ext)
-            msg = bytes([flags & 0x1f, 0x05, 0x00, 0x02, 0x00, 0x01])
+            msg = bytes([flags & 0x1F, 0x05, 0x00, 0x02, 0x00, 0x01])
             await sock.send(dst_addr, msg)
 
     iface = mctpd.system.interfaces[0]
-    ep = BusyEndpoint(iface, bytes([0x1e]), eid = 15)
+    ep = BusyEndpoint(iface, bytes([0x1E]), eid=15)
     mctpd.network.add_endpoint(ep)
     mctp = await mctpd_mctp_iface_obj(dbus, iface)
 
@@ -456,11 +476,13 @@ async def test_learn_endpoint_invalid_response_command(dbus, mctpd):
 
     assert str(ex.value) == "Request failed"
 
+
 async def test_setup_endpoint_invalid_set_eid_response(dbus, mctpd):
     """During a SetupEndpoint's Set Endpoint ID exchange, return a response
     that indicates that the EID has been set, but report an invalid (0) EID in
     the response.
     """
+
     class InvalidEndpoint(Endpoint):
         async def handle_mctp_control(self, sock, src_addr, msg):
             flags, opcode = msg[0:2]
@@ -468,18 +490,20 @@ async def test_setup_endpoint_invalid_set_eid_response(dbus, mctpd):
                 return await super().handle_mctp_control(sock, src_addr, msg)
             dst_addr = MCTPSockAddr.for_ep_resp(self, src_addr, sock.addr_ext)
             self.eid = msg[3]
-            msg = bytes([
-                flags & 0x1f, # Rsp
-                0x01, # opcode: Set Endpoint ID
-                0x00, # cc: success
-                0x00, # assignment accepted, no pool
-                0x00, # set EID: invalid
-                0x00, # pool size: 0
-            ])
+            msg = bytes(
+                [
+                    flags & 0x1F,  # Rsp
+                    0x01,  # opcode: Set Endpoint ID
+                    0x00,  # cc: success
+                    0x00,  # assignment accepted, no pool
+                    0x00,  # set EID: invalid
+                    0x00,  # pool size: 0
+                ]
+            )
             await sock.send(dst_addr, msg)
 
     iface = mctpd.system.interfaces[0]
-    ep = InvalidEndpoint(iface, bytes([0x1e]), eid = 0)
+    ep = InvalidEndpoint(iface, bytes([0x1E]), eid=0)
     mctpd.network.add_endpoint(ep)
     mctp = await mctpd_mctp_iface_obj(dbus, iface)
 
@@ -488,11 +512,13 @@ async def test_setup_endpoint_invalid_set_eid_response(dbus, mctpd):
 
     assert str(ex.value) == "Endpoint returned failure to Set Endpoint ID"
 
+
 async def test_setup_endpoint_vary_set_eid_response(dbus, mctpd):
     """During a SetupEndpoint's Set Endpoint ID exchange, return a response
     that indicates that the EID has been set, but report a different set EID in
     the response.
     """
+
     class VaryEndpoint(Endpoint):
         async def handle_mctp_control(self, sock, src_addr, msg):
             flags, opcode = msg[0:2]
@@ -500,24 +526,27 @@ async def test_setup_endpoint_vary_set_eid_response(dbus, mctpd):
                 return await super().handle_mctp_control(sock, src_addr, msg)
             dst_addr = MCTPSockAddr.for_ep_resp(self, src_addr, sock.addr_ext)
             self.eid = msg[3] + 1
-            msg = bytes([
-                flags & 0x1f, # Rsp
-                0x01, # opcode: Set Endpoint ID
-                0x00, # cc: success
-                0x00, # assignment accepted, no pool
-                self.eid, # set EID: valid, but not what was assigned
-                0x00, # pool size: 0
-            ])
+            msg = bytes(
+                [
+                    flags & 0x1F,  # Rsp
+                    0x01,  # opcode: Set Endpoint ID
+                    0x00,  # cc: success
+                    0x00,  # assignment accepted, no pool
+                    self.eid,  # set EID: valid, but not what was assigned
+                    0x00,  # pool size: 0
+                ]
+            )
             await sock.send(dst_addr, msg)
 
     iface = mctpd.system.interfaces[0]
-    ep = VaryEndpoint(iface, bytes([0x1e]))
+    ep = VaryEndpoint(iface, bytes([0x1E]))
     mctpd.network.add_endpoint(ep)
     mctp = await mctpd_mctp_iface_obj(dbus, iface)
 
     (eid, _, _, _) = await mctp.call_setup_endpoint(ep.lladdr)
 
     assert eid == ep.eid
+
 
 async def test_setup_endpoint_conflicting_set_eid_response(dbus, mctpd):
     """During a SetupEndpoint's Set Endpoint ID exchange, return a response
@@ -537,14 +566,16 @@ async def test_setup_endpoint_conflicting_set_eid_response(dbus, mctpd):
             dst_addr = MCTPSockAddr.for_ep_resp(self, src_addr, sock.addr_ext)
             # reject reality, use a conflicting eid
             self.eid = self.conflict_eid
-            msg = bytes([
-                flags & 0x1f, # Rsp
-                0x01, # opcode: Set Endpoint ID
-                0x00, # cc: success
-                0x00, # assignment accepted, no pool
-                self.eid, # set EID: valid, but not what was assigned
-                0x00, # pool size: 0
-            ])
+            msg = bytes(
+                [
+                    flags & 0x1F,  # Rsp
+                    0x01,  # opcode: Set Endpoint ID
+                    0x00,  # cc: success
+                    0x00,  # assignment accepted, no pool
+                    self.eid,  # set EID: valid, but not what was assigned
+                    0x00,  # pool size: 0
+                ]
+            )
             await sock.send(dst_addr, msg)
 
     iface = mctpd.system.interfaces[0]
@@ -553,26 +584,28 @@ async def test_setup_endpoint_conflicting_set_eid_response(dbus, mctpd):
     (eid1, _, _, _) = await mctp.call_setup_endpoint(ep1.lladdr)
     assert eid1 == ep1.eid
 
-    ep2 = ConflictingEndpoint(iface, bytes([0x1f]), ep1.eid)
+    ep2 = ConflictingEndpoint(iface, bytes([0x1F]), ep1.eid)
     mctpd.network.add_endpoint(ep2)
     with pytest.raises(asyncdbus.errors.DBusError) as ex:
         await mctp.call_setup_endpoint(ep2.lladdr)
 
     assert "already used" in str(ex.value)
 
+
 async def test_learn_endpoint_invalid_response_iid(dbus, mctpd):
     """Ensure a response with an invalid IID is discarded"""
+
     class InvalidIIDEndpoint(Endpoint):
         async def handle_mctp_control(self, sock, src_addr, msg):
             # bump IID
             flags = msg[0]
-            iid_mask = 0x1d
+            iid_mask = 0x1D
             flags = (flags & ~iid_mask) | ((flags + 1) & iid_mask)
             msg = bytes([flags]) + msg[1:]
             return await super().handle_mctp_control(sock, src_addr, msg)
 
     iface = mctpd.system.interfaces[0]
-    ep = InvalidIIDEndpoint(iface, bytes([0x1e]), eid = 15)
+    ep = InvalidIIDEndpoint(iface, bytes([0x1E]), eid=15)
     mctpd.network.add_endpoint(ep)
     mctp = await mctpd_mctp_iface_obj(dbus, iface)
 
@@ -580,6 +613,7 @@ async def test_learn_endpoint_invalid_response_iid(dbus, mctpd):
         await mctp.call_learn_endpoint(ep.lladdr)
 
     assert str(ex.value) == "Request failed"
+
 
 async def test_query_message_types(dbus, mctpd):
     """Ensure we're parsing Get Message Type Support responses"""
@@ -602,6 +636,7 @@ async def test_query_message_types(dbus, mctpd):
 
     assert ep_types == query_types
 
+
 async def test_network_local_eids_single(dbus, mctpd):
     """Network1.LocalEIDs should reflect locally-assigned EID state"""
     iface = mctpd.system.interfaces[0]
@@ -610,6 +645,7 @@ async def test_network_local_eids_single(dbus, mctpd):
     eids = list(await net.get_local_eids())
 
     assert eids == [8]
+
 
 async def test_network_local_eids_multiple(dbus, mctpd):
     iface = mctpd.system.interfaces[0]
@@ -620,6 +656,7 @@ async def test_network_local_eids_multiple(dbus, mctpd):
 
     assert eids == [8, 9]
 
+
 async def test_network_local_eids_none(dbus, mctpd):
     iface = mctpd.system.interfaces[0]
     await mctpd.system.del_address(mctpd.system.Address(iface, 8))
@@ -629,6 +666,7 @@ async def test_network_local_eids_none(dbus, mctpd):
 
     assert eids == []
 
+
 async def test_concurrent_recovery_setup(dbus, mctpd, autojump_clock):
     iface = mctpd.system.interfaces[0]
     mctp_i = await mctpd_mctp_iface_obj(dbus, iface)
@@ -637,7 +675,7 @@ async def test_concurrent_recovery_setup(dbus, mctpd, autojump_clock):
     # reach the allocation boundary.
     split = 19
     for i in range(split):
-        pep = Endpoint(iface, bytes([0x1e + i]))
+        pep = Endpoint(iface, bytes([0x1E + i]))
         mctpd.network.add_endpoint(pep)
         (_, _, path, _) = await mctp_i.call_setup_endpoint(pep.lladdr)
 
@@ -649,17 +687,20 @@ async def test_concurrent_recovery_setup(dbus, mctpd, autojump_clock):
 
     # Set up a match for Connectivity transitioning to Degraded on the endpoint
     # for which we request recovery
-    degraded = trio.Semaphore(initial_value = 0)
+    degraded = trio.Semaphore(initial_value=0)
+
     def ep_connectivity_changed(iface, changed, invalidated):
         if iface == MCTPD_ENDPOINT_I and 'Connectivity' in changed:
             if 'Degraded' == changed['Connectivity'].value:
                 degraded.release()
+
     await ep_props.on_properties_changed(ep_connectivity_changed)
 
     # Set up a match for the recovery endpoint object being removed from DBus
     mctp_p = await dbus.get_proxy_object(MCTPD_C, MCTPD_MCTP_P)
     mctp_objmgr = await mctp_p.get_interface(DBUS_OBJECT_MANAGER_I)
-    removed = trio.Semaphore(initial_value = 0)
+    removed = trio.Semaphore(initial_value=0)
+
     def ep_removed(ep_path, interfaces):
         if ep_path == path and MCTPD_ENDPOINT_I in interfaces:
             removed.release()
@@ -683,7 +724,7 @@ async def test_concurrent_recovery_setup(dbus, mctpd, autojump_clock):
     # Now that we're asynchronously waiting for the endpoint recovery process
     # to complete, force a realloc() of the peer object array by adding a new
     # peer, which will invalidate the recovering peer's pointer
-    pep = Endpoint(iface, bytes([0x1e + split]))
+    pep = Endpoint(iface, bytes([0x1E + split]))
     mctpd.network.add_endpoint(pep)
     (_, _, _, new) = await mctp_i.call_setup_endpoint(pep.lladdr)
     assert new
@@ -694,23 +735,29 @@ async def test_concurrent_recovery_setup(dbus, mctpd, autojump_clock):
         await removed.acquire()
     assert not expected.cancelled_caught
 
+
 async def test_bridged_learn_endpoint(dbus, mctpd):
     """Bridged EP can be discovered via Network1.LearnEndpoint"""
     iface = mctpd.system.interfaces[0]
     ep = mctpd.network.endpoints[0]
-    br_ep = Endpoint(iface, bytes(), eid = 10, types = [0, 2])
+    br_ep = Endpoint(iface, bytes(), eid=10, types=[0, 2])
     ep.add_bridged_ep(br_ep)
     mctpd.network.add_endpoint(br_ep)
 
-    await mctpd.system.add_route(mctpd.system.Route(br_ep.eid, 1, iface = iface))
+    await mctpd.system.add_route(mctpd.system.Route(br_ep.eid, 1, iface=iface))
     # static neighbour; no gateway route support at present
-    await mctpd.system.add_neighbour(mctpd.system.Neighbour(iface, ep.lladdr, br_ep.eid))
+    await mctpd.system.add_neighbour(
+        mctpd.system.Neighbour(iface, ep.lladdr, br_ep.eid)
+    )
 
     net = await mctpd_mctp_network_obj(dbus, iface.net)
     (path, new) = await net.call_learn_endpoint(br_ep.eid)
 
-    assert path == f'/au/com/codeconstruct/mctp1/networks/1/endpoints/{br_ep.eid}'
+    assert (
+        path == f'/au/com/codeconstruct/mctp1/networks/1/endpoints/{br_ep.eid}'
+    )
     assert new
+
 
 async def test_network_learn_endpoint_absent(dbus, mctpd):
     iface = mctpd.system.interfaces[0]
@@ -719,6 +766,7 @@ async def test_network_learn_endpoint_absent(dbus, mctpd):
 
     with pytest.raises(asyncdbus.errors.DBusError):
         await net.call_learn_endpoint(10)
+
 
 async def test_change_network(dbus, mctpd):
     """Change a network id, while we have an active endpoint on that net"""
@@ -738,13 +786,17 @@ async def test_change_network(dbus, mctpd):
     # and nothing at 1
     with pytest.raises(asyncdbus.errors.DBusError) as ex:
         await mctpd_mctp_network_obj(dbus, 1)
-    assert str(ex.value) == "Unknown object '/au/com/codeconstruct/mctp1/networks/1'."
+    assert (
+        str(ex.value)
+        == "Unknown object '/au/com/codeconstruct/mctp1/networks/1'."
+    )
 
     # endpoint should be present under 2/
-    ep = await mctpd_mctp_endpoint_common_obj(dbus,
-        '/au/com/codeconstruct/mctp1/networks/2/endpoints/8'
+    ep = await mctpd_mctp_endpoint_common_obj(
+        dbus, '/au/com/codeconstruct/mctp1/networks/2/endpoints/8'
     )
     assert ep is not None
+
 
 async def test_del_interface_last(dbus, mctpd):
     """Delete our only interface"""
@@ -759,11 +811,18 @@ async def test_del_interface_last(dbus, mctpd):
     with pytest.raises(asyncdbus.errors.DBusError):
         await mctpd_mctp_network_obj(dbus, iface.net)
 
+
 async def test_del_interface_with_peers(dbus, mctpd):
     """Delete an interface with peers attached, ensure all are gone"""
     net = mctpd.system.interfaces[0].net
     iface = mctpd.system.Interface(
-        'mctp1', 2, net,  bytes([0x10]), 68, 254, True,
+        'mctp1',
+        2,
+        net,
+        bytes([0x10]),
+        68,
+        254,
+        True,
     )
     await mctpd.system.add_interface(iface)
 
@@ -797,6 +856,7 @@ async def test_del_interface_with_peers(dbus, mctpd):
             ep = await mctpd_mctp_endpoint_common_obj(dbus, path)
         assert str(ex.value).startswith("Unknown object")
 
+
 async def test_add_interface(dbus, mctpd):
     """Remove and re-add an interface"""
     net = 1
@@ -807,12 +867,11 @@ async def test_add_interface(dbus, mctpd):
     mctp = await mctpd_mctp_iface_obj(dbus, iface)
 
     # Add an endpoint on the interface
-    mctpd.network.add_endpoint(Endpoint(iface, bytes([]), types = [0, 1]))
+    mctpd.network.add_endpoint(Endpoint(iface, bytes([]), types=[0, 1]))
 
     static_eid = 30
     (eid, _, _, new) = await mctp.call_assign_endpoint_static(
-        bytes([]),
-        static_eid
+        bytes([]), static_eid
     )
     assert eid == static_eid
     assert new
@@ -833,19 +892,19 @@ async def test_add_interface(dbus, mctpd):
     mctp = await mctpd_mctp_iface_obj(dbus, iface)
 
     # Add an endpoint on the interface
-    mctpd.network.add_endpoint(Endpoint(iface, bytes([]), types = [0, 1]))
+    mctpd.network.add_endpoint(Endpoint(iface, bytes([]), types=[0, 1]))
 
     # Old route should still be gone
     assert mctpd.system.lookup_route(net, static_eid) is None
 
     static_eid = 40
     (eid, _, _, new) = await mctp.call_assign_endpoint_static(
-        bytes([]),
-        static_eid
+        bytes([]), static_eid
     )
     assert eid == static_eid
     assert new
     assert mctpd.system.lookup_route(net, static_eid).iface == iface
+
 
 async def test_interface_rename(dbus, mctpd):
     iface = mctpd.system.interfaces[0]
@@ -858,6 +917,7 @@ async def test_interface_rename(dbus, mctpd):
 
     iface_obj = await mctpd_mctp_iface_obj(dbus, iface)
     assert iface_obj.path.endswith(new_name)
+
 
 async def test_interface_rename_with_peers(dbus, mctpd):
     iface = mctpd.system.interfaces[0]
@@ -881,6 +941,7 @@ async def test_interface_rename_with_peers(dbus, mctpd):
     ep_obj = await dbus.get_proxy_object(MCTPD_C, ep_path)
     assert ep_obj is not None
 
+
 async def test_config_dyn_eid_range_min(nursery, dbus, sysnet):
     """Test that we use the minimum EID from the dynamic_eid_range config"""
     (min_dyn_eid, max_dyn_eid) = (20, 254)
@@ -891,7 +952,7 @@ async def test_config_dyn_eid_range_min(nursery, dbus, sysnet):
 
     # since we're specifying per-test config, we create the wrapper directly
     # rather than using the fixture.
-    mctpd = MctpdWrapper(dbus, sysnet, config = config)
+    mctpd = MctpdWrapper(dbus, sysnet, config=config)
     await mctpd.start_mctpd(nursery)
 
     iface = mctpd.system.interfaces[0]
@@ -905,6 +966,7 @@ async def test_config_dyn_eid_range_min(nursery, dbus, sysnet):
     res = await mctpd.stop_mctpd()
     assert res == 0
 
+
 async def test_config_dyn_eid_range_max(nursery, dbus, sysnet):
     """Test that we use the maximum EID from the dynamic_eid_range config"""
     (min_dyn_eid, max_dyn_eid) = (20, 21)
@@ -913,14 +975,14 @@ async def test_config_dyn_eid_range_max(nursery, dbus, sysnet):
     dynamic_eid_range = [{min_dyn_eid}, {max_dyn_eid}]
     """
 
-    mctpd = MctpdWrapper(dbus, sysnet, config = config)
+    mctpd = MctpdWrapper(dbus, sysnet, config=config)
     await mctpd.start_mctpd(nursery)
 
     iface = mctpd.system.interfaces[0]
     mctp = await mctpd_mctp_iface_obj(dbus, iface)
 
-    mctpd.network.add_endpoint(Endpoint(iface, bytes([0x01]), types = [0, 1]))
-    mctpd.network.add_endpoint(Endpoint(iface, bytes([0x02]), types = [0, 1]))
+    mctpd.network.add_endpoint(Endpoint(iface, bytes([0x01]), types=[0, 1]))
+    mctpd.network.add_endpoint(Endpoint(iface, bytes([0x02]), types=[0, 1]))
 
     for i in range(0, 2):
         ep = mctpd.network.endpoints[i]
@@ -938,8 +1000,9 @@ async def test_config_dyn_eid_range_max(nursery, dbus, sysnet):
     res = await mctpd.stop_mctpd()
     assert res == 0
 
+
 async def test_assign_dynamic_bridge_eid(dbus, mctpd):
-    """ Test bridge endpoint dynamic EID assignment and downstream
+    """Test bridge endpoint dynamic EID assignment and downstream
     endpoint EID allocation
 
     Tests that:
@@ -962,6 +1025,7 @@ async def test_assign_dynamic_bridge_eid(dbus, mctpd):
 
     assert new
     assert ep.allocated_pool == (eid + 1, pool_size)
+
 
 async def test_bridge_ep_conflict_static(dbus, mctpd):
     """Test that static allocations are not permitted, if they would conflict
@@ -997,6 +1061,7 @@ async def test_bridge_ep_conflict_static(dbus, mctpd):
 
     assert eid == static_eid
 
+
 async def test_bridge_ep_conflict_learn(dbus, mctpd):
     """Test that learnt allocations (ie, pre-assigned device EIDs) are not
     permitted, if they would conflict with a bridge pool
@@ -1029,6 +1094,7 @@ async def test_bridge_ep_conflict_learn(dbus, mctpd):
 
     assert eid == dev_eid
 
+
 async def test_bridge_ep_conflict_setup(dbus, mctpd):
     """Test that learnt allocations (ie, pre-assigned device EIDs) are not
     permitted through SetupEndpoint, if they would conflict with a bridge pool
@@ -1055,6 +1121,7 @@ async def test_bridge_ep_conflict_setup(dbus, mctpd):
         (eid, _, _, _) = await mctp.call_setup_endpoint(dev.lladdr)
         assert eid not in pool_range
 
+
 async def test_bridge_setup_reassign(dbus, mctpd):
     """Test that mctpd will reassign a bridge endpoints (pre-configured) EID if
     necessary to satisfy the bridge pool allocation
@@ -1066,8 +1133,7 @@ async def test_bridge_setup_reassign(dbus, mctpd):
     ep = mctpd.network.endpoints[0]
     static_eid = 10
     (eid, _, _, _) = await mctp.call_assign_endpoint_static(
-        ep.lladdr,
-        static_eid
+        ep.lladdr, static_eid
     )
 
     assert eid == static_eid
@@ -1083,6 +1149,7 @@ async def test_bridge_setup_reassign(dbus, mctpd):
     assert br.allocated_pool is not None
     assert br.allocated_pool[0] == eid + 1
 
+
 async def test_assign_dynamic_eid_limited_pool(nursery, dbus, sysnet):
     """Test that we truncate the requested pool size to the max_pool_size
     config
@@ -1093,7 +1160,7 @@ async def test_assign_dynamic_eid_limited_pool(nursery, dbus, sysnet):
     max_pool_size = {max_pool_size}
     """
 
-    mctpd = MctpdWrapper(dbus, sysnet, config = config)
+    mctpd = MctpdWrapper(dbus, sysnet, config=config)
     await mctpd.start_mctpd(nursery)
 
     iface = mctpd.system.interfaces[0]
@@ -1120,6 +1187,7 @@ async def test_assign_dynamic_eid_limited_pool(nursery, dbus, sysnet):
     res = await mctpd.stop_mctpd()
     assert res == 0
 
+
 async def test_bridge_pool_assign_limited(nursery, dbus, sysnet):
     """Test that a limited pool is assigned if we run out of space for a full
     allocation
@@ -1130,7 +1198,7 @@ async def test_bridge_pool_assign_limited(nursery, dbus, sysnet):
     dynamic_eid_range = [{min_dyn_eid}, {max_dyn_eid}]
     """
 
-    mctpd = MctpdWrapper(dbus, sysnet, config = config)
+    mctpd = MctpdWrapper(dbus, sysnet, config=config)
     await mctpd.start_mctpd(nursery)
 
     iface = mctpd.system.interfaces[0]
@@ -1148,8 +1216,7 @@ async def test_bridge_pool_assign_limited(nursery, dbus, sysnet):
     dev2 = Endpoint(iface, bytes([0x09]))
     mctpd.network.add_endpoint(dev2)
     (eid, _, path, new) = await mctp.call_assign_endpoint_static(
-        dev2.lladdr,
-        10
+        dev2.lladdr, 10
     )
     assert new
 
@@ -1164,10 +1231,12 @@ async def test_bridge_pool_assign_limited(nursery, dbus, sysnet):
     res = await mctpd.stop_mctpd()
     assert res == 0
 
+
 async def test_assign_dynamic_eid_allocation_failure(dbus, mctpd):
     """During Allocate Endpoint ID exchange, return completion code failure
     to indicate no pool has been assigned to the bridge
     """
+
     class BridgeEndpoint(Endpoint):
         async def handle_mctp_control(self, sock, src_addr, msg):
             flags, opcode = msg[0:2]
@@ -1175,18 +1244,20 @@ async def test_assign_dynamic_eid_allocation_failure(dbus, mctpd):
                 return await super().handle_mctp_control(sock, src_addr, msg)
             dst_addr = MCTPSockAddr.for_ep_resp(self, src_addr, sock.addr_ext)
 
-            msg = bytes([
-                flags & 0x1f, # Rsp
-                0x08, # opcode: Allocate Endpoint ID
-                0x01, # cc: failure
-                0x01, # allocation rejected
-                0x00, # pool size
-                0x00, # pool start
-            ])
+            msg = bytes(
+                [
+                    flags & 0x1F,  # Rsp
+                    0x08,  # opcode: Allocate Endpoint ID
+                    0x01,  # cc: failure
+                    0x01,  # allocation rejected
+                    0x00,  # pool size
+                    0x00,  # pool start
+                ]
+            )
             await sock.send(dst_addr, msg)
 
     iface = mctpd.system.interfaces[0]
-    ep = BridgeEndpoint(iface, bytes([0x1e]))
+    ep = BridgeEndpoint(iface, bytes([0x1E]))
     mctpd.network.add_endpoint(ep)
     # Set up downstream endpoints as undiscovered EID 0
     for i in range(0, 2):
@@ -1203,6 +1274,7 @@ async def test_assign_dynamic_eid_allocation_failure(dbus, mctpd):
         bridge_obj = await dbus.get_proxy_object(MCTPD_C, path)
         await bridge_obj.get_interface(MCTPD_ENDPOINT_BRIDGE_I)
 
+
 async def test_assign_without_bridge_range(dbus, sysnet, nursery):
     """Test assigning a non-bridge endpoint, when we don't have capacity for
     the speculatively-allocated bridge range
@@ -1215,7 +1287,7 @@ async def test_assign_without_bridge_range(dbus, sysnet, nursery):
     max_pool_size = {max_pool_size}
     """
 
-    mctpd = MctpdWrapper(dbus, sysnet, config = config)
+    mctpd = MctpdWrapper(dbus, sysnet, config=config)
     await mctpd.start_mctpd(nursery)
 
     iface = mctpd.system.interfaces[0]
@@ -1228,6 +1300,7 @@ async def test_assign_without_bridge_range(dbus, sysnet, nursery):
     assert eid == dyn_eid_min
     res = await mctpd.stop_mctpd()
     assert res == 0
+
 
 async def test_bridge_pool_range_limited(dbus, sysnet, nursery):
     """Test that we can still allocate a bridge pool even though we may not have
@@ -1250,7 +1323,7 @@ async def test_bridge_pool_range_limited(dbus, sysnet, nursery):
     max_pool_size = {max_pool_size}
     """
 
-    mctpd = MctpdWrapper(dbus, sysnet, config = config)
+    mctpd = MctpdWrapper(dbus, sysnet, config=config)
     await mctpd.start_mctpd(nursery)
 
     iface = mctpd.system.interfaces[0]
@@ -1272,6 +1345,7 @@ async def test_bridge_pool_range_limited(dbus, sysnet, nursery):
     res = await mctpd.stop_mctpd()
     assert res == 0
 
+
 async def test_get_message_types(dbus, mctpd, routed_ep):
     ep = routed_ep
 
@@ -1289,7 +1363,7 @@ async def test_get_message_types(dbus, mctpd, routed_ep):
         await mctp.call_register_type_support(0x0, [0xF1F2F3F4])
     assert str(ex.value) == "Invalid message type 0"
     with pytest.raises(asyncdbus.errors.DBusError) as ex:
-        await mctp.call_register_type_support(0x7e, [0xF1F2F3F4])
+        await mctp.call_register_type_support(0x7E, [0xF1F2F3F4])
     assert str(ex.value) == "Invalid message type 126"
 
     # Verify get message type response includes spdm
@@ -1302,6 +1376,7 @@ async def test_get_message_types(dbus, mctpd, routed_ep):
     rsp = await ep.send_control(mctpd.network.mctp_socket, cmd)
     assert rsp.hex(' ') == '00 04 00 01 f4 f3 f2 f1'
 
+
 async def test_register_vdm_type_support_empty(mctpd, routed_ep):
     """Test RegisterVDMTypeSupport when no responders are registered"""
     ep = routed_ep
@@ -1310,6 +1385,7 @@ async def test_register_vdm_type_support_empty(mctpd, routed_ep):
     cmd = MCTPControlCommand(True, 0, 0x06, bytes([0x00]))
     rsp = await ep.send_control(mctpd.network.mctp_socket, cmd)
     assert rsp.hex(' ') == '00 06 02'
+
 
 async def test_register_vdm_type_support_pcie_only(dbus, mctpd, routed_ep):
     """Test RegisterVDMTypeSupport when a single PCIe VDM is registered"""
@@ -1335,6 +1411,7 @@ async def test_register_vdm_type_support_pcie_only(dbus, mctpd, routed_ep):
     rsp = await ep.send_control(mctpd.network.mctp_socket, cmd)
     assert rsp.hex(' ') == '00 06 02'
 
+
 async def test_register_vdm_type_support_iana_only(dbus, mctpd, routed_ep):
     """Test RegisterVDMTypeSupport when a single IANA VDM is registered"""
     ep = routed_ep
@@ -1354,9 +1431,9 @@ async def test_register_vdm_type_support_iana_only(dbus, mctpd, routed_ep):
     rsp = await ep.send_control(mctpd.network.mctp_socket, cmd)
     assert rsp.hex(' ') == '00 06 00 ff 01 12 34 ab cd 56 78'
 
+
 async def test_register_vdm_type_support_both(dbus, mctpd, routed_ep):
-    """Test RegisterVDMTypeSupport when both IANA and PCI types are registered
-    """
+    """Test RegisterVDMTypeSupport when both IANA and PCI types are registered"""
     ep = routed_ep
     mctp = await mctpd_mctp_base_iface_obj(dbus)
 
@@ -1384,6 +1461,7 @@ async def test_register_vdm_type_support_both(dbus, mctpd, routed_ep):
     cmd = MCTPControlCommand(True, 0, 0x06, bytes([0x01]))
     rsp = await ep.send_control(mctpd.network.mctp_socket, cmd)
     assert rsp.hex(' ') == '00 06 00 ff 00 ab cd 56 78'
+
 
 async def test_register_vdm_type_support_dbus_disconnect(mctpd, routed_ep):
     """Test RegisterVDMTypeSupport with dbus disconnect"""
@@ -1429,6 +1507,7 @@ async def test_register_vdm_type_support_dbus_disconnect(mctpd, routed_ep):
     rsp = await ep.send_control(mctpd.network.mctp_socket, cmd)
     assert rsp.hex(' ') == '00 05 00 01 00'
 
+
 async def test_register_vdm_type_support_errors(dbus, mctpd):
     """Test RegisterVDMTypeSupport error handling"""
     mctp = await mctpd_mctp_base_iface_obj(dbus)
@@ -1456,15 +1535,17 @@ async def test_register_vdm_type_support_errors(dbus, mctpd):
         await mctp.call_register_vdm_type_support(0x00, v_type, 0x0001)
     assert str(ex.value) == "VDM type already registered"
 
+
 async def test_query_peer_properties_retry_timeout(nursery, dbus, sysnet):
     class LossyEndpoint(Endpoint):
         """An endpoint object that may drop a specific number (timeout_count)
         of MCTP Control Protocol requests.
         """
+
         def __init__(self, *args, **kwargs):
             super().__init__(*args, **kwargs)
             self.timeout_count = 0
-            self.timeout_opcode = 0x05 # Get Message Type Support
+            self.timeout_opcode = 0x05  # Get Message Type Support
 
         async def handle_mctp_control(self, sock, addr, data):
             rq = data[0] & 0x80
@@ -1484,7 +1565,7 @@ async def test_query_peer_properties_retry_timeout(nursery, dbus, sysnet):
     # define expected message types
     # add a normal endpoint to network
     expected_types = [0, 1, 2]
-    ep = LossyEndpoint(iface, bytes([0x1a]), eid=15, types=expected_types)
+    ep = LossyEndpoint(iface, bytes([0x1A]), eid=15, types=expected_types)
     mctpd.network.add_endpoint(ep)
 
     # call setup_endpoint on ep, which will allocate a object path for it
@@ -1495,8 +1576,8 @@ async def test_query_peer_properties_retry_timeout(nursery, dbus, sysnet):
     objtypes.sort()
     assert objtypes == expected_types
 
-    ep.lladdr = bytes([0x1b])     # change lladdr to force retry
-    ep.timeout_count = 2          # timeout twice before responding
+    ep.lladdr = bytes([0x1B])  # change lladdr to force retry
+    ep.timeout_count = 2  # timeout twice before responding
 
     # call setup_endpoint again, which will trigger query of peer properties
     (eid, net, path, new) = await mctp.call_setup_endpoint(ep.lladdr)
@@ -1507,8 +1588,8 @@ async def test_query_peer_properties_retry_timeout(nursery, dbus, sysnet):
     objtypes.sort()
     assert objtypes == expected_types
 
-    ep.lladdr = bytes([0x1c])  # change lladdr to force retry
-    ep.timeout_count = 5       # timeout five times before responding
+    ep.lladdr = bytes([0x1C])  # change lladdr to force retry
+    ep.timeout_count = 5  # timeout five times before responding
 
     # call setup_endpoint again, which will trigger query of peer properties
     (eid, net, path, new) = await mctp.call_setup_endpoint(ep.lladdr)
@@ -1516,12 +1597,13 @@ async def test_query_peer_properties_retry_timeout(nursery, dbus, sysnet):
     # timeout five times does prevent us from getting the correct message types
     objep = await mctpd_mctp_endpoint_common_obj(dbus, path)
     objtypes = list(await objep.get_supported_message_types())
-    expected_types = []         # exceeded retry limit, so no types known
+    expected_types = []  # exceeded retry limit, so no types known
     assert objtypes == expected_types
 
     # exit mctpd
     res = await mctpd.stop_mctpd()
     assert res == 0
+
 
 async def test_bridged_endpoint_poll(dbus, sysnet, nursery, autojump_clock):
     """Test that we use endpoint poll interval from the config and
@@ -1534,7 +1616,7 @@ async def test_bridged_endpoint_poll(dbus, sysnet, nursery, autojump_clock):
     endpoint_poll_ms = {poll_interval}
     """
 
-    mctpd = MctpdWrapper(dbus, sysnet, config = config)
+    mctpd = MctpdWrapper(dbus, sysnet, config=config)
     await mctpd.start_mctpd(nursery)
 
     iface = mctpd.system.interfaces[0]
@@ -1542,8 +1624,8 @@ async def test_bridged_endpoint_poll(dbus, sysnet, nursery, autojump_clock):
     mctp = await mctpd_mctp_iface_obj(dbus, iface)
 
     bridged_ep = [
-        Endpoint(iface, bytes(), types = [0, 1]),
-        Endpoint(iface, bytes(), types = [0, 1])
+        Endpoint(iface, bytes(), types=[0, 1]),
+        Endpoint(iface, bytes(), types=[0, 1]),
     ]
     for bep in bridged_ep:
         mctpd.network.add_endpoint(bep)
@@ -1572,11 +1654,14 @@ async def test_bridged_endpoint_poll(dbus, sysnet, nursery, autojump_clock):
             await endpoint_added.acquire()
 
     # Verify we found all expected bridged endpoints
-    assert not expected.cancelled_caught, "Timeout waiting for bridged endpoints"
+    assert not expected.cancelled_caught, (
+        "Timeout waiting for bridged endpoints"
+    )
     assert len(bridged_endpoints_found) == expected_bridged_eps
 
     res = await mctpd.stop_mctpd()
     assert res == 0
+
 
 async def test_bridged_endpoint_remove(dbus, sysnet, nursery, autojump_clock):
     """Test that all downstream endpoints are removed when the bridge
@@ -1589,7 +1674,7 @@ async def test_bridged_endpoint_remove(dbus, sysnet, nursery, autojump_clock):
     endpoint_poll_ms = {poll_interval}
     """
 
-    mctpd = MctpdWrapper(dbus, sysnet, config = config)
+    mctpd = MctpdWrapper(dbus, sysnet, config=config)
     await mctpd.start_mctpd(nursery)
 
     iface = mctpd.system.interfaces[0]
@@ -1597,8 +1682,8 @@ async def test_bridged_endpoint_remove(dbus, sysnet, nursery, autojump_clock):
     mctp = await mctpd_mctp_iface_obj(dbus, iface)
 
     bridged_ep = [
-        Endpoint(iface, bytes(), types = [0, 1]),
-        Endpoint(iface, bytes(), types = [0, 1])
+        Endpoint(iface, bytes(), types=[0, 1]),
+        Endpoint(iface, bytes(), types=[0, 1]),
     ]
     for bep in bridged_ep:
         mctpd.network.add_endpoint(bep)
@@ -1609,7 +1694,7 @@ async def test_bridged_endpoint_remove(dbus, sysnet, nursery, autojump_clock):
 
     # Wait for the bridged endpoints to be discovered
     await trio.sleep((poll_interval * 2) / 1000)
-    removed = trio.Semaphore(initial_value = 0)
+    removed = trio.Semaphore(initial_value=0)
     removed_eps = []
 
     # Capture the removed endpoints
@@ -1631,7 +1716,10 @@ async def test_bridged_endpoint_remove(dbus, sysnet, nursery, autojump_clock):
     res = await mctpd.stop_mctpd()
     assert res == 0
 
-async def test_bridged_endpoint_poll_stop(dbus, sysnet, nursery, autojump_clock):
+
+async def test_bridged_endpoint_poll_stop(
+    dbus, sysnet, nursery, autojump_clock
+):
     """Test that polling stops once endponit has been discovered"""
     poll_interval = 2500
     config = f"""
@@ -1639,7 +1727,7 @@ async def test_bridged_endpoint_poll_stop(dbus, sysnet, nursery, autojump_clock)
     endpoint_poll_ms = {poll_interval}
     """
 
-    mctpd = MctpdWrapper(dbus, sysnet, config = config)
+    mctpd = MctpdWrapper(dbus, sysnet, config=config)
     await mctpd.start_mctpd(nursery)
 
     iface = mctpd.system.interfaces[0]
@@ -1650,12 +1738,12 @@ async def test_bridged_endpoint_poll_stop(dbus, sysnet, nursery, autojump_clock)
     class BridgedEndpoint(Endpoint):
         async def handle_mctp_control(self, sock, src_addr, msg):
             flags, opcode = msg[0:2]
-            if opcode == 0x2: # Get Endpoint ID
+            if opcode == 0x2:  # Get Endpoint ID
                 nonlocal poll_count
                 poll_count += 1
             return await super().handle_mctp_control(sock, src_addr, msg)
 
-    bridged_ep = BridgedEndpoint(iface, bytes(), types = [0, 1])
+    bridged_ep = BridgedEndpoint(iface, bytes(), types=[0, 1])
     mctpd.network.add_endpoint(bridged_ep)
     ep.add_bridged_ep(bridged_ep)
 
@@ -1686,7 +1774,10 @@ async def test_bridged_endpoint_poll_stop(dbus, sysnet, nursery, autojump_clock)
     res = await mctpd.stop_mctpd()
     assert res == 0
 
-async def test_bridged_endpoint_poll_continue(dbus, sysnet, nursery, autojump_clock):
+
+async def test_bridged_endpoint_poll_continue(
+    dbus, sysnet, nursery, autojump_clock
+):
     """Test that polling continues until the endpoint is discovered"""
     poll_interval = 2500
     config = f"""
@@ -1694,7 +1785,7 @@ async def test_bridged_endpoint_poll_continue(dbus, sysnet, nursery, autojump_cl
     endpoint_poll_ms = {poll_interval}
     """
 
-    mctpd = MctpdWrapper(dbus, sysnet, config = config)
+    mctpd = MctpdWrapper(dbus, sysnet, config=config)
     await mctpd.start_mctpd(nursery)
 
     iface = mctpd.system.interfaces[0]
@@ -1707,12 +1798,12 @@ async def test_bridged_endpoint_poll_continue(dbus, sysnet, nursery, autojump_cl
             flags, opcode = msg[0:2]
             # dont respond to simiulate device not accessible
             # but increment poll count for the Get Endpoint ID
-            if opcode == 0x2: # Get Endpoint ID
+            if opcode == 0x2:  # Get Endpoint ID
                 nonlocal poll_count
                 poll_count += 1
             return None
 
-    bridged_ep = BridgedEndpoint(iface, bytes(), types = [0, 1])
+    bridged_ep = BridgedEndpoint(iface, bytes(), types=[0, 1])
     mctpd.network.add_endpoint(bridged_ep)
     ep.add_bridged_ep(bridged_ep)
 

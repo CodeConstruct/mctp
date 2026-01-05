@@ -1,4 +1,3 @@
-
 import array
 import enum
 import errno
@@ -23,13 +22,14 @@ IFLA_MCTP_NET = 1
 
 MAX_SOCKADDR_SIZE = 56
 
+
 # can be serialised into a NLMSG_ERROR
 class NetlinkError(Exception):
-    def __init__(self, errno, msg = None):
+    def __init__(self, errno, msg=None):
         self.errno = errno
         self.msg = msg
 
-    def to_nlmsg(self, seq = 0):
+    def to_nlmsg(self, seq=0):
         resp = netlink.nlmsgerr()
         resp['header']['sequence_number'] = seq
         resp['header']['pid'] = 0
@@ -38,6 +38,7 @@ class NetlinkError(Exception):
         if self.msg:
             resp['attrs'] = [['NLMSGERR_ATTR_MSG', self.msg]]
         return resp
+
 
 class PhysicalBinding(enum.Enum):
     UNSPEC = 0x00
@@ -52,14 +53,25 @@ class PhysicalBinding(enum.Enum):
     UCIE = 0x09
     VENDOR = 0xFF
 
+
 class System:
     class Interface:
         """Interface constructor.
 
         Initial mtu is set to max_mtu.
         """
-        def __init__(self, name, ifindex, net, lladdr, min_mtu, max_mtu,
-                     up = False, phys_binding = PhysicalBinding.UNSPEC):
+
+        def __init__(
+            self,
+            name,
+            ifindex,
+            net,
+            lladdr,
+            min_mtu,
+            max_mtu,
+            up=False,
+            phys_binding=PhysicalBinding.UNSPEC,
+        ):
             self.name = name
             self.ifindex = ifindex
             self.net = net
@@ -98,8 +110,7 @@ class System:
             return f"{self.eid} -> {lladdrstr} {self.iface.name}"
 
     class Route:
-        def __init__(self, start_eid, extent_eid, iface = None, gw = None,
-                mtu = 0):
+        def __init__(self, start_eid, extent_eid, iface=None, gw=None, mtu=0):
             if (iface is None) and (gw is None):
                 raise ValueError("neither interface or gateway are set")
             elif (iface is not None) and (gw is not None):
@@ -151,8 +162,9 @@ class System:
             await self.nl.notify_newroute(route)
 
     async def del_route(self, route):
-        route = self.lookup_route_exact(route.net(), route.start_eid,
-                route.end_eid)
+        route = self.lookup_route_exact(
+            route.net(), route.start_eid, route.end_eid
+        )
         if not route:
             raise NetlinkError(errno.ENOENT)
 
@@ -232,8 +244,11 @@ class System:
 
     def lookup_route_exact(self, net, start_eid, end_eid):
         for rt in self.routes:
-            if (rt.net() == net and rt.start_eid == start_eid
-                    and rt.end_eid == end_eid):
+            if (
+                rt.net() == net
+                and rt.start_eid == start_eid
+                and rt.end_eid == end_eid
+            ):
                 return rt
         return None
 
@@ -263,8 +278,8 @@ class System:
                 # In case of gateway routes, we need not have neighbours
                 # for the gated endpoints, but only need to find the
                 # gateway's physical address
-				# TODO: handle recursive gateway and alternate routes
-				# for downstream endpoints
+                # TODO: handle recursive gateway and alternate routes
+                # for downstream endpoints
                 gw_net, gw_eid = route.gw
                 gw_route = self.lookup_route(gw_net, gw_eid)
                 if gw_route is None or gw_route.iface is None:
@@ -301,6 +316,7 @@ class System:
             for n in self.neighbours:
                 print(f"  {n}")
 
+
 class MCTPCommand:
     def __init__(self):
         self.send_channel, self.receive_channel = trio.open_memory_channel(0)
@@ -313,10 +329,11 @@ class MCTPCommand:
         async with self.receive_channel as chan:
             return await chan.receive()
 
+
 class MCTPControlCommand(MCTPCommand):
     MSGTYPE = 0
 
-    def __init__(self, rq, iid, cmd, data = bytes()):
+    def __init__(self, rq, iid, cmd, data=bytes()):
         super().__init__()
         self.rq = rq
         self.iid = iid
@@ -329,15 +346,16 @@ class MCTPControlCommand(MCTPCommand):
             flags = flags | 0x80
         return bytes([flags, self.cmd]) + self.data
 
+
 class Endpoint:
-    def __init__(self, iface, lladdr, ep_uuid = None, eid = 0, types = None):
+    def __init__(self, iface, lladdr, ep_uuid=None, eid=0, types=None):
         self.iface = iface
         self.lladdr = lladdr
         self.uuid = ep_uuid or uuid.uuid1()
         self.eid = eid
         self.types = types or [0]
         self.bridged_eps = []
-        self.allocated_pool = None # or (start, size)
+        self.allocated_pool = None  # or (start, size)
 
         # keyed by (type, type-specific-instance)
         self.commands = {}
@@ -366,7 +384,7 @@ class Endpoint:
     async def handle_mctp_control(self, sock, addr, data):
         flags, opcode = data[0:2]
         rq = flags & 0x80
-        iid = flags & 0x1f
+        iid = flags & 0x1F
 
         if not rq:
             cmd = self.commands.pop((0, iid), None)
@@ -375,7 +393,6 @@ class Endpoint:
             await cmd.complete(data)
 
         else:
-
             raddr = MCTPSockAddr.for_ep_resp(self, addr, sock.addr_ext)
             # Use IID from request, zero Rq and D bits
             hdr = [iid, opcode]
@@ -420,18 +437,26 @@ class Endpoint:
                 else:
                     self.allocated_pool = (pool_start, pool_size)
                     # Assign sequential EIDs starting from pool_start
-                    for (n, ep) in enumerate(self.bridged_eps[:pool_size]):
+                    for n, ep in enumerate(self.bridged_eps[:pool_size]):
                         ep.eid = self.allocated_pool[0] + n
 
-                data = bytes(hdr + [0x00, alloc_status,
-                                self.allocated_pool[1], self.allocated_pool[0]])
+                data = bytes(
+                    hdr
+                    + [
+                        0x00,
+                        alloc_status,
+                        self.allocated_pool[1],
+                        self.allocated_pool[0],
+                    ]
+                )
                 await sock.send(raddr, data)
 
             else:
-                await sock.send(raddr, bytes(hdr + [0x05])) # unsupported command
+                await sock.send(
+                    raddr, bytes(hdr + [0x05])
+                )  # unsupported command
 
     async def send_control(self, sock, cmd):
-
         typ = cmd.MSGTYPE
         # todo: tag 0 implied
         addr = MCTPSockAddr(self.iface.net, self.eid, typ, 0x80)
@@ -446,6 +471,7 @@ class Endpoint:
         await sock.send(addr, cmd.to_buf())
 
         return await cmd.wait()
+
 
 class Network:
     def __init__(self):
@@ -467,13 +493,12 @@ class Network:
         assert self.mctp_socket is None
         self.mctp_socket = socket
 
+
 # MCTP-capable pyroute2 objects
 class ifinfmsg_mctp(rtnl.ifinfmsg.ifinfmsg):
     class af_spec(netlink.nla):
         prefix = 'IFLA_'
-        nla_map = (
-            (AF_MCTP, 'AF_MCTP', 'af_spec_mctp'),
-        )
+        nla_map = ((AF_MCTP, 'AF_MCTP', 'af_spec_mctp'),)
 
         class af_spec_mctp(netlink.nla):
             prefix = 'IFLA_MCTP_'
@@ -485,6 +510,7 @@ class ifinfmsg_mctp(rtnl.ifinfmsg.ifinfmsg):
 
     class l2addr(netlink.nla_base):
         fields = [('value', 's')]
+
 
 class ifaddrmsg_mctp(rtnl.ifaddrmsg.ifaddrmsg):
     nla_map = (
@@ -498,6 +524,7 @@ class ifaddrmsg_mctp(rtnl.ifaddrmsg.ifaddrmsg):
         ('IFA_MULTICAST', 'uint8'),
         ('IFA_FLAGS', 'uint32'),
     )
+
 
 class ndmsg_mctp(rtnl.ndmsg.ndmsg):
     nla_map = (
@@ -515,6 +542,7 @@ class ndmsg_mctp(rtnl.ndmsg.ndmsg):
 
     class lladdr(netlink.nla_base):
         fields = [('value', 'c')]
+
 
 class rtmsg_mctp(rtnl.rtmsg.rtmsg):
     nla_map = (
@@ -547,6 +575,7 @@ class rtmsg_mctp(rtnl.rtmsg.rtmsg):
     class gateway(netlink.nla_base):
         fields = [('net', 'I'), ('eid', 'B'), ('__pad', '3x')]
 
+
 class BaseSocket:
     msg_fmt = "@I"
 
@@ -575,25 +604,25 @@ class BaseSocket:
             # send op
             addr = data[:MAX_SOCKADDR_SIZE]
             addrlen = int.from_bytes(
-                    data[MAX_SOCKADDR_SIZE:MAX_SOCKADDR_SIZE+4],
-                    byteorder = sys.byteorder
-                )
-            data = data[MAX_SOCKADDR_SIZE+4:]
+                data[MAX_SOCKADDR_SIZE : MAX_SOCKADDR_SIZE + 4],
+                byteorder=sys.byteorder,
+            )
+            data = data[MAX_SOCKADDR_SIZE + 4 :]
             addr = addr[:addrlen]
             await self.handle_send(addr, data)
         elif typ == 2:
             # setsockopt op
             level, optname, optval = data[0:4], data[4:8], data[20:]
-            level = int.from_bytes(level, byteorder = sys.byteorder)
-            optname = int.from_bytes(optname, byteorder = sys.byteorder)
+            level = int.from_bytes(level, byteorder=sys.byteorder)
+            optname = int.from_bytes(optname, byteorder=sys.byteorder)
             await self.handle_setsockopt(level, optname, optval)
         elif typ == 3:
             # bind
             addr = data[:MAX_SOCKADDR_SIZE]
             addrlen = int.from_bytes(
-                    data[MAX_SOCKADDR_SIZE:MAX_SOCKADDR_SIZE+4],
-                    byteorder = sys.byteorder
-                )
+                data[MAX_SOCKADDR_SIZE : MAX_SOCKADDR_SIZE + 4],
+                byteorder=sys.byteorder,
+            )
             addr = addr[:addrlen]
             await self.handle_bind(addr)
 
@@ -610,9 +639,10 @@ class BaseSocket:
     async def handle_bind(self, addr):
         pass
 
+
 class MCTPSockAddr:
     base_addr_fmt = "@HHiBBBB"
-    ext_addr_fmt = "@iB3c" # just the header here, we append the lladdr data
+    ext_addr_fmt = "@iB3c"  # just the header here, we append the lladdr data
 
     @classmethod
     def parse(cls, data, ext):
@@ -626,9 +656,9 @@ class MCTPSockAddr:
         a = cls(net, eid, type, tag)
 
         if ext and addrlen >= extlen + baselen:
-            ext = data[baselen:baselen + extlen]
+            ext = data[baselen : baselen + extlen]
             parts = struct.unpack(cls.ext_addr_fmt, ext)
-            lladdr = data[baselen + extlen: baselen + extlen + parts[1]]
+            lladdr = data[baselen + extlen : baselen + extlen + parts[1]]
             a.set_ext(parts[0], lladdr)
 
         return a
@@ -652,16 +682,28 @@ class MCTPSockAddr:
         self.ifindex = ifindex
         self.lladdr = lladdr
 
-
     def to_buf(self):
-        data = struct.pack(self.base_addr_fmt,
-                AF_MCTP, 0, self.net, self.eid, self.type, self.tag, 0)
+        data = struct.pack(
+            self.base_addr_fmt,
+            AF_MCTP,
+            0,
+            self.net,
+            self.eid,
+            self.type,
+            self.tag,
+            0,
+        )
         if self.is_ext:
             # pad to MAX_ADDR_LEN
             lladdr_data = self.lladdr + bytes([0] * (32 - len(self.lladdr)))
-            data += struct.pack(self.ext_addr_fmt,
-                        self.ifindex, len(self.lladdr),
-                        b'\0', b'\0', b'\0')
+            data += struct.pack(
+                self.ext_addr_fmt,
+                self.ifindex,
+                len(self.lladdr),
+                b'\0',
+                b'\0',
+                b'\0',
+            )
             data += lladdr_data
         return data
 
@@ -696,7 +738,7 @@ class MCTPSocket(BaseSocket):
 
     async def handle_setsockopt(self, level, optname, optval):
         if level == 285 and optname == 1:
-            val = int.from_bytes(optval, byteorder = sys.byteorder)
+            val = int.from_bytes(optval, byteorder=sys.byteorder)
             self.addr_ext = bool(val)
 
     async def handle_bind(self, addr):
@@ -709,6 +751,7 @@ class MCTPSocket(BaseSocket):
         addrbuf += b'\0' * (MAX_SOCKADDR_SIZE - addrlen)
         buf = struct.pack("@I", 0) + addrbuf + struct.pack("@I", addrlen) + data
         await self.sock.send(buf)
+
 
 class NLSocket(BaseSocket):
     addr_fmt = "@HHII"
@@ -750,7 +793,7 @@ class NLSocket(BaseSocket):
         await self._send_msg(resp.data)
 
     async def handle_send(self, addr, data):
-        addr = addr[:struct.calcsize(self.addr_fmt)]
+        addr = addr[: struct.calcsize(self.addr_fmt)]
         addr = struct.unpack(self.addr_fmt, addr)
         msg = netlink.nlmsg(data)
         msg.decode()
@@ -795,33 +838,39 @@ class NLSocket(BaseSocket):
         await self.send(addr, buf)
 
     def _format_link(self, msg, iface):
-            msg['index'] = iface.ifindex
-            msg['family'] = 0
-            msg['type'] = ARPHRD_MCTP
-            msg['flags'] = (
-                rtnl.ifinfmsg.IFF_RUNNING |
-                (rtnl.ifinfmsg.IFF_UP | rtnl.ifinfmsg.IFF_LOWER_UP
-                    if iface.up else 0)
-            )
+        msg['index'] = iface.ifindex
+        msg['family'] = 0
+        msg['type'] = ARPHRD_MCTP
+        msg['flags'] = rtnl.ifinfmsg.IFF_RUNNING | (
+            rtnl.ifinfmsg.IFF_UP | rtnl.ifinfmsg.IFF_LOWER_UP if iface.up else 0
+        )
 
-            msg['attrs'] = [
-                ['IFLA_IFNAME', iface.name],
-                ['IFLA_ADDRESS', iface.lladdr],
-                ['IFLA_MTU', iface.mtu],
-                ['IFLA_MIN_MTU', iface.min_mtu],
-                ['IFLA_MAX_MTU', iface.max_mtu],
-                ['IFLA_AF_SPEC', {
-                    'attrs': [['AF_MCTP', {
-                        'attrs': [
-                            ['IFLA_MCTP_NET', iface.net],
-                            [
-                                'IFLA_MCTP_PHYS_BINDING',
-                                iface.phys_binding.value,
-                            ],
-                        ],
-                    }]],
-                }],
-            ]
+        msg['attrs'] = [
+            ['IFLA_IFNAME', iface.name],
+            ['IFLA_ADDRESS', iface.lladdr],
+            ['IFLA_MTU', iface.mtu],
+            ['IFLA_MIN_MTU', iface.min_mtu],
+            ['IFLA_MAX_MTU', iface.max_mtu],
+            [
+                'IFLA_AF_SPEC',
+                {
+                    'attrs': [
+                        [
+                            'AF_MCTP',
+                            {
+                                'attrs': [
+                                    ['IFLA_MCTP_NET', iface.net],
+                                    [
+                                        'IFLA_MCTP_PHYS_BINDING',
+                                        iface.phys_binding.value,
+                                    ],
+                                ],
+                            },
+                        ]
+                    ],
+                },
+            ],
+        ]
 
     async def _handle_getlink(self, msg):
         dump = bool(msg['header']['flags'] & netlink.NLM_F_DUMP)
@@ -835,7 +884,9 @@ class NLSocket(BaseSocket):
             ifaces = self.system.interfaces
 
         for iface in ifaces:
-            resp = self._create_resp(ifinfmsg_mctp, msg, rtnl.RTM_NEWLINK, flags)
+            resp = self._create_resp(
+                ifinfmsg_mctp, msg, rtnl.RTM_NEWLINK, flags
+            )
             self._format_link(resp, iface)
             resp.encode()
             buf.extend(resp.data)
@@ -878,8 +929,9 @@ class NLSocket(BaseSocket):
             addrs = self.system.addresses
 
         for addr in addrs:
-            resp = self._create_resp(ifaddrmsg_mctp, msg,
-                    rtnl.RTM_NEWADDR, flags)
+            resp = self._create_resp(
+                ifaddrmsg_mctp, msg, rtnl.RTM_NEWADDR, flags
+            )
             self._format_addr(resp, addr)
             resp.encode()
             buf.extend(resp.data)
@@ -1031,17 +1083,25 @@ class NLSocket(BaseSocket):
         msg['src_len'] = 0
         msg['attrs'] = [
             ['RTA_DST', route.start_eid],
-            ['RTA_METRICS', {
-                'attrs': [['RTAX_MTU', route.mtu]],
-            }],
+            [
+                'RTA_METRICS',
+                {
+                    'attrs': [['RTAX_MTU', route.mtu]],
+                },
+            ],
         ]
         if route.iface:
             msg['attrs'].append(['RTA_OIF', route.iface.ifindex])
         elif route.gw:
-            msg['attrs'].append(['RTA_GATEWAY', {
-                "net": route.gw[0],
-                "eid": route.gw[1],
-                }])
+            msg['attrs'].append(
+                [
+                    'RTA_GATEWAY',
+                    {
+                        "net": route.gw[0],
+                        "eid": route.gw[1],
+                    },
+                ]
+            )
 
     def _parse_route(self, msg):
         msg = rtmsg_mctp(msg.data)
@@ -1060,7 +1120,7 @@ class NLSocket(BaseSocket):
             gw = (gw['net'], gw['eid'])
             iface = None
 
-        return System.Route(start_eid, extent_eid, iface = iface, gw = gw)
+        return System.Route(start_eid, extent_eid, iface=iface, gw=gw)
 
     async def _handle_getroute(self, msg):
         dump = bool(msg['header']['flags'] & netlink.NLM_F_DUMP)
@@ -1144,8 +1204,9 @@ class TimerSocket(BaseSocket):
 
                 # timed out
                 if scope.cancelled_caught:
-                    data = struct.pack('@Q',
-                            math.floor(trio.current_time() * 1000000))
+                    data = struct.pack(
+                        '@Q', math.floor(trio.current_time() * 1000000)
+                    )
                     await self.sock.send(data)
                     self.delay = sys.maxsize
             except (ConnectionResetError, BrokenPipeError):
@@ -1154,10 +1215,13 @@ class TimerSocket(BaseSocket):
 
 async def send_fd(sock, fd):
     fdarray = array.array("i", [fd])
-    await sock.sendmsg([b'x'], [
+    await sock.sendmsg(
+        [b'x'],
+        [
             (socket.SOL_SOCKET, socket.SCM_RIGHTS, fdarray),
-        ]
+        ],
     )
+
 
 class MctpProcessWrapper:
     def __init__(self, sysnet):
@@ -1167,9 +1231,8 @@ class MctpProcessWrapper:
 
     def socketpair(self):
         return trio.socket.socketpair(
-                trio.socket.AF_UNIX,
-                trio.socket.SOCK_SEQPACKET
-            )
+            trio.socket.AF_UNIX, trio.socket.SOCK_SEQPACKET
+        )
 
     async def handle_control(self, nursery):
         while True:
@@ -1207,6 +1270,7 @@ class MctpProcessWrapper:
             else:
                 print(f"unknown op {op}")
 
+
 class MctpdWrapper(MctpProcessWrapper):
     def __init__(self, bus, sysnet, binary=None, config=None):
         super().__init__(sysnet)
@@ -1229,8 +1293,9 @@ class MctpdWrapper(MctpProcessWrapper):
     async def wait_mctpd(self):
         return await self.proc_rc_recv_chan.receive()
 
-    async def mctpd_proc(self, nursery, send_chan,
-            task_status = trio.TASK_STATUS_IGNORED):
+    async def mctpd_proc(
+        self, nursery, send_chan, task_status=trio.TASK_STATUS_IGNORED
+    ):
         # We want to start the mctpd process, but not return before it's
         # ready to interact with our test via dbus.
         #
@@ -1238,12 +1303,12 @@ class MctpdWrapper(MctpProcessWrapper):
         # the Name Owner Changed signal that indicates that it has registered
         # itself.
         busobj = await self.bus.get_proxy_object(
-                'org.freedesktop.DBus',
-                '/org/freedesktop/DBus'
-            )
+            'org.freedesktop.DBus', '/org/freedesktop/DBus'
+        )
         interface = await busobj.get_interface('org.freedesktop.DBus')
 
-        s = trio.Semaphore(initial_value = 0)
+        s = trio.Semaphore(initial_value=0)
+
         def name_owner_changed(name, new_owner, old_owner):
             if name == 'au.com.codeconstruct.MCTP1':
                 s.release()
@@ -1264,10 +1329,10 @@ class MctpdWrapper(MctpProcessWrapper):
             command = [self.binary, '-v']
 
         proc = await trio.lowlevel.open_process(
-                command = command,
-                pass_fds = (1, 2, self.sock_remote.fileno()),
-                env = env,
-            )
+            command=command,
+            pass_fds=(1, 2, self.sock_remote.fileno()),
+            env=env,
+        )
         self.sock_remote.close()
 
         # wait for name to appear, cancel NameOwnerChanged listener
@@ -1286,6 +1351,7 @@ class MctpdWrapper(MctpProcessWrapper):
 
         await send_chan.send(proc_rc)
 
+
 class MctpWrapper(MctpProcessWrapper):
     def __init__(self, nursery, sysnet):
         super().__init__(sysnet)
@@ -1301,13 +1367,13 @@ class MctpWrapper(MctpProcessWrapper):
         self.nursery.start_soon(self.handle_control, self.nursery)
 
         proc = await trio.run_process(
-                command = command,
-                pass_fds = (1, 2, self.sock_remote.fileno()),
-                env = env,
-                capture_stdout = True,
-                capture_stderr = True,
-                check = False,
-            )
+            command=command,
+            pass_fds=(1, 2, self.sock_remote.fileno()),
+            env=env,
+            capture_stdout=True,
+            capture_stderr=True,
+            check=False,
+        )
         self.sock_remote.close()
 
         # everything is text
@@ -1319,6 +1385,7 @@ class MctpWrapper(MctpProcessWrapper):
 
 Sysnet = namedtuple('SysNet', ['system', 'network'])
 
+
 async def default_sysnet():
     system = System()
     iface = System.Interface('mctp0', 1, 1, bytes([0x10]), 68, 254, True)
@@ -1326,17 +1393,20 @@ async def default_sysnet():
     await system.add_address(System.Address(iface, 8))
 
     network = Network()
-    network.add_endpoint(Endpoint(iface, bytes([0x1d]), types = [0, 1]))
+    network.add_endpoint(Endpoint(iface, bytes([0x1D]), types=[0, 1]))
 
     return Sysnet(system, network)
+
 
 async def sighandler():
     with trio.open_signal_receiver(signal.SIGINT) as sigs:
         async for sig in sigs:
             return
 
+
 async def main():
     import asyncdbus
+
     binary = None
     if len(sys.argv) > 1:
         binary = sys.argv[1]
@@ -1347,6 +1417,7 @@ async def main():
             nursery.start_soon(sighandler)
             await mctpd.start_mctpd(nursery)
             await mctpd.wait_mctpd()
+
 
 if __name__ == '__main__':
     trio.run(main)
