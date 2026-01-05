@@ -557,7 +557,7 @@ class BaseSocket:
         while True:
             try:
                 data = await self.sock.recv(1024)
-            except ConnectionResetError as ex:
+            except ConnectionResetError:
                 break
 
             if len(data) == 0:
@@ -565,7 +565,7 @@ class BaseSocket:
 
             try:
                 await self.recv_msg(data)
-            except BrokenPipeError as ex:
+            except BrokenPipeError:
                 break
 
     async def recv_msg(self, data):
@@ -1051,8 +1051,7 @@ class NLSocket(BaseSocket):
         gw = msg.get_attr('RTA_GATEWAY')
         start_eid = msg.get_attr('RTA_DST')
         extent_eid = msg['dst_len']
-        # todo: RTAX metrics
-        mtu = 0
+        # todo: RTAX metrics: MTU
 
         if ifindex:
             iface = self.system.find_interface_by_ifindex(ifindex)
@@ -1149,7 +1148,7 @@ class TimerSocket(BaseSocket):
                             math.floor(trio.current_time() * 1000000))
                     await self.sock.send(data)
                     self.delay = sys.maxsize
-            except (ConnectionResetError, BrokenPipeError) as ex:
+            except (ConnectionResetError, BrokenPipeError):
                 break
 
 

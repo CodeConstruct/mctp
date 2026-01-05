@@ -227,7 +227,6 @@ async def test_recover_endpoint_removed(dbus, mctpd, autojump_clock):
 async def test_recover_endpoint_reset(dbus, mctpd, autojump_clock):
     iface = mctpd.system.interfaces[0]
     dev = mctpd.network.endpoints[0]
-    mctp = await dbus.get_proxy_object(MCTPD_C, MCTPD_MCTP_P)
     mctp_iface = await mctpd_mctp_iface_obj(dbus, iface)
     (eid, net, path, new) = await mctp_iface.call_setup_endpoint(dev.lladdr)
 
@@ -407,8 +406,6 @@ async def test_assign_endpoint_static_varies(dbus, mctpd):
 for a basic Get Endpoint ID command"""
 async def test_get_endpoint_id(dbus, mctpd, routed_ep):
     ep = routed_ep
-    iface = mctpd.system.interfaces[0]
-    mctp = await mctpd_mctp_iface_obj(dbus, iface)
 
     cmd = MCTPControlCommand(True, 0, 0x02)
     rsp = await ep.send_control(mctpd.network.mctp_socket, cmd)
@@ -448,7 +445,7 @@ async def test_learn_endpoint_invalid_response_command(dbus, mctpd):
     mctp = await mctpd_mctp_iface_obj(dbus, iface)
 
     with pytest.raises(asyncdbus.errors.DBusError) as ex:
-        rc = await mctp.call_learn_endpoint(ep.lladdr)
+        await mctp.call_learn_endpoint(ep.lladdr)
 
     assert str(ex.value) == "Request failed"
 
@@ -479,7 +476,7 @@ async def test_setup_endpoint_invalid_set_eid_response(dbus, mctpd):
     mctp = await mctpd_mctp_iface_obj(dbus, iface)
 
     with pytest.raises(asyncdbus.errors.DBusError) as ex:
-        rc = await mctp.call_setup_endpoint(ep.lladdr)
+        await mctp.call_setup_endpoint(ep.lladdr)
 
     assert str(ex.value) == "Endpoint returned failure to Set Endpoint ID"
 
@@ -710,7 +707,7 @@ async def test_network_learn_endpoint_absent(dbus, mctpd):
 
     net = await mctpd_mctp_network_obj(dbus, iface.net)
 
-    with pytest.raises(asyncdbus.errors.DBusError) as ex:
+    with pytest.raises(asyncdbus.errors.DBusError):
         await net.call_learn_endpoint(10)
 
 """ Change a network id, while we have an active endpoint on that net """
