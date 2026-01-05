@@ -50,6 +50,10 @@ If the message type is already registered, then dbus call will fail.
  - `<versions>` Versions supported for this message type formatted as uint32
    integers as specified in DSP0236
 
+The `msg_type` value must be a valid message type, and cannot be one of the
+VDM types (0x7e or 0x7f). Those VDM types are handled by the
+`RegisterVDMTypeSupport` method instead.
+
 De-registration is automatic - the specified types (and versions) are registered
 for as long as the dbus sender remains attached to the message bus, and are
 unregistered on disconnect.
@@ -71,6 +75,9 @@ If the VDM type is already registered, then dbus call will fail.
    - For PCIe format: 16-bit unsigned integer (`q`)
    - For IANA format: 32-bit unsigned integer (`u`)
  - `<command set type>` Command set type (16-bit unsigned integer) as defined by the vendor
+
+Registering a VDM type will cause the corresponding VDM type value (0x7e or
+0x7f) to be returned in mctpd's Get Message Type Support response.
 
 De-registration is automatic - the specified VDM types are registered for as
 long as the dbus sender remains attached to the message bus, and are

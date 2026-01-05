@@ -17,6 +17,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 1. Fixed `mctp-bench` compile on musl libc
 
+### Changed
+
+1. `mctpd`'s `RegisterTypeSupport` dbus method will no longer allow the
+   VDM messaging types (0x7e and 0x7f) to be registered, as these do not
+   make sense without a corresponding VDM type registration.
+
+   Registering a VDM type will automatically include the corresponding VDM type
+   in the Get Message Type Support response.
+
 ### Added
 
 1. `mctpd` now implements the Get Vendor Define Message Support control protocol

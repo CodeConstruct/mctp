@@ -1269,6 +1269,14 @@ async def test_get_message_types(dbus, mctpd, routed_ep):
     mctp = await mctpd_mctp_base_iface_obj(dbus)
     await mctp.call_register_type_support(5, [0xF1F2F3F4])
 
+    # Verify invalid msg type causes error
+    with pytest.raises(asyncdbus.errors.DBusError) as ex:
+        await mctp.call_register_type_support(0x0, [0xF1F2F3F4])
+    assert str(ex.value) == "Invalid message type 0"
+    with pytest.raises(asyncdbus.errors.DBusError) as ex:
+        await mctp.call_register_type_support(0x7e, [0xF1F2F3F4])
+    assert str(ex.value) == "Invalid message type 126"
+
     # Verify get message type response includes spdm
     cmd = MCTPControlCommand(True, 0, 0x05, bytes([0x00]))
     rsp = await ep.send_control(mctpd.network.mctp_socket, cmd)
@@ -1297,6 +1305,11 @@ async def test_register_vdm_type_support_pcie_only(dbus, mctpd, routed_ep):
     v_type = asyncdbus.Variant('q', 0xABCD)
     await mctp.call_register_vdm_type_support(0x00, v_type, 0x0001)
 
+    # Verify Get Message Type Support response includes PCI VDM type
+    cmd = MCTPControlCommand(True, 0, 0x05, bytes([0x00]))
+    rsp = await ep.send_control(mctpd.network.mctp_socket, cmd)
+    assert rsp.hex(' ') == '00 05 00 02 00 7e'
+
     # Verify PCIe VDM (selector 0)
     cmd = MCTPControlCommand(True, 0, 0x06, bytes([0x00]))
     rsp = await ep.send_control(mctpd.network.mctp_socket, cmd)
@@ -1316,10 +1329,45 @@ async def test_register_vdm_type_support_iana_only(dbus, mctpd, routed_ep):
     v_type = asyncdbus.Variant('u', 0x1234ABCD)
     await mctp.call_register_vdm_type_support(0x01, v_type, 0x5678)
 
+    # Verify Get Message Type Support response includes IANA VDM type
+    cmd = MCTPControlCommand(True, 0, 0x05, bytes([0x00]))
+    rsp = await ep.send_control(mctpd.network.mctp_socket, cmd)
+    assert rsp.hex(' ') == '00 05 00 02 00 7f'
+
     # Verify IANA VDM (selector 0)
     cmd = MCTPControlCommand(True, 0, 0x06, bytes([0x00]))
     rsp = await ep.send_control(mctpd.network.mctp_socket, cmd)
     assert rsp.hex(' ') == '00 06 00 ff 01 12 34 ab cd 56 78'
+
+""" Test RegisterVDMTypeSupport when both IANA and PCI types are registered """
+async def test_register_vdm_type_support_both(dbus, mctpd, routed_ep):
+    ep = routed_ep
+    mctp = await mctpd_mctp_base_iface_obj(dbus)
+
+    # Register IANA VDM: format=0x01, VID=0x1234ABCD, command_set=0x5678
+    v_type = asyncdbus.Variant('u', 0x1234ABCD)
+    await mctp.call_register_vdm_type_support(0x01, v_type, 0x5678)
+
+    # Register PCI VDM: format=0x00, VID=0xABCD, command_set=0x5678
+    v_type = asyncdbus.Variant('q', 0xABCD)
+    await mctp.call_register_vdm_type_support(0x00, v_type, 0x5678)
+
+    # Verify Get Message Type Support response includes both VDM types
+    cmd = MCTPControlCommand(True, 0, 0x05, bytes([0x00]))
+    rsp = await ep.send_control(mctpd.network.mctp_socket, cmd)
+    assert rsp.hex(' ') == '00 05 00 03 00 7e 7f'
+
+    # we assume ordering of IANA vs PCI here, but current mctpd will
+    # preserve that.
+    # Verify IANA VDM (selector 0)
+    cmd = MCTPControlCommand(True, 0, 0x06, bytes([0x00]))
+    rsp = await ep.send_control(mctpd.network.mctp_socket, cmd)
+    assert rsp.hex(' ') == '00 06 00 01 01 12 34 ab cd 56 78'
+
+    # Verify PCI VDM (selector 1)
+    cmd = MCTPControlCommand(True, 0, 0x06, bytes([0x01]))
+    rsp = await ep.send_control(mctpd.network.mctp_socket, cmd)
+    assert rsp.hex(' ') == '00 06 00 ff 00 ab cd 56 78'
 
 """ Test RegisterVDMTypeSupport with dbus disconnect """
 async def test_register_vdm_type_support_dbus_disconnect(mctpd, routed_ep):
@@ -1333,14 +1381,24 @@ async def test_register_vdm_type_support_dbus_disconnect(mctpd, routed_ep):
     async with asyncdbus.MessageBus().connect() as temp_bus:
         mctp = await mctpd_mctp_base_iface_obj(temp_bus)
 
-        # Register PCIe VDM: format=0x00, VID=0xABCD, command_set=0x0001
+        # Register PCIe VDM: format=0x00, VID=0xABCD, command_set=1 and 2
         v_type = asyncdbus.Variant('q', 0xABCD)
         await mctp.call_register_vdm_type_support(0x00, v_type, 0x0001)
+        await mctp.call_register_vdm_type_support(0x00, v_type, 0x0002)
 
         # Verify PCIe VDM (selector 0)
         cmd = MCTPControlCommand(True, 0, 0x06, bytes([0x00]))
         rsp = await ep.send_control(mctpd.network.mctp_socket, cmd)
-        assert rsp.hex(' ') == '00 06 00 ff 00 ab cd 00 01'
+        assert rsp.hex(' ') == '00 06 00 01 00 ab cd 00 01'
+        # Verify PCIe VDM (selector 1)
+        cmd = MCTPControlCommand(True, 0, 0x06, bytes([0x01]))
+        rsp = await ep.send_control(mctpd.network.mctp_socket, cmd)
+        assert rsp.hex(' ') == '00 06 00 ff 00 ab cd 00 02'
+
+        # Verify GetMsgType includes VDM
+        cmd = MCTPControlCommand(True, 0, 0x05)
+        rsp = await ep.send_control(mctpd.network.mctp_socket, cmd)
+        assert rsp.hex(' ') == '00 05 00 02 00 7e'
 
     # Give mctpd a moment to process the disconnection
     await trio.sleep(0.1)
@@ -1349,6 +1407,11 @@ async def test_register_vdm_type_support_dbus_disconnect(mctpd, routed_ep):
     cmd = MCTPControlCommand(True, 0, 0x06, bytes([0x00]))
     rsp = await ep.send_control(mctpd.network.mctp_socket, cmd)
     assert rsp.hex(' ') == '00 06 02'  # Should be error again
+
+    # Verify GetMsgType has only control command
+    cmd = MCTPControlCommand(True, 0, 0x05)
+    rsp = await ep.send_control(mctpd.network.mctp_socket, cmd)
+    assert rsp.hex(' ') == '00 05 00 01 00'
 
 """ Test RegisterVDMTypeSupport error handling """
 async def test_register_vdm_type_support_errors(dbus, mctpd):
