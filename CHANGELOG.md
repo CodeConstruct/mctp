@@ -11,6 +11,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 1. `mctpd` will now retry endpoint query commands (Get Message Type Support and
    Get Endpoint UUID) on initial endpoint enumeration.
 
+2. `mctpd` can now poll for the presence of bridged endpoints once a bridge has
+   been discovered and enumerated. Polling is implemented using a Get Endpoint
+   ID command, at an interval configurable through the `endpoint_poll_ms`
+   configuration parameter within the bus-owner section. A value of `0` (the
+   default) will disable polling.
+
+   Once a bridged endpoint has been discovered, the endpoint will be enumerated,
+   published on dbus, and polling will cease.
+
 ## [2.4] - 2025-10-28
 
 ### Fixed
