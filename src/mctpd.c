@@ -136,7 +136,6 @@ enum discovery_state {
 };
 
 struct link {
-	enum discovery_state discovered;
 	bool published;
 	int ifindex;
 	enum endpoint_role role;
@@ -144,6 +143,14 @@ struct link {
 	char *path;
 	sd_bus_slot *slot_iface;
 	sd_bus_slot *slot_busowner;
+
+	struct {
+		enum discovery_state flag;
+		sd_event_source *notify_source;
+		dest_phys notify_dest;
+		uint64_t notify_retry_delay;
+		uint8_t notify_tries_left;
+	} discovery;
 
 	struct ctx *ctx;
 };
@@ -842,8 +849,8 @@ static int handle_control_set_endpoint_id(struct ctx *ctx, int sd,
 			warnx("ERR: cannot add bus owner to object lists");
 		}
 
-		if (link_data->discovered != DISCOVERY_UNSUPPORTED) {
-			link_data->discovered = DISCOVERY_DISCOVERED;
+		if (link_data->discovery.flag != DISCOVERY_UNSUPPORTED) {
+			link_data->discovery.flag = DISCOVERY_DISCOVERED;
 		}
 		resp->status =
 			SET_MCTP_EID_ASSIGNMENT_STATUS(MCTP_SET_EID_ACCEPTED) |
@@ -854,13 +861,13 @@ static int handle_control_set_endpoint_id(struct ctx *ctx, int sd,
 		return reply_message(ctx, sd, resp, resp_len, addr);
 
 	case MCTP_SET_EID_DISCOVERED:
-		if (link_data->discovered == DISCOVERY_UNSUPPORTED) {
+		if (link_data->discovery.flag == DISCOVERY_UNSUPPORTED) {
 			resp->completion_code = MCTP_CTRL_CC_ERROR_INVALID_DATA;
 			resp_len = sizeof(struct mctp_ctrl_resp);
 			return reply_message(ctx, sd, resp, resp_len, addr);
 		}
 
-		link_data->discovered = DISCOVERY_DISCOVERED;
+		link_data->discovery.flag = DISCOVERY_DISCOVERED;
 		resp->status =
 			SET_MCTP_EID_ASSIGNMENT_STATUS(MCTP_SET_EID_REJECTED) |
 			SET_MCTP_EID_ALLOCATION_STATUS(MCTP_SET_EID_POOL_NONE);
@@ -1183,7 +1190,7 @@ static int handle_control_prepare_endpoint_discovery(
 	resp = (void *)resp;
 	mctp_ctrl_msg_hdr_init_resp(&resp->ctrl_hdr, *req);
 
-	if (link_data->discovered == DISCOVERY_UNSUPPORTED) {
+	if (link_data->discovery.flag == DISCOVERY_UNSUPPORTED) {
 		warnx("received prepare for discovery request to unsupported interface %d",
 		      addr->smctp_ifindex);
 		resp->completion_code = MCTP_CTRL_CC_ERROR_UNSUPPORTED_CMD;
@@ -1191,8 +1198,8 @@ static int handle_control_prepare_endpoint_discovery(
 					  sizeof(struct mctp_ctrl_resp), addr);
 	}
 
-	if (link_data->discovered == DISCOVERY_DISCOVERED) {
-		link_data->discovered = DISCOVERY_UNDISCOVERED;
+	if (link_data->discovery.flag == DISCOVERY_DISCOVERED) {
+		link_data->discovery.flag = DISCOVERY_UNDISCOVERED;
 		warnx("clear discovered flag of interface %d",
 		      addr->smctp_ifindex);
 	}
@@ -1227,13 +1234,13 @@ handle_control_endpoint_discovery(struct ctx *ctx, int sd,
 		return 0;
 	}
 
-	if (link_data->discovered == DISCOVERY_UNSUPPORTED) {
+	if (link_data->discovery.flag == DISCOVERY_UNSUPPORTED) {
 		resp->completion_code = MCTP_CTRL_CC_ERROR_INVALID_DATA;
 		return reply_message(ctx, sd, resp,
 				     sizeof(struct mctp_ctrl_resp), addr);
 	}
 
-	if (link_data->discovered == DISCOVERY_DISCOVERED) {
+	if (link_data->discovery.flag == DISCOVERY_DISCOVERED) {
 		// if we are already discovered (i.e, assigned an EID), then no reply
 		return 0;
 	}
@@ -4023,6 +4030,88 @@ static int bus_link_get_prop(sd_bus *bus, const char *path,
 	return rc;
 }
 
+static int query_discovery_notify(struct link *link)
+{
+	struct mctp_ctrl_cmd_discovery_notify req = { 0 };
+	struct mctp_ctrl_resp_discovery_notify *resp;
+	struct sockaddr_mctp_ext resp_addr;
+	size_t buf_size;
+	uint8_t *buf;
+	int rc;
+
+	mctp_ctrl_msg_hdr_init_req(&req.ctrl_hdr, mctp_next_iid(link->ctx),
+				   MCTP_CTRL_CMD_DISCOVERY_NOTIFY);
+
+	rc = endpoint_query_phys(link->ctx, &link->discovery.notify_dest,
+				 MCTP_CTRL_HDR_MSG_TYPE, &req, sizeof(req),
+				 &buf, &buf_size, &resp_addr);
+	if (rc < 0)
+		goto free_buf;
+
+	if (buf_size != sizeof(*resp)) {
+		warnx("%s: wrong reply length %zu bytes. dest %s", __func__,
+		      buf_size, dest_phys_tostr(&link->discovery.notify_dest));
+		rc = -ENOMSG;
+		goto free_buf;
+	}
+
+	resp = (void *)buf;
+	if (resp->completion_code != 0) {
+		warnx("Failure completion code 0x%02x from %s",
+		      resp->completion_code,
+		      dest_phys_tostr(&link->discovery.notify_dest));
+		rc = -ECONNREFUSED;
+		goto free_buf;
+	}
+
+free_buf:
+	free(buf);
+	return rc;
+}
+
+static int link_discovery_notify_callback(sd_event_source *source,
+					  uint64_t time, void *userdata)
+{
+	struct link *link = userdata;
+	struct ctx *ctx = link->ctx;
+	int rc;
+
+	// sanity check
+	assert(link->discovery.notify_source == source);
+
+	// Discovery notify succeeded
+	if (link->discovery.flag == DISCOVERY_DISCOVERED)
+		goto disarm;
+
+	rc = query_discovery_notify(link);
+	if (rc < 0) {
+		if (ctx->verbose) {
+			warnx("failed to send discovery notify at retry %d: %s",
+			      link->discovery.notify_tries_left, strerror(-rc));
+		}
+	}
+
+	link->discovery.notify_tries_left -= 1;
+	if (link->discovery.notify_tries_left == 0) {
+		warnx("failed to send discovery notify after all retries");
+		goto disarm;
+	}
+
+	rc = mctp_ops.sd_event.source_set_time_relative(
+		source, link->discovery.notify_retry_delay);
+	if (rc < 0) {
+		warnx("failed to rearm discovery notify timer");
+		goto disarm;
+	}
+
+	return 0;
+
+disarm:
+	sd_event_source_disable_unref(source);
+	link->discovery.notify_source = NULL;
+	return 0;
+}
+
 static int bus_link_set_prop(sd_bus *bus, const char *path,
 			     const char *interface, const char *property,
 			     sd_bus_message *value, void *userdata,
@@ -4867,7 +4956,7 @@ static int add_interface(struct ctx *ctx, int ifindex)
 	if (!link)
 		return -ENOMEM;
 
-	link->discovered = DISCOVERY_UNSUPPORTED;
+	link->discovery.flag = DISCOVERY_UNSUPPORTED;
 	link->published = false;
 	link->ifindex = ifindex;
 	link->ctx = ctx;
@@ -4897,7 +4986,42 @@ static int add_interface(struct ctx *ctx, int ifindex)
 	}
 
 	if (phys_binding == MCTP_PHYS_BINDING_PCIE_VDM) {
-		link->discovered = DISCOVERY_UNDISCOVERED;
+		link->discovery.flag = DISCOVERY_UNDISCOVERED;
+		// TODO: These numbers are respectively MN1 and MT4, specified in DSP0239
+		// control message timing.
+		//
+		// Might need to extract these to macros like MCTP_I2C_TSYM_* in this file,
+		// or a commit to actually centralize those timing at one place, now that
+		// we have support for detecting link binding type.
+		link->discovery.notify_tries_left = 3;
+		link->discovery.notify_retry_delay = 5000000;
+
+		// For PCIe-VDM, we want an all zeroes address for Route-to-Root-Complex.
+		rc = mctp_nl_hwaddr_len_byindex(
+			ctx->nl, ifindex,
+			&link->discovery.notify_dest.hwaddr_len);
+		if (rc < 0) {
+			warnx("Can't find hwaddr_len by index %d", ifindex);
+			return -ENOENT;
+		}
+
+		memset(link->discovery.notify_dest.hwaddr, 0,
+		       link->discovery.notify_dest.hwaddr_len);
+		link->discovery.notify_dest.ifindex = ifindex;
+
+		rc = mctp_ops.sd_event.add_time_relative(
+			ctx->event, &link->discovery.notify_source,
+			CLOCK_MONOTONIC, 0, 0, link_discovery_notify_callback,
+			link);
+		if (rc >= 0) {
+			rc = sd_event_source_set_enabled(
+				link->discovery.notify_source, SD_EVENT_ON);
+		}
+		if (rc < 0) {
+			warnx("Failed to arm discovery notify timer");
+			sd_event_source_disable_unref(
+				link->discovery.notify_source);
+		}
 	}
 
 	link->published = true;
