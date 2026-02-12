@@ -11,6 +11,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 1. `mctpd` now queries endpoints for their vendor-defined message support,
    and publishes as the newly-specced `VendorDefinedMessageTypes` dbus property.
 
+### Fixes
+
+1. mctpd's interface objects now expose the BusOwner1 interface when set
+   as a BusOwner via the Role property
+
 ## [2.5] - 2026-02-17
 
 ### Added
