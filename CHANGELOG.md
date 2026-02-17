@@ -8,10 +8,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
-1. `mctpd` will now retry endpoint query commands (Get Message Type Support and
+1. `mctpd` now implements the Get Vendor Defined Message Support control
+   protocol command, and allows registration of vendor-defined message types via
+   dbus.
+
+2. `mctpd` will now retry endpoint query commands (Get Message Type Support and
    Get Endpoint UUID) on initial endpoint enumeration.
 
-2. `mctpd` can now poll for the presence of bridged endpoints once a bridge has
+3. `mctpd` can now poll for the presence of bridged endpoints once a bridge has
    been discovered and enumerated. Polling is implemented using a Get Endpoint
    ID command, at an interval configurable through the `endpoint_poll_ms`
    configuration parameter within the bus-owner section. A value of `0` (the
@@ -19,12 +23,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
    Once a bridged endpoint has been discovered, the endpoint will be enumerated,
    published on dbus, and polling will cease.
-
-## [2.4] - 2025-10-28
-
-### Fixed
-
-1. Fixed `mctp-bench` compile on musl libc
 
 ### Changed
 
@@ -35,11 +33,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
    Registering a VDM type will automatically include the corresponding VDM type
    in the Get Message Type Support response.
 
-### Added
+## [2.4] - 2025-10-28
 
-1. `mctpd` now implements the Get Vendor Define Message Support control protocol
-   command, and allows registration of vendor-defined message types via
-   dbus.
+### Fixed
+
+1. Fixed `mctp-bench` compile on musl libc
 
 ## [2.3] - 2025-10-22
 
