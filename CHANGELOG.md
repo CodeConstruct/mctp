@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [2.5] - 2026-02-17
+
 ### Added
 
 1. `mctpd` now implements the Get Vendor Defined Message Support control
