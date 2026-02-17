@@ -144,6 +144,7 @@ struct link {
 	char *path;
 	sd_bus_slot *slot_iface;
 	sd_bus_slot *slot_busowner;
+	sd_event_source *role_defer;
 
 	struct ctx *ctx;
 };
@@ -4023,6 +4024,27 @@ static int bus_link_get_prop(sd_bus *bus, const char *path,
 	return rc;
 }
 
+/* deferred handler for link changes, which may alter vtable state */
+static int link_set_role(sd_event_source *ev, void *userdata)
+{
+	struct link *link = userdata;
+	int rc;
+
+	sd_event_source_unref(link->role_defer);
+	link->role_defer = NULL;
+
+	if (link->role != ENDPOINT_ROLE_BUS_OWNER)
+		return 0;
+
+	rc = sd_bus_add_object_vtable(link->ctx->bus, &link->slot_busowner,
+				      link->path, CC_MCTP_DBUS_IFACE_BUSOWNER,
+				      bus_link_owner_vtable, link);
+	if (rc)
+		warnx("adding link owner vtable failed: %d", rc);
+
+	return 0;
+}
+
 static int bus_link_set_prop(sd_bus *bus, const char *path,
 			     const char *interface, const char *property,
 			     sd_bus_message *value, void *userdata,
@@ -4063,7 +4085,14 @@ static int bus_link_set_prop(sd_bus *bus, const char *path,
 		rc = -EINVAL;
 		goto out;
 	}
+
+	printf("Role for %s set to %s, via dbus\n", link->path, role.conf_val);
 	link->role = role.role;
+
+	/* We need to defer the link role change, as we cannot update the vtables
+	 * during the call.
+	 */
+	sd_event_add_defer(ctx->event, &link->role_defer, link_set_role, link);
 
 out:
 	set_berr(ctx, rc, berr);
@@ -4494,6 +4523,7 @@ static int prune_old_nets(struct ctx *ctx)
 
 static void free_link(struct link *link)
 {
+	sd_event_source_disable_unref(link->role_defer);
 	sd_bus_slot_unref(link->slot_iface);
 	sd_bus_slot_unref(link->slot_busowner);
 	free(link->path);
