@@ -568,13 +568,13 @@ static const char *path_from_peer(const struct peer *peer)
 	return peer->path;
 }
 
-static int get_role(const char *mode, struct role *role)
+static int get_role(const char *role_str, struct role *role)
 {
 	unsigned int i;
 
 	for (i = 0; i < ARRAY_SIZE(roles); i++) {
 		if (roles[i].dbus_val &&
-		    (strcmp(roles[i].dbus_val, mode) == 0)) {
+		    (strcmp(roles[i].dbus_val, role_str) == 0)) {
 			memcpy(role, &roles[i], sizeof(struct role));
 			return 0;
 		}
@@ -5090,7 +5090,7 @@ static int add_interface(struct ctx *ctx, int ifindex)
 	link->published = false;
 	link->ifindex = ifindex;
 	link->ctx = ctx;
-	/* Use the `mode` setting in conf/mctp.conf */
+	/* Use the `role` setting in conf/mctp.conf */
 	link->role = ctx->default_role;
 	rc = asprintf(&link->path, "%s/%s", MCTP_DBUS_PATH_LINKS, ifname);
 	if (rc < 0) {
@@ -5207,21 +5207,21 @@ static int parse_args(struct ctx *ctx, int argc, char **argv)
 	return 0;
 }
 
-static int parse_config_mode(const char *mode, enum endpoint_role *rolep)
+static int parse_config_role(const char *str, enum endpoint_role *rolep)
 {
 	unsigned int i;
 
 	for (i = 0; i < ARRAY_SIZE(roles); i++) {
 		const struct role *role = &roles[i];
 
-		if (!role->conf_val || strcmp(role->conf_val, mode))
+		if (!role->conf_val || strcmp(role->conf_val, str))
 			continue;
 
 		*rolep = role->role;
 		return 0;
 	}
 
-	warnx("invalid value '%s' for mode configuration", mode);
+	warnx("invalid value '%s' for role configuration", str);
 	return -1;
 }
 
@@ -5389,9 +5389,12 @@ static int parse_config(struct ctx *ctx)
 		goto out_close;
 	}
 
-	val = toml_string_in(conf_root, "mode");
+	val = toml_string_in(conf_root, "role");
+	if (!val.ok) {
+		val = toml_string_in(conf_root, "mode");
+	}
 	if (val.ok) {
-		rc = parse_config_mode(val.u.s, &ctx->default_role);
+		rc = parse_config_role(val.u.s, &ctx->default_role);
 		free(val.u.s);
 		if (rc)
 			goto out_free;

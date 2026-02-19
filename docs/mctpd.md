@@ -315,16 +315,19 @@ The configuration file has a global section, plus function-specific sections.
 
 These apply to all modes of `mctpd` operation. One top-level setting is defined:
 
-#### `mode`: mctpd mode of operation
+#### `role`: local MCTP device role
 
 * type: string enum: `bus-owner` or `endpoint`
 * default: `bus-owner`
 
-This sets the overall mode of `mctpd`, either as a Bus Owner (`mode =
-"bus-owner"`) or Endpoint (`mode = "endpoint"`). In bus owner mode, mctpd will
+This sets the overall role of `mctpd`, either as a Bus Owner (`role =
+"bus-owner"`) or Endpoint (`role = "endpoint"`). In bus owner mode, mctpd will
 assume responsibility for allocating addresses to other endpoints. In endpoint
 mode, mctpd will not allocate addresses, but instead accept allocations from an
 external bus owner.
+
+Previous versions of `mctpd` used `mode` for this configuration, both `role`
+and `mode` are accepted.
 
 ### `[mctp]` section
 

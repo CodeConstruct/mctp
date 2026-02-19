@@ -16,6 +16,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 1. mctpd's interface objects now expose the BusOwner1 interface when set
    as a BusOwner via the Role property
 
+### Changed
+
+1. `mctpd`'s `mode` configuration (setting bus owner vs. endpoint roles) is
+   now called `role`. Configuration parsing will still allow the `mode` setting,
+   but this will be deprecated in a later release.
+
 ## [2.5] - 2026-02-17
 
 ### Added
