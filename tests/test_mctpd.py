@@ -637,6 +637,118 @@ async def test_query_message_types(dbus, mctpd):
     assert ep_types == query_types
 
 
+async def test_query_vdm_types(dbus, mctpd):
+    """Test that VendorDefinedMessageTypes is queried and populated."""
+    iface = mctpd.system.interfaces[0]
+    vdm_support = [[0, 0x1234, 0x5678], [1, 0xABCDEF12, 0x3456]]
+    ep = Endpoint(iface, bytes([0x1E]), eid=15, vdm_msg_types=vdm_support)
+    mctpd.network.add_endpoint(ep)
+
+    mctp = await mctpd_mctp_iface_obj(dbus, iface)
+    (eid, net, path, new) = await mctp.call_learn_endpoint(ep.lladdr)
+
+    assert eid == ep.eid
+
+    ep_obj = await mctpd_mctp_endpoint_common_obj(dbus, path)
+
+    # Query VendorDefinedMessageTypes property
+    vdm_types = list(await ep_obj.get_vendor_defined_message_types())
+
+    # Verify we got 2 VDM types
+    assert len(vdm_types) == 2
+
+    # Verify first VDM type: PCIe format (0), VID 0x1234, cmd_set 0x5678
+    assert vdm_types[0][0] == 0  # format: PCIe
+    assert (
+        vdm_types[0][1].value == 0x1234
+    )  # vendor_id (variant containing uint16)
+    assert vdm_types[0][2] == 0x5678  # cmd_set
+
+    # Verify second VDM type: IANA format (1), VID 0xabcdef12, cmd_set 0x3456
+    assert vdm_types[1][0] == 1  # format: IANA
+    assert (
+        vdm_types[1][1].value == 0xABCDEF12
+    )  # vendor_id (variant containing uint32)
+    assert vdm_types[1][2] == 0x3456  # cmd_set
+
+
+class InvalidVDMEndpointBase(Endpoint):
+    async def handle_mctp_control(self, sock, addr, data):
+        flags, opcode = data[0:2]
+        if opcode != 0x06:
+            return await super().handle_mctp_control(sock, addr, data)
+        iid = flags & 0x1F
+        raddr = MCTPSockAddr.for_ep_resp(self, addr, sock.addr_ext)
+        hdr = [iid, opcode]
+        resp = hdr + [0x00, 0xFF] + self.get_invalid_vdm_data()
+        await sock.send(raddr, bytes(resp))
+
+    def get_invalid_vdm_data(self):
+        raise NotImplementedError
+
+
+class InvalidPCIeLengthEndpoint(InvalidVDMEndpointBase):
+    def get_invalid_vdm_data(self):
+        # Format 0 (PCIe) but send 1 bytes for vendor_id (invalid)
+        return [0, 0x12, 0x78, 0x90]
+
+
+class InvalidIANALengthEndpoint(InvalidVDMEndpointBase):
+    def get_invalid_vdm_data(self):
+        # Format 1 (IANA) but send 3 bytes for vendor_id (invalid)
+        return [1, 0xAB, 0xCD, 0xEF, 0x34, 0x56]
+
+
+class InvalidFormatEndpoint(InvalidVDMEndpointBase):
+    def get_invalid_vdm_data(self):
+        # Format 2 (invalid - only 0 and 1 are valid)
+        return [2, 0x12, 0x34, 0x56, 0x78]
+
+
+async def _assert_vdm_types_empty(dbus, mctp, ep):
+    (eid, _, path, _) = await mctp.call_learn_endpoint(ep.lladdr)
+    assert eid == ep.eid
+    ep_obj = await mctpd_mctp_endpoint_common_obj(dbus, path)
+    vdm_types = list(await ep_obj.get_vendor_defined_message_types())
+    assert len(vdm_types) == 0
+
+
+async def test_query_vdm_types_invalid_pcie_length(dbus, mctpd):
+    iface = mctpd.system.interfaces[0]
+    mctp = await mctpd_mctp_iface_obj(dbus, iface)
+
+    ep = InvalidPCIeLengthEndpoint(iface, bytes([0x1E]), eid=15)
+    mctpd.network.add_endpoint(ep)
+    await _assert_vdm_types_empty(dbus, mctp, ep)
+
+
+async def test_query_vdm_types_invalid_iana_length(dbus, mctpd):
+    iface = mctpd.system.interfaces[0]
+    mctp = await mctpd_mctp_iface_obj(dbus, iface)
+
+    ep = InvalidIANALengthEndpoint(iface, bytes([0x1F]), eid=16)
+    mctpd.network.add_endpoint(ep)
+    await _assert_vdm_types_empty(dbus, mctp, ep)
+
+
+async def test_query_vdm_types_invalid_format(dbus, mctpd):
+    iface = mctpd.system.interfaces[0]
+    mctp = await mctpd_mctp_iface_obj(dbus, iface)
+
+    ep = InvalidFormatEndpoint(iface, bytes([0x20]), eid=17)
+    mctpd.network.add_endpoint(ep)
+    await _assert_vdm_types_empty(dbus, mctp, ep)
+
+
+async def test_query_vdm_types_unsupported(dbus, mctpd):
+    iface = mctpd.system.interfaces[0]
+    mctp = await mctpd_mctp_iface_obj(dbus, iface)
+
+    ep = Endpoint(iface, bytes([0x21]), eid=18, vdm_msg_types=None)
+    mctpd.network.add_endpoint(ep)
+    await _assert_vdm_types_empty(dbus, mctp, ep)
+
+
 async def test_network_local_eids_single(dbus, mctpd):
     """Network1.LocalEIDs should reflect locally-assigned EID state"""
     iface = mctpd.system.interfaces[0]

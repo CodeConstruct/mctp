@@ -114,12 +114,18 @@ struct mctp_ctrl_resp_get_vdm_support {
 	uint8_t completion_code;
 	uint8_t vendor_id_set_selector;
 	uint8_t vendor_id_format;
-	union {
-		uint16_t vendor_id_data_pcie;
-		uint32_t vendor_id_data_iana;
-	};
 	/* following bytes are dependent on vendor id format
 	 * and shall be interpreted by appropriate binding handler */
+} __attribute__((__packed__));
+
+struct mctp_vdm_pcie_data {
+	uint16_t vendor_id;
+	uint16_t cmd_set;
+} __attribute__((__packed__));
+
+struct mctp_vdm_iana_data {
+	uint32_t enterprise_number;
+	uint16_t cmd_set;
 } __attribute__((__packed__));
 
 struct mctp_pci_ctrl_resp_get_vdm_support {
