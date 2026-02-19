@@ -1294,9 +1294,10 @@ class MctpProcessWrapper:
 
 
 class MctpdWrapper(MctpProcessWrapper):
-    def __init__(self, bus, sysnet, binary=None, config=None):
+    def __init__(self, bus, sysnet, binary=None, args=None, config=None):
         super().__init__(sysnet)
         self.bus = bus
+        self.args = args or ['-v']
         self.binary = binary or './test-mctpd'
         self.config = config
 
@@ -1340,18 +1341,18 @@ class MctpdWrapper(MctpProcessWrapper):
         # start mctpd, passing our control socket
         env = os.environ.copy()
         env['MCTP_TEST_SOCK'] = str(self.sock_remote.fileno())
+        args = self.args
 
         if self.config:
             config_file = tempfile.NamedTemporaryFile('w', prefix="mctp.conf.")
             config_file.write(self.config)
             config_file.flush()
-            command = [self.binary, '-v', '-c', config_file.name]
+            args += ['-c', config_file.name]
         else:
             config_file = None
-            command = [self.binary, '-v']
 
         proc = await trio.lowlevel.open_process(
-            command=command,
+            command=[self.binary] + args,
             pass_fds=(1, 2, self.sock_remote.fileno()),
             env=env,
         )
@@ -1430,11 +1431,13 @@ async def main():
     import asyncdbus
 
     binary = None
+    args = None
     if len(sys.argv) > 1:
         binary = sys.argv[1]
+        args = sys.argv[2:]
     async with asyncdbus.MessageBus().connect() as dbus:
         sysnet = await default_sysnet()
-        mctpd = MctpdWrapper(dbus, sysnet, binary=binary)
+        mctpd = MctpdWrapper(dbus, sysnet, binary=binary, args=args)
         async with trio.open_nursery() as nursery:
             nursery.start_soon(sighandler)
             await mctpd.start_mctpd(nursery)
