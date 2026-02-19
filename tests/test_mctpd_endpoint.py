@@ -24,7 +24,7 @@ that reports support for MCTP control and PLDM.
 @pytest.fixture
 def config():
     return """
-    mode = "endpoint"
+    role = "endpoint"
     """
 
 
