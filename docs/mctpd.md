@@ -317,7 +317,7 @@ These apply to all modes of `mctpd` operation. One top-level setting is defined:
 
 #### `role`: local MCTP device role
 
-* type: string enum: `bus-owner` or `endpoint`
+* type: string enum: `bus-owner`, `endpoint` or `unknown`
 * default: `bus-owner`
 
 This sets the overall role of `mctpd`, either as a Bus Owner (`role =
@@ -325,6 +325,10 @@ This sets the overall role of `mctpd`, either as a Bus Owner (`role =
 assume responsibility for allocating addresses to other endpoints. In endpoint
 mode, mctpd will not allocate addresses, but instead accept allocations from an
 external bus owner.
+
+A value of `unknown` allows per-interface settings; the dbus interface's
+`au.com.codeconstruct.MCTP.Interface1.Role` property may be written to set
+a specific role for each interface.
 
 Previous versions of `mctpd` used `mode` for this configuration, both `role`
 and `mode` are accepted.
