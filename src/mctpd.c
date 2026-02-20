@@ -140,6 +140,7 @@ struct link {
 	bool published;
 	int ifindex;
 	enum endpoint_role role;
+	uint8_t phys_binding;
 
 	char *path;
 	sd_bus_slot *slot_iface;
@@ -5080,8 +5081,6 @@ static int add_interface(struct ctx *ctx, int ifindex)
 		return -ENOENT;
 	}
 
-	uint8_t phys_binding = mctp_nl_phys_binding_byindex(ctx->nl, ifindex);
-
 	struct link *link = calloc(1, sizeof(*link));
 	if (!link)
 		return -ENOMEM;
@@ -5090,6 +5089,7 @@ static int add_interface(struct ctx *ctx, int ifindex)
 	link->published = false;
 	link->ifindex = ifindex;
 	link->ctx = ctx;
+	link->phys_binding = mctp_nl_phys_binding_byindex(ctx->nl, ifindex);
 	/* Use the `role` setting in conf/mctp.conf */
 	link->role = ctx->default_role;
 	rc = asprintf(&link->path, "%s/%s", MCTP_DBUS_PATH_LINKS, ifname);
@@ -5115,7 +5115,7 @@ static int add_interface(struct ctx *ctx, int ifindex)
 					 bus_link_owner_vtable, link);
 	}
 
-	if (phys_binding == MCTP_PHYS_BINDING_PCIE_VDM) {
+	if (link->phys_binding == MCTP_PHYS_BINDING_PCIE_VDM) {
 		link->discovered = DISCOVERY_UNDISCOVERED;
 	}
 
