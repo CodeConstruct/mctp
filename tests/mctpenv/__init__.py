@@ -348,12 +348,15 @@ class MCTPControlCommand(MCTPCommand):
 
 
 class Endpoint:
-    def __init__(self, iface, lladdr, ep_uuid=None, eid=0, types=None):
+    def __init__(
+        self, iface, lladdr, ep_uuid=None, eid=0, types=None, vdm_msg_types=None
+    ):
         self.iface = iface
         self.lladdr = lladdr
         self.uuid = ep_uuid or uuid.uuid1()
         self.eid = eid
         self.types = types or [0]
+        self.vdm_msg_types = vdm_msg_types or []
         self.bridged_eps = []
         self.allocated_pool = None  # or (start, size)
 
@@ -427,6 +430,25 @@ class Endpoint:
                 types = self.types
                 data = bytes(hdr + [0x00, len(types)] + types)
                 await sock.send(raddr, data)
+
+            elif opcode == 6:
+                # Get Vendor Defined Message Support
+                vdm_support = self.vdm_msg_types
+                selector = data[2]
+                if selector >= len(vdm_support):
+                    await sock.send(raddr, bytes(hdr + [0x02]))
+                    return
+                vdm_format, vendor_id, cmd_set = vdm_support[selector]
+                next_selector = (
+                    0xFF if selector == (len(vdm_support) - 1) else selector + 1
+                )
+                resp = bytes(hdr + [0x00, next_selector, vdm_format])
+                if vdm_format == 0:
+                    resp += vendor_id.to_bytes(2, 'big')
+                elif vdm_format == 1:
+                    resp += vendor_id.to_bytes(4, 'big')
+                resp += cmd_set.to_bytes(2, 'big')
+                await sock.send(raddr, resp)
 
             elif opcode == 8:
                 # Allocate Endpoint IDs

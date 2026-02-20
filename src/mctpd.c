@@ -148,6 +148,8 @@ struct link {
 	struct ctx *ctx;
 };
 
+struct vdm_type_support;
+
 struct peer {
 	uint32_t net;
 	mctp_eid_t eid;
@@ -184,6 +186,9 @@ struct peer {
 	// malloc()ed list of supported message types, from Get Message Type
 	uint8_t *message_types;
 	size_t num_message_types;
+
+	struct vdm_type_support *vdm_types;
+	size_t num_vdm_types;
 
 	// From Get Endpoint ID
 	uint8_t endpoint_type;
@@ -1060,8 +1065,9 @@ handle_control_get_vdm_type_support(struct ctx *ctx, int sd,
 	struct mctp_ctrl_resp_get_vdm_support *resp = NULL;
 	struct mctp_ctrl_cmd_get_vdm_support *req = NULL;
 	size_t resp_len, max_rsp_len, vdm_count;
+	struct mctp_vdm_pcie_data *vdm_pcie;
+	struct mctp_vdm_iana_data *vdm_iana;
 	struct vdm_type_support *cur_vdm;
-	uint16_t *cmd_type_ptr;
 	uint8_t *resp_buf;
 	int rc;
 
@@ -1073,7 +1079,7 @@ handle_control_get_vdm_type_support(struct ctx *ctx, int sd,
 	req = (void *)buf;
 	vdm_count = ctx->num_supported_vdm_types;
 	// Allocate space for 32 bit VID + 16 bit cmd set
-	max_rsp_len = sizeof(*resp) + sizeof(uint16_t);
+	max_rsp_len = sizeof(*resp) + sizeof(struct mctp_vdm_iana_data);
 	resp_len = max_rsp_len;
 	resp_buf = malloc(max_rsp_len);
 	if (!resp_buf) {
@@ -1081,7 +1087,6 @@ handle_control_get_vdm_type_support(struct ctx *ctx, int sd,
 		return -ENOMEM;
 	}
 	resp = (void *)resp_buf;
-	cmd_type_ptr = (uint16_t *)(resp + 1);
 	mctp_ctrl_msg_hdr_init_resp(&resp->ctrl_hdr, req->ctrl_hdr);
 
 	if (req->vendor_id_set_selector >= vdm_count) {
@@ -1103,17 +1108,17 @@ handle_control_get_vdm_type_support(struct ctx *ctx, int sd,
 		resp->vendor_id_format = cur_vdm->format;
 
 		if (cur_vdm->format == VID_FORMAT_PCIE) {
-			// 4 bytes was reserved for VID, but PCIe VID uses only 2 bytes.
-			cmd_type_ptr--;
-			resp_len = max_rsp_len - sizeof(uint16_t);
-			resp->vendor_id_data_pcie =
-				htobe16(cur_vdm->vendor_id.pcie);
+			vdm_pcie = (void *)(resp + 1);
+			resp_len = sizeof(*resp) +
+				   sizeof(struct mctp_vdm_pcie_data);
+			vdm_pcie->vendor_id = htobe16(cur_vdm->vendor_id.pcie);
+			vdm_pcie->cmd_set = htobe16(cur_vdm->cmd_set);
 		} else {
-			resp->vendor_id_data_iana =
+			vdm_iana = (void *)(resp + 1);
+			vdm_iana->enterprise_number =
 				htobe32(cur_vdm->vendor_id.iana);
+			vdm_iana->cmd_set = htobe16(cur_vdm->cmd_set);
 		}
-
-		*cmd_type_ptr = htobe16(cur_vdm->cmd_set);
 	}
 
 	rc = reply_message(ctx, sd, resp, resp_len, addr);
@@ -2085,6 +2090,7 @@ static int remove_peer(struct peer *peer)
 
 	n->peers[peer->eid] = NULL;
 	free(peer->message_types);
+	free(peer->vdm_types);
 	free(peer->uuid);
 
 	for (idx = 0; idx < ctx->num_peers; idx++) {
@@ -2127,6 +2133,7 @@ static void free_peers(struct ctx *ctx)
 	for (size_t i = 0; i < ctx->num_peers; i++) {
 		struct peer *peer = ctx->peers[i];
 		free(peer->message_types);
+		free(peer->vdm_types);
 		free(peer->uuid);
 		free(peer->path);
 		free(peer->bridge_ep_poll.sources);
@@ -2585,6 +2592,106 @@ out:
 	return rc;
 }
 
+static int query_get_peer_vdm_types(struct peer *peer)
+{
+	struct vdm_type_support *cur_vdm_type, *new_vdm, *vdm_types = NULL;
+	size_t buf_size, expect_size, new_size, num_vdm_types = 0;
+	struct mctp_ctrl_resp_get_vdm_support *resp = NULL;
+	struct mctp_ctrl_cmd_get_vdm_support req;
+	struct mctp_vdm_pcie_data *vdm_pcie;
+	struct mctp_vdm_iana_data *vdm_iana;
+	struct sockaddr_mctp_ext addr;
+	uint8_t iid, fmt, *buf = NULL;
+	int rc;
+
+	req.ctrl_hdr.command_code = MCTP_CTRL_CMD_GET_VENDOR_MESSAGE_SUPPORT;
+	req.vendor_id_set_selector = 0;
+
+	while (true) {
+		iid = mctp_next_iid(peer->ctx);
+
+		mctp_ctrl_msg_hdr_init_req(
+			&req.ctrl_hdr, iid,
+			MCTP_CTRL_CMD_GET_VENDOR_MESSAGE_SUPPORT);
+		if (buf) {
+			free(buf);
+			buf = NULL;
+		}
+		rc = endpoint_query_peer(peer, MCTP_CTRL_HDR_MSG_TYPE, &req,
+					 sizeof(req), &buf, &buf_size, &addr);
+		if (rc < 0)
+			break;
+
+		expect_size = sizeof(*resp);
+		rc = mctp_ctrl_validate_response(
+			buf, buf_size, expect_size, peer_tostr_short(peer), iid,
+			MCTP_CTRL_CMD_GET_VENDOR_MESSAGE_SUPPORT);
+		if (rc)
+			break;
+
+		resp = (void *)buf;
+		fmt = resp->vendor_id_format;
+		if (fmt == MCTP_GET_VDM_SUPPORT_PCIE_FORMAT_ID) {
+			expect_size = sizeof(*resp) +
+				      sizeof(struct mctp_vdm_pcie_data);
+		} else if (fmt == MCTP_GET_VDM_SUPPORT_IANA_FORMAT_ID) {
+			expect_size = sizeof(*resp) +
+				      sizeof(struct mctp_vdm_iana_data);
+		} else {
+			warnx("%s: bad vendor_id_format 0x%02x dest %s",
+			      __func__, fmt, peer_tostr(peer));
+			rc = -ENOMSG;
+			break;
+		}
+		if (buf_size != expect_size) {
+			warnx("%s: bad reply length. got %zu, expected %zu dest %s",
+			      __func__, buf_size, expect_size,
+			      peer_tostr(peer));
+			rc = -ENOMSG;
+			break;
+		}
+
+		new_size =
+			(num_vdm_types + 1) * sizeof(struct vdm_type_support);
+		new_vdm = realloc(vdm_types, new_size);
+		if (!new_vdm) {
+			rc = -ENOMEM;
+			break;
+		}
+		vdm_types = new_vdm;
+		cur_vdm_type = vdm_types + num_vdm_types;
+		cur_vdm_type->format = fmt;
+
+		if (fmt == MCTP_GET_VDM_SUPPORT_IANA_FORMAT_ID) {
+			vdm_iana = (struct mctp_vdm_iana_data *)(resp + 1);
+			cur_vdm_type->vendor_id.iana =
+				be32toh(vdm_iana->enterprise_number);
+			cur_vdm_type->cmd_set = be16toh(vdm_iana->cmd_set);
+		} else {
+			vdm_pcie = (struct mctp_vdm_pcie_data *)(resp + 1);
+			cur_vdm_type->vendor_id.pcie =
+				be16toh(vdm_pcie->vendor_id);
+			cur_vdm_type->cmd_set = be16toh(vdm_pcie->cmd_set);
+		}
+		num_vdm_types++;
+		if (resp->vendor_id_set_selector ==
+		    MCTP_GET_VDM_SUPPORT_NO_MORE_CAP_SET) {
+			peer->vdm_types = vdm_types;
+			vdm_types = NULL;
+			peer->num_vdm_types = num_vdm_types;
+			rc = 0;
+			break;
+		}
+
+		/* Use the next selector from the response. 0xFF indicates no more entries */
+		req.vendor_id_set_selector = resp->vendor_id_set_selector;
+	}
+
+	free(buf);
+	free(vdm_types);
+	return rc;
+}
+
 static int peer_set_uuid(struct peer *peer, const uint8_t uuid[16])
 {
 	if (!peer->uuid) {
@@ -3019,6 +3126,7 @@ err:
 static int query_peer_properties(struct peer *peer)
 {
 	const unsigned int max_retries = 4;
+	bool supports_vdm = false;
 	int rc;
 
 	for (unsigned int i = 0; i < max_retries; i++) {
@@ -3044,6 +3152,41 @@ static int query_peer_properties(struct peer *peer)
 				      peer_tostr(peer), -rc, strerror(-rc));
 			rc = 0;
 			break;
+		}
+	}
+
+	for (unsigned int i = 0; i < peer->num_message_types; i++) {
+		if (peer->message_types[i] ==
+			    MCTP_GET_VDM_SUPPORT_IANA_FORMAT_ID ||
+		    peer->message_types[i] ==
+			    MCTP_GET_VDM_SUPPORT_PCIE_FORMAT_ID) {
+			supports_vdm = true;
+			break;
+		}
+	}
+
+	if (supports_vdm) {
+		for (unsigned int i = 0; i < max_retries; i++) {
+			rc = query_get_peer_vdm_types(peer);
+
+			if (rc == 0)
+				break;
+
+			// On timeout, retry
+			if (rc == -ETIMEDOUT) {
+				if (peer->ctx->verbose)
+					warnx("Retrying to get vendor message types for %s. Attempt %u",
+					      peer_tostr(peer), i + 1);
+				rc = 0;
+				continue;
+			}
+
+			if (rc < 0) {
+				warnx("Error getting vendor message types for %s. Ignoring error %d %s",
+				      peer_tostr(peer), rc, strerror(-rc));
+				rc = 0;
+				break;
+			}
 		}
 	}
 
@@ -3939,6 +4082,41 @@ static int bus_endpoint_get_prop(sd_bus *bus, const char *path,
 		rc = sd_bus_message_append_array(reply, 'y',
 						 peer->message_types,
 						 peer->num_message_types);
+	} else if (strcmp(property, "VendorDefinedMessageTypes") == 0) {
+		rc = sd_bus_message_open_container(reply, 'a', "(yvq)");
+		if (rc < 0)
+			return rc;
+
+		for (size_t i = 0; i < peer->num_vdm_types; i++) {
+			struct vdm_type_support *vdm = &peer->vdm_types[i];
+			rc = sd_bus_message_open_container(reply, 'r', "yvq");
+			if (rc < 0)
+				return rc;
+
+			rc = sd_bus_message_append(reply, "y", vdm->format);
+			if (rc < 0)
+				return rc;
+
+			if (vdm->format == VID_FORMAT_PCIE) {
+				rc = sd_bus_message_append(reply, "v", "q",
+							   vdm->vendor_id.pcie);
+			} else {
+				rc = sd_bus_message_append(reply, "v", "u",
+							   vdm->vendor_id.iana);
+			}
+			if (rc < 0)
+				return rc;
+
+			rc = sd_bus_message_append(reply, "q", vdm->cmd_set);
+			if (rc < 0)
+				return rc;
+
+			rc = sd_bus_message_close_container(reply);
+			if (rc < 0)
+				return rc;
+		}
+
+		rc = sd_bus_message_close_container(reply);
 	} else if (strcmp(property, "UUID") == 0 && peer->uuid) {
 		const char *s = dfree(bytes_to_uuid(peer->uuid));
 		rc = sd_bus_message_append(reply, "s", s);
@@ -4125,6 +4303,11 @@ static const sd_bus_vtable bus_endpoint_obmc_vtable[] = {
 			SD_BUS_VTABLE_PROPERTY_CONST),
 	SD_BUS_PROPERTY("SupportedMessageTypes",
 			"ay",
+			bus_endpoint_get_prop,
+			0,
+			SD_BUS_VTABLE_PROPERTY_CONST),
+	SD_BUS_PROPERTY("VendorDefinedMessageTypes",
+			"a(yvq)",
 			bus_endpoint_get_prop,
 			0,
 			SD_BUS_VTABLE_PROPERTY_CONST),
