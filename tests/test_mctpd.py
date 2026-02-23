@@ -749,6 +749,30 @@ async def test_query_vdm_types_unsupported(dbus, mctpd):
     await _assert_vdm_types_empty(dbus, mctp, ep)
 
 
+async def test_query_vdm_types_repeating(dbus, mctpd):
+    """Test that we need to be increasing the VDM set selector: otherwise
+    a peer may send infinite VDM types
+    """
+
+    class RepeatingVDMEndpoint(Endpoint):
+        async def handle_mctp_control(self, sock, addr, data):
+            flags, opcode = data[0:2]
+            if opcode != 0x06:
+                return await super().handle_mctp_control(sock, addr, data)
+            iid = flags & 0x1F
+            raddr = MCTPSockAddr.for_ep_resp(self, addr, sock.addr_ext)
+            hdr = [iid, opcode]
+            # always report a next selector of 1
+            resp = hdr + [0x00, 0x01, 0x00, 0xAA, 0xBB, 0xCC, 0xDD]
+            await sock.send(raddr, bytes(resp))
+
+    iface = mctpd.system.interfaces[0]
+    mctp = await mctpd_mctp_iface_obj(dbus, iface)
+    ep = RepeatingVDMEndpoint(iface, bytes([0x21]), eid=18, vdm_msg_types=None)
+    mctpd.network.add_endpoint(ep)
+    await _assert_vdm_types_empty(dbus, mctp, ep)
+
+
 async def test_network_local_eids_single(dbus, mctpd):
     """Network1.LocalEIDs should reflect locally-assigned EID state"""
     iface = mctpd.system.interfaces[0]

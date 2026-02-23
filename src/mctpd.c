@@ -2598,17 +2598,17 @@ static int query_get_peer_vdm_types(struct peer *peer)
 	size_t buf_size, expect_size, new_size, num_vdm_types = 0;
 	struct mctp_ctrl_resp_get_vdm_support *resp = NULL;
 	struct mctp_ctrl_cmd_get_vdm_support req;
+	uint8_t selector, iid, fmt, *buf = NULL;
 	struct mctp_vdm_pcie_data *vdm_pcie;
 	struct mctp_vdm_iana_data *vdm_iana;
 	struct sockaddr_mctp_ext addr;
-	uint8_t iid, fmt, *buf = NULL;
 	int rc;
 
 	req.ctrl_hdr.command_code = MCTP_CTRL_CMD_GET_VENDOR_MESSAGE_SUPPORT;
-	req.vendor_id_set_selector = 0;
 
-	while (true) {
+	for (selector = 0;; selector++) {
 		iid = mctp_next_iid(peer->ctx);
+		req.vendor_id_set_selector = selector;
 
 		mctp_ctrl_msg_hdr_init_req(
 			&req.ctrl_hdr, iid,
@@ -2681,10 +2681,16 @@ static int query_get_peer_vdm_types(struct peer *peer)
 			peer->num_vdm_types = num_vdm_types;
 			rc = 0;
 			break;
+		} else if (resp->vendor_id_set_selector != selector + 1) {
+			/* DSP0236 requires set selectors to be monotonically
+			 * increasing by 1 */
+			warnx("peer %s reporting invalid VDM selector 0x%02x, "
+			      "expected 0x%02x",
+			      peer_tostr_short(peer),
+			      resp->vendor_id_set_selector, selector + 1);
+			rc = -EPROTO;
+			break;
 		}
-
-		/* Use the next selector from the response. 0xFF indicates no more entries */
-		req.vendor_id_set_selector = resp->vendor_id_set_selector;
 	}
 
 	free(buf);
