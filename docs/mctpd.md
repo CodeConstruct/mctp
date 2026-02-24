@@ -405,3 +405,25 @@ space. Value should be between [```0.5 * TRECLAIM (5)```- ```10```] seconds.
 Such periodic polling is common for all the briged endpoints among allocated
 pool space [`.PoolStart` - `.PoolEnd`] of the bridge.
 Polling could be provisioned to be disabled via setting the value as ```0```.
+
+### `[[interface]]`: per-interface configuration
+
+The `[[interface]]` table allows configuration to be applied to specific
+interfaces. Each `[[interface]]` entry contains a "match" definition, which
+determines which MCTP interfaces the table applies to.
+
+Matches are processed in the order they appear in the configuration file;
+the first `[[interface]]` section that matches is applied.
+
+Other content of the interface table is configuration to be applied. There are
+currently no configuration definitions to apply.
+
+#### Match types
+
+Match on all interfaces:
+
+```toml
+# match all interfaces
+[[interface]]
+match = "all"
+```
