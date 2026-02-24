@@ -446,3 +446,21 @@ match = { phys-type = "i2c" }
 
 Available binding types are: `SMBus` / `I2C`, `PCIe`, `USB`, `KCS`, `serial`,
 `I3C`, `MMBI`, or `UCIE`. Matches are case-insensitive.
+
+Match on a sysfs device path:
+
+```toml
+# match on sysfs path
+[[interface]]
+match = { path = "/devices/pci0000:00/0000:00:08.3/usb10/10-0:1.0" }
+```
+
+Paths may use glob expressions:
+
+```toml
+# match on globbed sysfs path
+[[interface]]
+match = { path = "/devices/pci0000:00/0000:00:08.3/*" }
+```
+
+Paths have the `/sys` prefix stripped.
