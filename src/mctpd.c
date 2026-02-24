@@ -248,8 +248,10 @@ struct interface_config {
 	struct interface_config_match {
 		enum {
 			IFACE_MATCH_ALL,
+			IFACE_MATCH_BINDING,
 		} type;
 		union {
+			enum mctp_phys_binding binding;
 		};
 	} match;
 
@@ -5089,6 +5091,8 @@ static bool config_link_match(struct interface_config_match *match,
 	switch (match->type) {
 	case IFACE_MATCH_ALL:
 		return true;
+	case IFACE_MATCH_BINDING:
+		return link->phys_binding == match->binding;
 	}
 	return false;
 }
@@ -5288,6 +5292,36 @@ static int parse_config_role(const char *str, enum endpoint_role *rolep)
 	return -1;
 }
 
+static struct {
+	const char *name;
+	enum mctp_phys_binding binding;
+} phys_bindings[] = {
+	{ "SMBus", MCTP_PHYS_BINDING_SMBUS },
+	{ "I2C", MCTP_PHYS_BINDING_SMBUS }, // alias
+	{ "PCIe", MCTP_PHYS_BINDING_PCIE_VDM },
+	{ "USB", MCTP_PHYS_BINDING_USB },
+	{ "KCS", MCTP_PHYS_BINDING_KCS },
+	{ "serial", MCTP_PHYS_BINDING_SERIAL },
+	{ "I3C", MCTP_PHYS_BINDING_I3C },
+	{ "MMBI", MCTP_PHYS_BINDING_MMBI },
+	{ "UCIe", MCTP_PHYS_BINDING_UCIE },
+};
+
+static int parse_config_phys_binding(const char *type,
+				     enum mctp_phys_binding *binding)
+{
+	unsigned int i;
+
+	for (i = 0; i < ARRAY_SIZE(phys_bindings); i++) {
+		if (!strcasecmp(type, phys_bindings[i].name)) {
+			*binding = phys_bindings[i].binding;
+			return 0;
+		}
+	}
+
+	return -1;
+}
+
 static int fill_uuid(struct ctx *ctx)
 {
 	int rc;
@@ -5426,10 +5460,44 @@ enum match_result {
 	MATCH_RES_ERR,
 };
 
+static enum match_result
+parse_config_interface_match_phys_binding(toml_table_t *table,
+					  struct interface_config_match *match)
+{
+	static const char *key = "phys-type";
+	enum mctp_phys_binding binding;
+	toml_datum_t val;
+	int rc;
+
+	if (!toml_key_exists(table, key))
+		return MATCH_RES_NONE;
+
+	val = toml_string_in(table, key);
+	if (!val.ok) {
+		warnx("invalid %s match", key);
+		return MATCH_RES_ERR;
+	}
+
+	rc = parse_config_phys_binding(val.u.s, &binding);
+	if (rc) {
+		warnx("invalid %s value %s", key, val.u.s);
+		free(val.u.s);
+		return MATCH_RES_ERR;
+	}
+	free(val.u.s);
+
+	match->type = IFACE_MATCH_BINDING;
+	match->binding = binding;
+
+	return MATCH_RES_OK;
+}
+
 const struct match_parser {
 	enum match_result (*parse)(toml_table_t *,
 				   struct interface_config_match *);
-} match_parsers[] = {};
+} match_parsers[] = {
+	{ parse_config_interface_match_phys_binding },
+};
 
 static int parse_config_interface_match(struct ctx *ctx, unsigned int idx,
 					toml_table_t *interface,
@@ -5462,9 +5530,6 @@ static int parse_config_interface_match(struct ctx *ctx, unsigned int idx,
 		warnx("no match section for interface index %d", idx);
 		return -1;
 	}
-
-// while match_parsers[] is empty
-#pragma GCC diagnostic ignored "-Wtype-limits"
 
 	for (i = 0; i < ARRAY_SIZE(match_parsers); i++) {
 		const struct match_parser *p = &match_parsers[i];

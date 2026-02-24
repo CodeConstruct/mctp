@@ -435,3 +435,14 @@ Match on all interfaces:
 [[interface]]
 match = "all"
 ```
+
+Match on a physical transport binding type:
+
+```toml
+# match only MCTP-over-i2c interfaces
+[[interface]]
+match = { phys-type = "i2c" }
+```
+
+Available binding types are: `SMBus` / `I2C`, `PCIe`, `USB`, `KCS`, `serial`,
+`I3C`, `MMBI`, or `UCIE`. Matches are case-insensitive.
