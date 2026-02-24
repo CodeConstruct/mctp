@@ -2019,3 +2019,85 @@ async def test_iface_config_match_phys_binding(dbus, sysnet, nursery):
 
     res = await mctpd.stop_mctpd()
     assert res == 0
+
+
+async def test_iface_config_match_path_exact(dbus, sysnet, nursery):
+    """Test that we can match an interface from an exact path"""
+    config = """
+    role = "unknown"
+    [[interface]]
+    match = { path = "/devices/virtual/mctp0" }
+    role = "bus-owner"
+    """
+
+    mctpd = MctpdWrapper(dbus, sysnet, config=config)
+    await mctpd.start_mctpd(nursery)
+
+    iface = await mctpd_mctp_iface_control_obj(dbus, mctpd.system.interfaces[0])
+    role = await iface.get_role()
+    assert role == "BusOwner"
+
+    res = await mctpd.stop_mctpd()
+    assert res == 0
+
+
+async def test_iface_config_nomatch_path(dbus, sysnet, nursery):
+    """Test that we do not match an interface from an exact (non-matching)
+    path
+    """
+    config = """
+    role = "unknown"
+    [[interface]]
+    match = { path = "/devices/virtual/mctp1" }
+    role = "bus-owner"
+    """
+
+    mctpd = MctpdWrapper(dbus, sysnet, config=config)
+    await mctpd.start_mctpd(nursery)
+
+    iface = await mctpd_mctp_iface_control_obj(dbus, mctpd.system.interfaces[0])
+    role = await iface.get_role()
+    assert role == "Unknown"
+    res = await mctpd.stop_mctpd()
+    assert res == 0
+
+
+async def test_iface_config_match_path_glob(dbus, sysnet, nursery):
+    """Test that we can match an interface from a globbed path"""
+    config = """
+    role = "unknown"
+    [[interface]]
+    match = { path = "/devices/virtual/mctp*" }
+    role = "bus-owner"
+    """
+
+    mctpd = MctpdWrapper(dbus, sysnet, config=config)
+    await mctpd.start_mctpd(nursery)
+
+    iface = await mctpd_mctp_iface_control_obj(dbus, mctpd.system.interfaces[0])
+    role = await iface.get_role()
+    assert role == "BusOwner"
+
+    res = await mctpd.stop_mctpd()
+    assert res == 0
+
+
+async def test_iface_config_match_path_none(dbus, sysnet, nursery):
+    """Test that we can handle a missing sysfs path, not matching anything"""
+    config = """
+    role = "unknown"
+    [[interface]]
+    match = { path = "*" }
+    role = "bus-owner"
+    """
+
+    mctpd = MctpdWrapper(dbus, sysnet, config=config)
+    mctpd.system.interfaces[0].sysfs_path = None
+    await mctpd.start_mctpd(nursery)
+
+    iface = await mctpd_mctp_iface_control_obj(dbus, mctpd.system.interfaces[0])
+    role = await iface.get_role()
+    assert role != "BusOwner"
+
+    res = await mctpd.stop_mctpd()
+    assert res == 0

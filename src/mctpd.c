@@ -23,6 +23,7 @@
 #include <string.h>
 #include <err.h>
 #include <errno.h>
+#include <fnmatch.h>
 #include <getopt.h>
 #include <signal.h>
 
@@ -250,9 +251,11 @@ struct interface_config {
 		enum {
 			IFACE_MATCH_ALL,
 			IFACE_MATCH_BINDING,
+			IFACE_MATCH_PATH,
 		} type;
 		union {
 			enum mctp_phys_binding binding;
+			char *path;
 		};
 	} match;
 
@@ -5095,6 +5098,10 @@ static bool config_link_match(struct interface_config_match *match,
 		return true;
 	case IFACE_MATCH_BINDING:
 		return link->phys_binding == match->binding;
+	case IFACE_MATCH_PATH:
+		if (!link->sysfs_path)
+			return false;
+		return fnmatch(match->path, link->sysfs_path, 0) == 0;
 	}
 	return false;
 }
@@ -5500,11 +5507,33 @@ parse_config_interface_match_phys_binding(toml_table_t *table,
 	return MATCH_RES_OK;
 }
 
+static enum match_result
+parse_config_interface_match_path(toml_table_t *table,
+				  struct interface_config_match *match)
+{
+	static const char *key = "path";
+	toml_datum_t val;
+
+	if (!toml_key_exists(table, key))
+		return MATCH_RES_NONE;
+
+	val = toml_string_in(table, key);
+	if (!val.ok) {
+		warnx("invalid path match");
+		return MATCH_RES_ERR;
+	}
+
+	match->type = IFACE_MATCH_PATH;
+	match->path = val.u.s;
+	return MATCH_RES_OK;
+}
+
 const struct match_parser {
 	enum match_result (*parse)(toml_table_t *,
 				   struct interface_config_match *);
 } match_parsers[] = {
 	{ parse_config_interface_match_phys_binding },
+	{ parse_config_interface_match_path },
 };
 
 static int parse_config_interface_match(struct ctx *ctx, unsigned int idx,
@@ -5751,7 +5780,14 @@ static void setup_config_defaults(struct ctx *ctx)
 
 static void free_config(struct ctx *ctx)
 {
+	unsigned int i;
+
 	free(ctx->config_filename);
+	for (i = 0; i < ctx->num_interface_configs; i++) {
+		struct interface_config *config = &ctx->interface_configs[i];
+		if (config->match.type == IFACE_MATCH_PATH)
+			free(config->match.path);
+	}
 	free(ctx->interface_configs);
 }
 
