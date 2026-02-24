@@ -14,6 +14,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 2. `mctp`'s verbose mode will now decode `IFLA_MCTP` attributes in netlink
    message data
 
+3. `mctpd` now supports configuration on individual links, without having
+   to perform dbus property updates. Links may be matched on physical transport
+   binding type, or by sysfs paths, allowing individual interface roles to be
+   specified by the configuration file.
+
 ### Fixes
 
 1. mctpd's interface objects now expose the BusOwner1 interface when set
