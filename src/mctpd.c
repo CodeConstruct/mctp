@@ -252,6 +252,9 @@ struct interface_config {
 		union {
 		};
 	} match;
+
+	bool role_set;
+	enum endpoint_role role;
 };
 
 struct ctx {
@@ -5112,7 +5115,8 @@ static int link_apply_configuration(struct ctx *ctx, struct link *link)
 	if (!config)
 		return 0;
 
-	// TODO: apply configuration as matched
+	if (config->role_set)
+		link->role = config->role;
 
 	return 0;
 }
@@ -5487,12 +5491,30 @@ static int parse_config_interface(struct ctx *ctx, unsigned int idx,
 				  toml_table_t *interface,
 				  struct interface_config *config)
 {
+	toml_datum_t conf_str;
 	int rc;
 
 	rc = parse_config_interface_match(ctx, idx, interface, &config->match);
 	if (rc) {
 		warnx("no valid match config for interface index %x", idx);
 		return -1;
+	}
+
+	conf_str = toml_string_in(interface, "role");
+	if (conf_str.ok) {
+		char *s = conf_str.u.s;
+		int rc = parse_config_role(conf_str.u.s, &config->role);
+		if (rc) {
+			warnx("invalid role %s in interface section", s);
+		} else if (config->role == ENDPOINT_ROLE_UNKNOWN) {
+			warnx("cannot set 'unknown' role in interface section");
+			rc = -1;
+		} else {
+			config->role_set = true;
+		}
+		free(s);
+		if (rc)
+			return rc;
 	}
 
 	return 0;

@@ -415,8 +415,16 @@ determines which MCTP interfaces the table applies to.
 Matches are processed in the order they appear in the configuration file;
 the first `[[interface]]` section that matches is applied.
 
-Other content of the interface table is configuration to be applied. There are
-currently no configuration definitions to apply.
+Other content of the interface table is configuration to be applied. The
+only setting currently supported is `role`, to set mctpd's role as
+either bus-owner or endpoint on this interface.
+
+```toml
+role = "bus-owner"
+[[interface]]
+match = ...
+role = "endpoint"
+```
 
 #### Match types
 
