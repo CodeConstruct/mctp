@@ -141,6 +141,7 @@ struct link {
 	int ifindex;
 	enum endpoint_role role;
 	uint8_t phys_binding;
+	char *sysfs_path;
 
 	char *path;
 	sd_bus_slot *slot_iface;
@@ -4737,6 +4738,7 @@ static void free_link(struct link *link)
 	sd_bus_slot_unref(link->slot_iface);
 	sd_bus_slot_unref(link->slot_busowner);
 	free(link->path);
+	free(link->sysfs_path);
 	free(link);
 }
 
@@ -5125,6 +5127,11 @@ static int link_apply_configuration(struct ctx *ctx, struct link *link)
 	return 0;
 }
 
+static int link_resolve_sysfs_path(struct link *link, const char *ifname)
+{
+	return mctp_ops.link_sysfs_path(ifname, &link->sysfs_path);
+}
+
 static int add_interface(struct ctx *ctx, int ifindex)
 {
 	int rc;
@@ -5152,6 +5159,7 @@ static int add_interface(struct ctx *ctx, int ifindex)
 	link->phys_binding = mctp_nl_phys_binding_byindex(ctx->nl, ifindex);
 	/* Use the `role` setting in conf/mctp.conf */
 	link->role = ctx->default_role;
+	link_resolve_sysfs_path(link, ifname);
 	rc = asprintf(&link->path, "%s/%s", MCTP_DBUS_PATH_LINKS, ifname);
 	if (rc < 0) {
 		rc = -ENOMEM;

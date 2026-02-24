@@ -7,6 +7,9 @@
 
 #define _GNU_SOURCE
 
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 #include <linux/netlink.h>
 #include <err.h>
@@ -52,6 +55,36 @@ static int mctp_op_close(int sd)
 	return close(sd);
 }
 
+static int mctp_op_link_sysfs_path(const char *ifname, char **path)
+{
+	char *dev_class_path = NULL, *dev_path = NULL;
+	int rc = 1;
+
+	rc = asprintf(&dev_class_path, "/sys/class/net/%s/device", ifname);
+	if (rc < 0)
+		return -1;
+
+	dev_path = realpath(dev_class_path, NULL);
+	if (!dev_path) {
+		warnx("no path data for interface %s", ifname);
+		goto out;
+	}
+
+	if (!strncmp(dev_path, "/sys", strlen("/sys"))) {
+		warnx("malformed interface path for %s", ifname);
+		goto out;
+	}
+
+	*path = strdup(dev_path + 4);
+	rc = 0;
+
+out:
+	free(dev_path);
+	free(dev_class_path);
+	return rc;
+	return -1;
+}
+
 static void mctp_bug_warn(const char *fmt, va_list args)
 {
 	vwarnx(fmt, args);
@@ -81,6 +114,7 @@ const struct mctp_ops mctp_ops = {
 	},
 #endif
 	.bug_warn = mctp_bug_warn,
+	.link_sysfs_path = mctp_op_link_sysfs_path,
 };
 
 void mctp_ops_init(void)

@@ -10,6 +10,7 @@
 #include <assert.h>
 #include <err.h>
 #include <errno.h>
+#include <limits.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -333,6 +334,45 @@ static int mctp_op_sd_event_source_set_time_relative(sd_event_source *s,
 }
 #endif
 
+static int mctp_op_link_sysfs_path(const char *ifname, char **path)
+{
+	struct {
+		uint8_t opcode;
+		char ifname[IFNAMSIZ];
+	} req;
+	struct {
+		uint8_t len;
+		char path[256];
+	} resp;
+	size_t len;
+	ssize_t rc;
+
+	len = strlen(ifname);
+	if (len > sizeof(req.ifname))
+		errx(EXIT_FAILURE, "invalid interface name");
+
+	req.opcode = 0x04;
+	memcpy(req.ifname, ifname, len);
+	rc = send(control_sd, &req, len + sizeof(req.opcode), 0);
+	if (rc < 0)
+		err(EXIT_FAILURE, "control send error");
+
+	rc = recv(control_sd, &resp, sizeof(resp), 0);
+	if (rc <= 0)
+		err(EXIT_FAILURE, "control receive error");
+
+	if (sizeof(resp.len) + resp.len != (size_t)rc)
+		err(EXIT_FAILURE, "control receive parse error");
+
+	if (!resp.len)
+		return -1;
+
+	resp.path[resp.len] = '\0';
+
+	*path = strndup(resp.path, resp.len);
+	return 0;
+}
+
 const struct mctp_ops mctp_ops = {
 	.mctp = {
 		.socket = mctp_op_mctp_socket,
@@ -357,6 +397,7 @@ const struct mctp_ops mctp_ops = {
 	},
 #endif
 	.bug_warn = mctp_bug_warn,
+	.link_sysfs_path = mctp_op_link_sysfs_path,
 };
 
 void mctp_ops_init(void)
