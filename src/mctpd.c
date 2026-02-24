@@ -23,6 +23,7 @@
 #include <string.h>
 #include <err.h>
 #include <errno.h>
+#include <fnmatch.h>
 #include <getopt.h>
 #include <signal.h>
 
@@ -140,6 +141,8 @@ struct link {
 	bool published;
 	int ifindex;
 	enum endpoint_role role;
+	uint8_t phys_binding;
+	char *sysfs_path;
 
 	char *path;
 	sd_bus_slot *slot_iface;
@@ -243,6 +246,23 @@ struct vdm_type_support {
 	sd_bus_track *source_peer;
 };
 
+struct interface_config {
+	struct interface_config_match {
+		enum {
+			IFACE_MATCH_ALL,
+			IFACE_MATCH_BINDING,
+			IFACE_MATCH_PATH,
+		} type;
+		union {
+			enum mctp_phys_binding binding;
+			char *path;
+		};
+	} match;
+
+	bool role_set;
+	enum endpoint_role role;
+};
+
 struct ctx {
 	sd_event *event;
 	sd_bus *bus;
@@ -290,6 +310,11 @@ struct ctx {
 	// bus owner/bridge polling interval in usecs for
 	// checking endpoint's accessibility.
 	uint64_t endpoint_poll;
+
+	// interface configuration (from config file), to be matched and
+	// applied on new interface events
+	struct interface_config *interface_configs;
+	size_t num_interface_configs;
 };
 
 static int emit_endpoint_added(const struct peer *peer);
@@ -568,13 +593,13 @@ static const char *path_from_peer(const struct peer *peer)
 	return peer->path;
 }
 
-static int get_role(const char *mode, struct role *role)
+static int get_role(const char *role_str, struct role *role)
 {
 	unsigned int i;
 
 	for (i = 0; i < ARRAY_SIZE(roles); i++) {
 		if (roles[i].dbus_val &&
-		    (strcmp(roles[i].dbus_val, mode) == 0)) {
+		    (strcmp(roles[i].dbus_val, role_str) == 0)) {
 			memcpy(role, &roles[i], sizeof(struct role));
 			return 0;
 		}
@@ -4716,6 +4741,7 @@ static void free_link(struct link *link)
 	sd_bus_slot_unref(link->slot_iface);
 	sd_bus_slot_unref(link->slot_busowner);
 	free(link->path);
+	free(link->sysfs_path);
 	free(link);
 }
 
@@ -5064,6 +5090,55 @@ static void del_net(struct net *net)
 	free(net);
 }
 
+static bool config_link_match(struct interface_config_match *match,
+			      struct link *link)
+{
+	switch (match->type) {
+	case IFACE_MATCH_ALL:
+		return true;
+	case IFACE_MATCH_BINDING:
+		return link->phys_binding == match->binding;
+	case IFACE_MATCH_PATH:
+		if (!link->sysfs_path)
+			return false;
+		return fnmatch(match->path, link->sysfs_path, 0) == 0;
+	}
+	return false;
+}
+
+static struct interface_config *link_find_configuration(struct ctx *ctx,
+							struct link *link)
+{
+	unsigned int i;
+
+	for (i = 0; i < ctx->num_interface_configs; i++) {
+		struct interface_config *config = &ctx->interface_configs[i];
+		if (config_link_match(&config->match, link))
+			return config;
+	}
+
+	return NULL;
+}
+
+static int link_apply_configuration(struct ctx *ctx, struct link *link)
+{
+	struct interface_config *config;
+
+	config = link_find_configuration(ctx, link);
+	if (!config)
+		return 0;
+
+	if (config->role_set)
+		link->role = config->role;
+
+	return 0;
+}
+
+static int link_resolve_sysfs_path(struct link *link, const char *ifname)
+{
+	return mctp_ops.link_sysfs_path(ifname, &link->sysfs_path);
+}
+
 static int add_interface(struct ctx *ctx, int ifindex)
 {
 	int rc;
@@ -5080,8 +5155,6 @@ static int add_interface(struct ctx *ctx, int ifindex)
 		return -ENOENT;
 	}
 
-	uint8_t phys_binding = mctp_nl_phys_binding_byindex(ctx->nl, ifindex);
-
 	struct link *link = calloc(1, sizeof(*link));
 	if (!link)
 		return -ENOMEM;
@@ -5090,11 +5163,20 @@ static int add_interface(struct ctx *ctx, int ifindex)
 	link->published = false;
 	link->ifindex = ifindex;
 	link->ctx = ctx;
-	/* Use the `mode` setting in conf/mctp.conf */
+	link->phys_binding = mctp_nl_phys_binding_byindex(ctx->nl, ifindex);
+	/* Use the `role` setting in conf/mctp.conf */
 	link->role = ctx->default_role;
+	link_resolve_sysfs_path(link, ifname);
 	rc = asprintf(&link->path, "%s/%s", MCTP_DBUS_PATH_LINKS, ifname);
 	if (rc < 0) {
 		rc = -ENOMEM;
+		goto err_free;
+	}
+
+	rc = link_apply_configuration(ctx, link);
+	if (rc) {
+		warnx("Failed to apply link configuration for link index %d",
+		      ifindex);
 		goto err_free;
 	}
 
@@ -5115,7 +5197,7 @@ static int add_interface(struct ctx *ctx, int ifindex)
 					 bus_link_owner_vtable, link);
 	}
 
-	if (phys_binding == MCTP_PHYS_BINDING_PCIE_VDM) {
+	if (link->phys_binding == MCTP_PHYS_BINDING_PCIE_VDM) {
 		link->discovered = DISCOVERY_UNDISCOVERED;
 	}
 
@@ -5207,21 +5289,51 @@ static int parse_args(struct ctx *ctx, int argc, char **argv)
 	return 0;
 }
 
-static int parse_config_mode(struct ctx *ctx, const char *mode)
+static int parse_config_role(const char *str, enum endpoint_role *rolep)
 {
 	unsigned int i;
 
 	for (i = 0; i < ARRAY_SIZE(roles); i++) {
 		const struct role *role = &roles[i];
 
-		if (!role->conf_val || strcmp(role->conf_val, mode))
+		if (!role->conf_val || strcmp(role->conf_val, str))
 			continue;
 
-		ctx->default_role = role->role;
+		*rolep = role->role;
 		return 0;
 	}
 
-	warnx("invalid value '%s' for mode configuration", mode);
+	warnx("invalid value '%s' for role configuration", str);
+	return -1;
+}
+
+static struct {
+	const char *name;
+	enum mctp_phys_binding binding;
+} phys_bindings[] = {
+	{ "SMBus", MCTP_PHYS_BINDING_SMBUS },
+	{ "I2C", MCTP_PHYS_BINDING_SMBUS }, // alias
+	{ "PCIe", MCTP_PHYS_BINDING_PCIE_VDM },
+	{ "USB", MCTP_PHYS_BINDING_USB },
+	{ "KCS", MCTP_PHYS_BINDING_KCS },
+	{ "serial", MCTP_PHYS_BINDING_SERIAL },
+	{ "I3C", MCTP_PHYS_BINDING_I3C },
+	{ "MMBI", MCTP_PHYS_BINDING_MMBI },
+	{ "UCIe", MCTP_PHYS_BINDING_UCIE },
+};
+
+static int parse_config_phys_binding(const char *type,
+				     enum mctp_phys_binding *binding)
+{
+	unsigned int i;
+
+	for (i = 0; i < ARRAY_SIZE(phys_bindings); i++) {
+		if (!strcasecmp(type, phys_bindings[i].name)) {
+			*binding = phys_bindings[i].binding;
+			return 0;
+		}
+	}
+
 	return -1;
 }
 
@@ -5357,9 +5469,204 @@ static int parse_config_bus_owner(struct ctx *ctx, toml_table_t *bus_owner)
 	return 0;
 }
 
+enum match_result {
+	MATCH_RES_NONE,
+	MATCH_RES_OK,
+	MATCH_RES_ERR,
+};
+
+static enum match_result
+parse_config_interface_match_phys_binding(toml_table_t *table,
+					  struct interface_config_match *match)
+{
+	static const char *key = "phys-type";
+	enum mctp_phys_binding binding;
+	toml_datum_t val;
+	int rc;
+
+	if (!toml_key_exists(table, key))
+		return MATCH_RES_NONE;
+
+	val = toml_string_in(table, key);
+	if (!val.ok) {
+		warnx("invalid %s match", key);
+		return MATCH_RES_ERR;
+	}
+
+	rc = parse_config_phys_binding(val.u.s, &binding);
+	if (rc) {
+		warnx("invalid %s value %s", key, val.u.s);
+		free(val.u.s);
+		return MATCH_RES_ERR;
+	}
+	free(val.u.s);
+
+	match->type = IFACE_MATCH_BINDING;
+	match->binding = binding;
+
+	return MATCH_RES_OK;
+}
+
+static enum match_result
+parse_config_interface_match_path(toml_table_t *table,
+				  struct interface_config_match *match)
+{
+	static const char *key = "path";
+	toml_datum_t val;
+
+	if (!toml_key_exists(table, key))
+		return MATCH_RES_NONE;
+
+	val = toml_string_in(table, key);
+	if (!val.ok) {
+		warnx("invalid path match");
+		return MATCH_RES_ERR;
+	}
+
+	match->type = IFACE_MATCH_PATH;
+	match->path = val.u.s;
+	return MATCH_RES_OK;
+}
+
+const struct match_parser {
+	enum match_result (*parse)(toml_table_t *,
+				   struct interface_config_match *);
+} match_parsers[] = {
+	{ parse_config_interface_match_phys_binding },
+	{ parse_config_interface_match_path },
+};
+
+static int parse_config_interface_match(struct ctx *ctx, unsigned int idx,
+					toml_table_t *interface,
+					struct interface_config_match *match)
+{
+	toml_table_t *match_conf;
+	toml_datum_t match_str;
+	bool match_set = false;
+	unsigned int i;
+
+	/* match = "all" is special: no table, but a string */
+	match_str = toml_string_in(interface, "match");
+	if (match_str.ok) {
+		char *s = match_str.u.s;
+		int rc = -1;
+
+		if (!strcmp(s, "all")) {
+			match->type = IFACE_MATCH_ALL;
+			rc = 0;
+		} else {
+			warnx("invalid interface match value %s", s);
+		}
+
+		free(s);
+		return rc;
+	}
+
+	match_conf = toml_table_in(interface, "match");
+	if (!match_conf) {
+		warnx("no match section for interface index %d", idx);
+		return -1;
+	}
+
+	for (i = 0; i < ARRAY_SIZE(match_parsers); i++) {
+		const struct match_parser *p = &match_parsers[i];
+		enum match_result mr;
+
+		mr = p->parse(match_conf, match);
+		if (mr == MATCH_RES_ERR)
+			return -1;
+
+		if (mr == MATCH_RES_OK) {
+			if (match_set) {
+				warnx("multiple match types for interface index %d",
+				      idx);
+				return -1;
+			}
+			match_set = true;
+		}
+	}
+
+	return match_set ? 0 : -1;
+}
+
+static int parse_config_interface(struct ctx *ctx, unsigned int idx,
+				  toml_table_t *interface,
+				  struct interface_config *config)
+{
+	toml_datum_t conf_str;
+	int rc;
+
+	rc = parse_config_interface_match(ctx, idx, interface, &config->match);
+	if (rc) {
+		warnx("no valid match config for interface index %x", idx);
+		return -1;
+	}
+
+	conf_str = toml_string_in(interface, "role");
+	if (conf_str.ok) {
+		char *s = conf_str.u.s;
+		int rc = parse_config_role(conf_str.u.s, &config->role);
+		if (rc) {
+			warnx("invalid role %s in interface section", s);
+		} else if (config->role == ENDPOINT_ROLE_UNKNOWN) {
+			warnx("cannot set 'unknown' role in interface section");
+			rc = -1;
+		} else {
+			config->role_set = true;
+		}
+		free(s);
+		if (rc)
+			return rc;
+	}
+
+	return 0;
+}
+
+static int parse_config_interfaces(struct ctx *ctx, toml_array_t *interfaces)
+{
+	struct interface_config *configs;
+	int rc, i, n;
+
+	n = toml_array_nelem(interfaces);
+	if (n < 0) {
+		warnx("can't parse interfaces array");
+		return -1;
+	}
+	if (!n)
+		return 0;
+
+	configs = calloc(n, sizeof(*configs));
+	if (!configs) {
+		warn("can't allocate %d interface configs", n);
+		return -1;
+	}
+
+	for (i = 0; i < n; i++) {
+		toml_table_t *interface = toml_table_at(interfaces, i);
+		if (!interface) {
+			warnx("no interface config at %d?", i);
+			goto err_free;
+		}
+
+		rc = parse_config_interface(ctx, i, interface, &configs[i]);
+		if (rc)
+			goto err_free;
+	}
+
+	ctx->interface_configs = configs;
+	ctx->num_interface_configs = n;
+
+	return 0;
+
+err_free:
+	free(configs);
+	return -1;
+}
+
 static int parse_config(struct ctx *ctx)
 {
 	toml_table_t *conf_root, *mctp_tab, *bus_owner;
+	toml_array_t *interfaces;
 	bool conf_file_specified;
 	char errbuf[256] = { 0 };
 	const char *filename;
@@ -5389,9 +5696,12 @@ static int parse_config(struct ctx *ctx)
 		goto out_close;
 	}
 
-	val = toml_string_in(conf_root, "mode");
+	val = toml_string_in(conf_root, "role");
+	if (!val.ok) {
+		val = toml_string_in(conf_root, "mode");
+	}
 	if (val.ok) {
-		rc = parse_config_mode(ctx, val.u.s);
+		rc = parse_config_role(val.u.s, &ctx->default_role);
 		free(val.u.s);
 		if (rc)
 			goto out_free;
@@ -5407,6 +5717,13 @@ static int parse_config(struct ctx *ctx)
 	bus_owner = toml_table_in(conf_root, "bus-owner");
 	if (bus_owner) {
 		rc = parse_config_bus_owner(ctx, bus_owner);
+		if (rc)
+			goto out_free;
+	}
+
+	interfaces = toml_array_in(conf_root, "interface");
+	if (interfaces) {
+		rc = parse_config_interfaces(ctx, interfaces);
 		if (rc)
 			goto out_free;
 	}
@@ -5463,7 +5780,15 @@ static void setup_config_defaults(struct ctx *ctx)
 
 static void free_config(struct ctx *ctx)
 {
+	unsigned int i;
+
 	free(ctx->config_filename);
+	for (i = 0; i < ctx->num_interface_configs; i++) {
+		struct interface_config *config = &ctx->interface_configs[i];
+		if (config->match.type == IFACE_MATCH_PATH)
+			free(config->match.path);
+	}
+	free(ctx->interface_configs);
 }
 
 static void free_ctrl_cmd_defaults(struct ctx *ctx)

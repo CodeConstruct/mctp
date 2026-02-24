@@ -315,16 +315,23 @@ The configuration file has a global section, plus function-specific sections.
 
 These apply to all modes of `mctpd` operation. One top-level setting is defined:
 
-#### `mode`: mctpd mode of operation
+#### `role`: local MCTP device role
 
-* type: string enum: `bus-owner` or `endpoint`
+* type: string enum: `bus-owner`, `endpoint` or `unknown`
 * default: `bus-owner`
 
-This sets the overall mode of `mctpd`, either as a Bus Owner (`mode =
-"bus-owner"`) or Endpoint (`mode = "endpoint"`). In bus owner mode, mctpd will
+This sets the overall role of `mctpd`, either as a Bus Owner (`role =
+"bus-owner"`) or Endpoint (`role = "endpoint"`). In bus owner mode, mctpd will
 assume responsibility for allocating addresses to other endpoints. In endpoint
 mode, mctpd will not allocate addresses, but instead accept allocations from an
 external bus owner.
+
+A value of `unknown` allows per-interface settings; the dbus interface's
+`au.com.codeconstruct.MCTP.Interface1.Role` property may be written to set
+a specific role for each interface.
+
+Previous versions of `mctpd` used `mode` for this configuration, both `role`
+and `mode` are accepted.
 
 ### `[mctp]` section
 
@@ -398,3 +405,62 @@ space. Value should be between [```0.5 * TRECLAIM (5)```- ```10```] seconds.
 Such periodic polling is common for all the briged endpoints among allocated
 pool space [`.PoolStart` - `.PoolEnd`] of the bridge.
 Polling could be provisioned to be disabled via setting the value as ```0```.
+
+### `[[interface]]`: per-interface configuration
+
+The `[[interface]]` table allows configuration to be applied to specific
+interfaces. Each `[[interface]]` entry contains a "match" definition, which
+determines which MCTP interfaces the table applies to.
+
+Matches are processed in the order they appear in the configuration file;
+the first `[[interface]]` section that matches is applied.
+
+Other content of the interface table is configuration to be applied. The
+only setting currently supported is `role`, to set mctpd's role as
+either bus-owner or endpoint on this interface.
+
+```toml
+role = "bus-owner"
+[[interface]]
+match = ...
+role = "endpoint"
+```
+
+#### Match types
+
+Match on all interfaces:
+
+```toml
+# match all interfaces
+[[interface]]
+match = "all"
+```
+
+Match on a physical transport binding type:
+
+```toml
+# match only MCTP-over-i2c interfaces
+[[interface]]
+match = { phys-type = "i2c" }
+```
+
+Available binding types are: `SMBus` / `I2C`, `PCIe`, `USB`, `KCS`, `serial`,
+`I3C`, `MMBI`, or `UCIE`. Matches are case-insensitive.
+
+Match on a sysfs device path:
+
+```toml
+# match on sysfs path
+[[interface]]
+match = { path = "/devices/pci0000:00/0000:00:08.3/usb10/10-0:1.0" }
+```
+
+Paths may use glob expressions:
+
+```toml
+# match on globbed sysfs path
+[[interface]]
+match = { path = "/devices/pci0000:00/0000:00:08.3/*" }
+```
+
+Paths have the `/sys` prefix stripped.

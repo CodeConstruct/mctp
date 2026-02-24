@@ -81,6 +81,7 @@ class System:
             self.mtu = max_mtu
             self.up = up
             self.phys_binding = phys_binding
+            self.sysfs_path = '/devices/virtual/' + name
 
         def __str__(self):
             lladdrstr = ':'.join('%02x' % b for b in self.lladdr)
@@ -296,6 +297,12 @@ class System:
             return None
 
         return iface, lladdr
+
+    def lookup_link_path(self, ifname: str):
+        iface = self.find_interface_by_name(ifname)
+        if iface is None:
+            return None
+        return iface.sysfs_path
 
     def dump(self):
         print("system:")
@@ -1289,14 +1296,27 @@ class MctpProcessWrapper:
                 await send_fd(self.sock_local, remote.fileno())
                 remote.close()
                 nursery.start_soon(sd.run)
+
+            elif op == 0x04:
+                # Link sysfs lookup
+                ifname = data[1:].decode('utf-8')
+                path = self.system.lookup_link_path(ifname)
+                if path is None:
+                    data = b'\0'
+                else:
+                    b = path.encode('utf-8')
+                    data = bytes([len(b)]) + b
+                await self.sock_local.send(data)
+
             else:
                 print(f"unknown op {op}")
 
 
 class MctpdWrapper(MctpProcessWrapper):
-    def __init__(self, bus, sysnet, binary=None, config=None):
+    def __init__(self, bus, sysnet, binary=None, args=None, config=None):
         super().__init__(sysnet)
         self.bus = bus
+        self.args = args or ['-v']
         self.binary = binary or './test-mctpd'
         self.config = config
 
@@ -1340,18 +1360,18 @@ class MctpdWrapper(MctpProcessWrapper):
         # start mctpd, passing our control socket
         env = os.environ.copy()
         env['MCTP_TEST_SOCK'] = str(self.sock_remote.fileno())
+        args = self.args
 
         if self.config:
             config_file = tempfile.NamedTemporaryFile('w', prefix="mctp.conf.")
             config_file.write(self.config)
             config_file.flush()
-            command = [self.binary, '-v', '-c', config_file.name]
+            args += ['-c', config_file.name]
         else:
             config_file = None
-            command = [self.binary, '-v']
 
         proc = await trio.lowlevel.open_process(
-            command=command,
+            command=[self.binary] + args,
             pass_fds=(1, 2, self.sock_remote.fileno()),
             env=env,
         )
@@ -1430,11 +1450,13 @@ async def main():
     import asyncdbus
 
     binary = None
+    args = None
     if len(sys.argv) > 1:
         binary = sys.argv[1]
+        args = sys.argv[2:]
     async with asyncdbus.MessageBus().connect() as dbus:
         sysnet = await default_sysnet()
-        mctpd = MctpdWrapper(dbus, sysnet, binary=binary)
+        mctpd = MctpdWrapper(dbus, sysnet, binary=binary, args=args)
         async with trio.open_nursery() as nursery:
             nursery.start_soon(sighandler)
             await mctpd.start_mctpd(nursery)

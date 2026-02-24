@@ -4,12 +4,19 @@ import asyncdbus
 
 from mctp_test_utils import (
     mctpd_mctp_iface_obj,
+    mctpd_mctp_iface_control_obj,
     mctpd_mctp_network_obj,
     mctpd_mctp_endpoint_common_obj,
     mctpd_mctp_endpoint_control_obj,
     mctpd_mctp_base_iface_obj,
 )
-from mctpenv import Endpoint, MCTPSockAddr, MCTPControlCommand, MctpdWrapper
+from mctpenv import (
+    Endpoint,
+    MCTPSockAddr,
+    MCTPControlCommand,
+    MctpdWrapper,
+    PhysicalBinding,
+)
 
 # DBus constant symbol suffixes:
 #
@@ -1953,6 +1960,144 @@ async def test_bridged_endpoint_poll_continue(
     # Wait more to see if poll count increments
     await trio.sleep(1)
     assert poll_count > poll_count_before
+
+    res = await mctpd.stop_mctpd()
+    assert res == 0
+
+
+async def test_iface_config_none(dbus, sysnet, nursery):
+    """Test that our interface config tests are functional"""
+    config = """
+    role = "unknown"
+    """
+    mctpd = MctpdWrapper(dbus, sysnet, config=config)
+    await mctpd.start_mctpd(nursery)
+
+    iface = await mctpd_mctp_iface_control_obj(dbus, mctpd.system.interfaces[0])
+    role = await iface.get_role()
+    assert role == "Unknown"
+    res = await mctpd.stop_mctpd()
+    assert res == 0
+
+
+async def test_iface_config_match_all(dbus, sysnet, nursery):
+    """Test that our interface config tests are functional"""
+    config = """
+    role = "unknown"
+    [[interface]]
+    match = "all"
+    role = "bus-owner"
+    """
+    mctpd = MctpdWrapper(dbus, sysnet, config=config)
+    await mctpd.start_mctpd(nursery)
+
+    iface = await mctpd_mctp_iface_control_obj(dbus, mctpd.system.interfaces[0])
+    role = await iface.get_role()
+    assert role == "BusOwner"
+    res = await mctpd.stop_mctpd()
+    assert res == 0
+
+
+async def test_iface_config_match_phys_binding(dbus, sysnet, nursery):
+    """Test that we can match an interface from a phys binding type"""
+    config = """
+    role = "unknown"
+    [[interface]]
+    match = { phys-type = "i2c" }
+    role = "bus-owner"
+    """
+
+    mctpd = MctpdWrapper(dbus, sysnet, config=config)
+    iface = mctpd.system.interfaces[0]
+    iface.phys_binding = PhysicalBinding.SMBUS
+
+    await mctpd.start_mctpd(nursery)
+
+    iface = await mctpd_mctp_iface_control_obj(dbus, iface)
+    role = await iface.get_role()
+    assert role == "BusOwner"
+
+    res = await mctpd.stop_mctpd()
+    assert res == 0
+
+
+async def test_iface_config_match_path_exact(dbus, sysnet, nursery):
+    """Test that we can match an interface from an exact path"""
+    config = """
+    role = "unknown"
+    [[interface]]
+    match = { path = "/devices/virtual/mctp0" }
+    role = "bus-owner"
+    """
+
+    mctpd = MctpdWrapper(dbus, sysnet, config=config)
+    await mctpd.start_mctpd(nursery)
+
+    iface = await mctpd_mctp_iface_control_obj(dbus, mctpd.system.interfaces[0])
+    role = await iface.get_role()
+    assert role == "BusOwner"
+
+    res = await mctpd.stop_mctpd()
+    assert res == 0
+
+
+async def test_iface_config_nomatch_path(dbus, sysnet, nursery):
+    """Test that we do not match an interface from an exact (non-matching)
+    path
+    """
+    config = """
+    role = "unknown"
+    [[interface]]
+    match = { path = "/devices/virtual/mctp1" }
+    role = "bus-owner"
+    """
+
+    mctpd = MctpdWrapper(dbus, sysnet, config=config)
+    await mctpd.start_mctpd(nursery)
+
+    iface = await mctpd_mctp_iface_control_obj(dbus, mctpd.system.interfaces[0])
+    role = await iface.get_role()
+    assert role == "Unknown"
+    res = await mctpd.stop_mctpd()
+    assert res == 0
+
+
+async def test_iface_config_match_path_glob(dbus, sysnet, nursery):
+    """Test that we can match an interface from a globbed path"""
+    config = """
+    role = "unknown"
+    [[interface]]
+    match = { path = "/devices/virtual/mctp*" }
+    role = "bus-owner"
+    """
+
+    mctpd = MctpdWrapper(dbus, sysnet, config=config)
+    await mctpd.start_mctpd(nursery)
+
+    iface = await mctpd_mctp_iface_control_obj(dbus, mctpd.system.interfaces[0])
+    role = await iface.get_role()
+    assert role == "BusOwner"
+
+    res = await mctpd.stop_mctpd()
+    assert res == 0
+
+
+async def test_iface_config_match_path_none(dbus, sysnet, nursery):
+    """Test that we can handle a missing sysfs path, not matching anything"""
+    config = """
+    role = "unknown"
+    [[interface]]
+    match = { path = "*" }
+    role = "bus-owner"
+    """
+
+    mctpd = MctpdWrapper(dbus, sysnet, config=config)
+    mctpd.system.interfaces[0].sysfs_path = None
+    await mctpd.start_mctpd(nursery)
+
+    iface = await mctpd_mctp_iface_control_obj(dbus, mctpd.system.interfaces[0])
+    role = await iface.get_role()
+    assert role != "BusOwner"
 
     res = await mctpd.stop_mctpd()
     assert res == 0

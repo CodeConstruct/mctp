@@ -41,6 +41,7 @@ struct mctp_ops {
 	struct sd_event_ops sd_event;
 #endif
 	void (*bug_warn)(const char *fmt, va_list args);
+	int (*link_sysfs_path)(const char *ifname, char **devpath);
 };
 
 extern const struct mctp_ops mctp_ops;

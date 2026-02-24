@@ -11,10 +11,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 1. `mctpd` now queries endpoints for their vendor-defined message support,
    and publishes as the newly-specced `VendorDefinedMessageTypes` dbus property.
 
+2. `mctpd` now supports configuration on individual links, without having
+   to perform dbus property updates. Links may be matched on physical transport
+   binding type, or by sysfs paths, allowing individual interface roles to be
+   specified by the configuration file.
+
 ### Fixes
 
 1. mctpd's interface objects now expose the BusOwner1 interface when set
    as a BusOwner via the Role property
+
+### Changed
+
+1. `mctpd`'s `mode` configuration (setting bus owner vs. endpoint roles) is
+   now called `role`. Configuration parsing will still allow the `mode` setting,
+   but this will be deprecated in a later release.
 
 ## [2.5] - 2026-02-17
 
