@@ -16,6 +16,7 @@ from mctpenv import (
     MCTPControlCommand,
     MctpdWrapper,
     VDMType,
+    PhysicalBinding,
 )
 
 # DBus constant symbol suffixes:
@@ -2012,5 +2013,28 @@ async def test_iface_config_match_all(dbus, sysnet, nursery):
     iface = await mctpd_mctp_iface_control_obj(dbus, mctpd.system.interfaces[0])
     role = await iface.get_role()
     assert role == "BusOwner"
+    res = await mctpd.stop_mctpd()
+    assert res == 0
+
+
+async def test_iface_config_match_phys_binding(dbus, sysnet, nursery):
+    """Test that we can match an interface from a phys binding type"""
+    config = """
+    role = "unknown"
+    [[interface]]
+    match = { phys-type = "i2c" }
+    role = "bus-owner"
+    """
+
+    mctpd = MctpdWrapper(dbus, sysnet, config=config)
+    iface = mctpd.system.interfaces[0]
+    iface.phys_binding = PhysicalBinding.SMBUS
+
+    await mctpd.start_mctpd(nursery)
+
+    iface = await mctpd_mctp_iface_control_obj(dbus, iface)
+    role = await iface.get_role()
+    assert role == "BusOwner"
+
     res = await mctpd.stop_mctpd()
     assert res == 0
