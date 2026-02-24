@@ -5204,7 +5204,7 @@ static int parse_args(struct ctx *ctx, int argc, char **argv)
 	return 0;
 }
 
-static int parse_config_mode(struct ctx *ctx, const char *mode)
+static int parse_config_mode(const char *mode, enum endpoint_role *rolep)
 {
 	unsigned int i;
 
@@ -5214,7 +5214,7 @@ static int parse_config_mode(struct ctx *ctx, const char *mode)
 		if (!role->conf_val || strcmp(role->conf_val, mode))
 			continue;
 
-		ctx->default_role = role->role;
+		*rolep = role->role;
 		return 0;
 	}
 
@@ -5388,7 +5388,7 @@ static int parse_config(struct ctx *ctx)
 
 	val = toml_string_in(conf_root, "mode");
 	if (val.ok) {
-		rc = parse_config_mode(ctx, val.u.s);
+		rc = parse_config_mode(val.u.s, &ctx->default_role);
 		free(val.u.s);
 		if (rc)
 			goto out_free;
