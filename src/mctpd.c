@@ -244,6 +244,16 @@ struct vdm_type_support {
 	sd_bus_track *source_peer;
 };
 
+struct interface_config {
+	struct interface_config_match {
+		enum {
+			IFACE_MATCH_ALL,
+		} type;
+		union {
+		};
+	} match;
+};
+
 struct ctx {
 	sd_event *event;
 	sd_bus *bus;
@@ -291,6 +301,11 @@ struct ctx {
 	// bus owner/bridge polling interval in usecs for
 	// checking endpoint's accessibility.
 	uint64_t endpoint_poll;
+
+	// interface configuration (from config file), to be matched and
+	// applied on new interface events
+	struct interface_config *interface_configs;
+	size_t num_interface_configs;
 };
 
 static int emit_endpoint_added(const struct peer *peer);
@@ -5065,6 +5080,43 @@ static void del_net(struct net *net)
 	free(net);
 }
 
+static bool config_link_match(struct interface_config_match *match,
+			      struct link *link)
+{
+	switch (match->type) {
+	case IFACE_MATCH_ALL:
+		return true;
+	}
+	return false;
+}
+
+static struct interface_config *link_find_configuration(struct ctx *ctx,
+							struct link *link)
+{
+	unsigned int i;
+
+	for (i = 0; i < ctx->num_interface_configs; i++) {
+		struct interface_config *config = &ctx->interface_configs[i];
+		if (config_link_match(&config->match, link))
+			return config;
+	}
+
+	return NULL;
+}
+
+static int link_apply_configuration(struct ctx *ctx, struct link *link)
+{
+	struct interface_config *config;
+
+	config = link_find_configuration(ctx, link);
+	if (!config)
+		return 0;
+
+	// TODO: apply configuration as matched
+
+	return 0;
+}
+
 static int add_interface(struct ctx *ctx, int ifindex)
 {
 	int rc;
@@ -5095,6 +5147,13 @@ static int add_interface(struct ctx *ctx, int ifindex)
 	rc = asprintf(&link->path, "%s/%s", MCTP_DBUS_PATH_LINKS, ifname);
 	if (rc < 0) {
 		rc = -ENOMEM;
+		goto err_free;
+	}
+
+	rc = link_apply_configuration(ctx, link);
+	if (rc) {
+		warnx("Failed to apply link configuration for link index %d",
+		      ifindex);
 		goto err_free;
 	}
 
@@ -5357,9 +5416,133 @@ static int parse_config_bus_owner(struct ctx *ctx, toml_table_t *bus_owner)
 	return 0;
 }
 
+enum match_result {
+	MATCH_RES_NONE,
+	MATCH_RES_OK,
+	MATCH_RES_ERR,
+};
+
+const struct match_parser {
+	enum match_result (*parse)(toml_table_t *,
+				   struct interface_config_match *);
+} match_parsers[] = {};
+
+static int parse_config_interface_match(struct ctx *ctx, unsigned int idx,
+					toml_table_t *interface,
+					struct interface_config_match *match)
+{
+	toml_table_t *match_conf;
+	toml_datum_t match_str;
+	bool match_set = false;
+	unsigned int i;
+
+	/* match = "all" is special: no table, but a string */
+	match_str = toml_string_in(interface, "match");
+	if (match_str.ok) {
+		char *s = match_str.u.s;
+		int rc = -1;
+
+		if (!strcmp(s, "all")) {
+			match->type = IFACE_MATCH_ALL;
+			rc = 0;
+		} else {
+			warnx("invalid interface match value %s", s);
+		}
+
+		free(s);
+		return rc;
+	}
+
+	match_conf = toml_table_in(interface, "match");
+	if (!match_conf) {
+		warnx("no match section for interface index %d", idx);
+		return -1;
+	}
+
+// while match_parsers[] is empty
+#pragma GCC diagnostic ignored "-Wtype-limits"
+
+	for (i = 0; i < ARRAY_SIZE(match_parsers); i++) {
+		const struct match_parser *p = &match_parsers[i];
+		enum match_result mr;
+
+		mr = p->parse(match_conf, match);
+		if (mr == MATCH_RES_ERR)
+			return -1;
+
+		if (mr == MATCH_RES_OK) {
+			if (match_set) {
+				warnx("multiple match types for interface index %d",
+				      idx);
+				return -1;
+			}
+			match_set = true;
+		}
+	}
+
+	return match_set ? 0 : -1;
+}
+
+static int parse_config_interface(struct ctx *ctx, unsigned int idx,
+				  toml_table_t *interface,
+				  struct interface_config *config)
+{
+	int rc;
+
+	rc = parse_config_interface_match(ctx, idx, interface, &config->match);
+	if (rc) {
+		warnx("no valid match config for interface index %x", idx);
+		return -1;
+	}
+
+	return 0;
+}
+
+static int parse_config_interfaces(struct ctx *ctx, toml_array_t *interfaces)
+{
+	struct interface_config *configs;
+	int rc, i, n;
+
+	n = toml_array_nelem(interfaces);
+	if (n < 0) {
+		warnx("can't parse interfaces array");
+		return -1;
+	}
+	if (!n)
+		return 0;
+
+	configs = calloc(n, sizeof(*configs));
+	if (!configs) {
+		warn("can't allocate %d interface configs", n);
+		return -1;
+	}
+
+	for (i = 0; i < n; i++) {
+		toml_table_t *interface = toml_table_at(interfaces, i);
+		if (!interface) {
+			warnx("no interface config at %d?", i);
+			goto err_free;
+		}
+
+		rc = parse_config_interface(ctx, i, interface, &configs[i]);
+		if (rc)
+			goto err_free;
+	}
+
+	ctx->interface_configs = configs;
+	ctx->num_interface_configs = n;
+
+	return 0;
+
+err_free:
+	free(configs);
+	return -1;
+}
+
 static int parse_config(struct ctx *ctx)
 {
 	toml_table_t *conf_root, *mctp_tab, *bus_owner;
+	toml_array_t *interfaces;
 	bool conf_file_specified;
 	char errbuf[256] = { 0 };
 	const char *filename;
@@ -5410,6 +5593,13 @@ static int parse_config(struct ctx *ctx)
 	bus_owner = toml_table_in(conf_root, "bus-owner");
 	if (bus_owner) {
 		rc = parse_config_bus_owner(ctx, bus_owner);
+		if (rc)
+			goto out_free;
+	}
+
+	interfaces = toml_array_in(conf_root, "interface");
+	if (interfaces) {
+		rc = parse_config_interfaces(ctx, interfaces);
 		if (rc)
 			goto out_free;
 	}
@@ -5467,6 +5657,7 @@ static void setup_config_defaults(struct ctx *ctx)
 static void free_config(struct ctx *ctx)
 {
 	free(ctx->config_filename);
+	free(ctx->interface_configs);
 }
 
 static void free_ctrl_cmd_defaults(struct ctx *ctx)

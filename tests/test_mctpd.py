@@ -4,6 +4,7 @@ import asyncdbus
 
 from mctp_test_utils import (
     mctpd_mctp_iface_obj,
+    mctpd_mctp_iface_control_obj,
     mctpd_mctp_network_obj,
     mctpd_mctp_endpoint_common_obj,
     mctpd_mctp_endpoint_control_obj,
@@ -1954,5 +1955,20 @@ async def test_bridged_endpoint_poll_continue(
     await trio.sleep(1)
     assert poll_count > poll_count_before
 
+    res = await mctpd.stop_mctpd()
+    assert res == 0
+
+
+async def test_iface_config_none(dbus, sysnet, nursery):
+    """Test that our interface config tests are functional"""
+    config = """
+    role = "unknown"
+    """
+    mctpd = MctpdWrapper(dbus, sysnet, config=config)
+    await mctpd.start_mctpd(nursery)
+
+    iface = await mctpd_mctp_iface_control_obj(dbus, mctpd.system.interfaces[0])
+    role = await iface.get_role()
+    assert role == "Unknown"
     res = await mctpd.stop_mctpd()
     assert res == 0
