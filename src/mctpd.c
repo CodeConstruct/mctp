@@ -3163,10 +3163,8 @@ static int query_peer_properties(struct peer *peer)
 	}
 
 	for (unsigned int i = 0; i < peer->num_message_types; i++) {
-		if (peer->message_types[i] ==
-			    MCTP_GET_VDM_SUPPORT_IANA_FORMAT_ID ||
-		    peer->message_types[i] ==
-			    MCTP_GET_VDM_SUPPORT_PCIE_FORMAT_ID) {
+		if (peer->message_types[i] == MCTP_TYPE_VENDOR_IANA ||
+		    peer->message_types[i] == MCTP_TYPE_VENDOR_PCIE) {
 			supports_vdm = true;
 			break;
 		}
