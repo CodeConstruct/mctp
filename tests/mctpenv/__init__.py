@@ -386,8 +386,12 @@ class Endpoint:
         self.lladdr = lladdr
         self.uuid = ep_uuid or uuid.uuid1()
         self.eid = eid
-        self.types = types or [0]
         self.vdm_msg_types = vdm_msg_types or []
+        vdm_set = set([t.msgtype for t in self.vdm_msg_types])
+        if types is None:
+            self.types = [0] + list(vdm_set)
+        else:
+            self.types = types
         self.bridged_eps = []
         self.allocated_pool = None  # or (start, size)
 
