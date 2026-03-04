@@ -357,6 +357,11 @@ class VDMType:
         TYPE_PCI: ("PCI", FORMAT_PCI, 2),
         TYPE_IANA: ("IANA", FORMAT_IANA, 4),
     }
+    # format to (type, dbus type)
+    fmt_map = {
+        FORMAT_PCI: (TYPE_PCI, 'q'),
+        FORMAT_IANA: (TYPE_IANA, 'u'),
+    }
 
     def __init__(self, msgtype, vdmtype, subtype=0):
         self.msgtype = msgtype
@@ -367,6 +372,15 @@ class VDMType:
         (name, _, _) = self.type_map.get(self.msgtype)
         return f"<VDMType {name}: {self.vdmtype:x} {self.subtype:x}>"
 
+    def _key(self):
+        return (self.msgtype, self.vdmtype, self.subtype)
+
+    def __eq__(self, value):
+        return self._key() == value._key()
+
+    def __hash__(self):
+        return hash(self._key())
+
     def format(self):
         """Convert to the Get Vendor Defined Message Support response format"""
         (_, vid_fmt, vid_size) = self.type_map.get(self.msgtype)
@@ -376,6 +390,17 @@ class VDMType:
             + self.vdmtype.to_bytes(vid_size, 'big')
             + self.subtype.to_bytes(2, 'big')
         )
+
+    @classmethod
+    def parse_dbus(cls, dbus_res):
+        """Convert from a dbus GetVendorDefinedMessageTypes reply"""
+        types = []
+        for t in dbus_res:
+            fmt, var, subtype = t
+            (msgtype, dbus_type) = cls.fmt_map.get(fmt)
+            assert var.signature == dbus_type
+            types.append(cls(msgtype, var.value, subtype))
+        return types
 
 
 class Endpoint:

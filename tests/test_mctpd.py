@@ -660,25 +660,9 @@ async def test_query_vdm_types(dbus, mctpd):
 
     ep_obj = await mctpd_mctp_endpoint_common_obj(dbus, path)
 
-    # Query VendorDefinedMessageTypes property
-    vdm_types = list(await ep_obj.get_vendor_defined_message_types())
-
-    # Verify we got 2 VDM types
-    assert len(vdm_types) == 2
-
-    # Verify first VDM type: PCIe format (0), VID 0x1234, cmd_set 0x5678
-    assert vdm_types[0][0] == 0  # format: PCIe
-    assert (
-        vdm_types[0][1].value == 0x1234
-    )  # vendor_id (variant containing uint16)
-    assert vdm_types[0][2] == 0x5678  # cmd_set
-
-    # Verify second VDM type: IANA format (1), VID 0xabcdef12, cmd_set 0x3456
-    assert vdm_types[1][0] == 1  # format: IANA
-    assert (
-        vdm_types[1][1].value == 0xABCDEF12
-    )  # vendor_id (variant containing uint32)
-    assert vdm_types[1][2] == 0x3456  # cmd_set
+    r = await ep_obj.get_vendor_defined_message_types()
+    ret_vdm_types = VDMType.parse_dbus(r)
+    assert set(vdm_types) == set(ret_vdm_types)
 
 
 class InvalidVDMEndpointBase(Endpoint):
