@@ -9,7 +9,13 @@ from mctp_test_utils import (
     mctpd_mctp_endpoint_control_obj,
     mctpd_mctp_base_iface_obj,
 )
-from mctpenv import Endpoint, MCTPSockAddr, MCTPControlCommand, MctpdWrapper
+from mctpenv import (
+    Endpoint,
+    MCTPSockAddr,
+    MCTPControlCommand,
+    MctpdWrapper,
+    VDMType,
+)
 
 # DBus constant symbol suffixes:
 #
@@ -640,8 +646,11 @@ async def test_query_message_types(dbus, mctpd):
 async def test_query_vdm_types(dbus, mctpd):
     """Test that VendorDefinedMessageTypes is queried and populated."""
     iface = mctpd.system.interfaces[0]
-    vdm_support = [[0, 0x1234, 0x5678], [1, 0xABCDEF12, 0x3456]]
-    ep = Endpoint(iface, bytes([0x1E]), eid=15, vdm_msg_types=vdm_support)
+    vdm_types = [
+        VDMType(VDMType.TYPE_PCI, 0x1234, 0x5678),
+        VDMType(VDMType.TYPE_IANA, 0xABCDEF12, 0x3456),
+    ]
+    ep = Endpoint(iface, bytes([0x1E]), eid=15, vdm_msg_types=vdm_types)
     mctpd.network.add_endpoint(ep)
 
     mctp = await mctpd_mctp_iface_obj(dbus, iface)

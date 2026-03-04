@@ -347,6 +347,37 @@ class MCTPControlCommand(MCTPCommand):
         return bytes([flags, self.cmd]) + self.data
 
 
+class VDMType:
+    TYPE_PCI = 0x7E
+    TYPE_IANA = 0x7F
+    FORMAT_PCI = 0
+    FORMAT_IANA = 1
+    # type to (name, format, type_size)
+    type_map = {
+        TYPE_PCI: ("PCI", FORMAT_PCI, 2),
+        TYPE_IANA: ("IANA", FORMAT_IANA, 4),
+    }
+
+    def __init__(self, msgtype, vdmtype, subtype=0):
+        self.msgtype = msgtype
+        self.vdmtype = vdmtype
+        self.subtype = subtype
+
+    def __repr__(self):
+        (name, _, _) = self.type_map.get(self.msgtype)
+        return f"<VDMType {name}: {self.vdmtype:x} {self.subtype:x}>"
+
+    def format(self):
+        """Convert to the Get Vendor Defined Message Support response format"""
+        (_, vid_fmt, vid_size) = self.type_map.get(self.msgtype)
+
+        return (
+            vid_fmt.to_bytes(1)
+            + self.vdmtype.to_bytes(vid_size, 'big')
+            + self.subtype.to_bytes(2, 'big')
+        )
+
+
 class Endpoint:
     def __init__(
         self, iface, lladdr, ep_uuid=None, eid=0, types=None, vdm_msg_types=None
@@ -433,21 +464,17 @@ class Endpoint:
 
             elif opcode == 6:
                 # Get Vendor Defined Message Support
-                vdm_support = self.vdm_msg_types
+                vdm_types = self.vdm_msg_types
+                n_vdm_types = len(vdm_types)
                 selector = data[2]
-                if selector >= len(vdm_support):
+                if selector >= n_vdm_types:
                     await sock.send(raddr, bytes(hdr + [0x02]))
                     return
-                vdm_format, vendor_id, cmd_set = vdm_support[selector]
+                vdm_data = vdm_types[selector].format()
                 next_selector = (
-                    0xFF if selector == (len(vdm_support) - 1) else selector + 1
+                    0xFF if selector == (n_vdm_types - 1) else selector + 1
                 )
-                resp = bytes(hdr + [0x00, next_selector, vdm_format])
-                if vdm_format == 0:
-                    resp += vendor_id.to_bytes(2, 'big')
-                elif vdm_format == 1:
-                    resp += vendor_id.to_bytes(4, 'big')
-                resp += cmd_set.to_bytes(2, 'big')
+                resp = bytes(hdr + [0x00, next_selector]) + vdm_data
                 await sock.send(raddr, resp)
 
             elif opcode == 8:
