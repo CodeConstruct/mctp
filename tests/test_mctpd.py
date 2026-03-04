@@ -665,6 +665,37 @@ async def test_query_vdm_types(dbus, mctpd):
     assert set(vdm_types) == set(ret_vdm_types)
 
 
+async def test_query_vdm_types_no_control(dbus, mctpd):
+    """Test that we query VDM types if *only* a VDM type is reported in the
+    non-vendor Message Type Support response
+    """
+    iface = mctpd.system.interfaces[0]
+    vdm_types = [
+        VDMType(VDMType.TYPE_PCI, 0x1234, 0x5678),
+    ]
+    # only include the VDM type
+    ep = Endpoint(
+        iface,
+        bytes([0x1E]),
+        eid=15,
+        types=[VDMType.TYPE_PCI],
+        vdm_msg_types=vdm_types,
+    )
+    mctpd.network.add_endpoint(ep)
+
+    mctp = await mctpd_mctp_iface_obj(dbus, iface)
+    (eid, net, path, new) = await mctp.call_learn_endpoint(ep.lladdr)
+
+    assert eid == ep.eid
+
+    ep_obj = await mctpd_mctp_endpoint_common_obj(dbus, path)
+
+    # Query VendorDefinedMessageTypes property
+    vdm_types = list(await ep_obj.get_vendor_defined_message_types())
+
+    assert len(vdm_types) == 1
+
+
 class InvalidVDMEndpointBase(Endpoint):
     async def handle_mctp_control(self, sock, addr, data):
         flags, opcode = data[0:2]
