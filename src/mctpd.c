@@ -3714,7 +3714,7 @@ static int method_net_learn_endpoint(sd_bus_message *call, void *data,
 	struct ctx *ctx = net->ctx;
 	dest_phys dest = { 0 };
 	mctp_eid_t eid = 0;
-	struct peer *peer;
+	struct peer *peer = NULL;
 	int rc;
 	mctp_eid_t ret_eid;
 	uint8_t ret_ep_type, ret_medium_spec;
