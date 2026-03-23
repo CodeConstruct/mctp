@@ -2265,6 +2265,34 @@ static int allocate_eid(struct ctx *ctx, struct net *net,
 	return -1;
 }
 
+/**
+ * Validate EID pool allocation for an MCTP bridge.
+ *
+ * Ensures the pool starts at bridge_eid + 1 and verifies that neither the
+ * bridge EID nor the pool range conflicts with existing peer allocations in
+ * the network.
+ *
+ * @return 0 on success, -1 on failure.
+ */
+static int check_bridge_eid_alloc(struct net *net, mctp_eid_t bridge_eid,
+				  mctp_eid_t pool_start, unsigned int pool_size)
+{
+	mctp_eid_t eid;
+
+	if (pool_start != (bridge_eid + 1))
+		return -1;
+
+	if (net->peers[bridge_eid])
+		return -1;
+
+	for (eid = pool_start; eid < (pool_start + pool_size); eid++) {
+		if (net->peers[eid])
+			return -1;
+	}
+
+	return 0;
+}
+
 static int endpoint_assign_eid(struct ctx *ctx, sd_bus_error *berr,
 			       const dest_phys *dest, struct peer **ret_peer,
 			       mctp_eid_t static_eid, bool assign_bridge)
@@ -2363,6 +2391,100 @@ static int endpoint_assign_eid(struct ctx *ctx, sd_bus_error *berr,
 				berr, SD_BUS_ERROR_FAILED,
 				"Endpoint requested EID %d instead of assigned %d, already used",
 				new_eid, peer->eid);
+		}
+		if (rc < 0) {
+			remove_peer(peer);
+			return rc;
+		}
+	}
+
+	rc = setup_added_peer(peer);
+	if (rc < 0)
+		return rc;
+	*ret_peer = peer;
+
+	return 0;
+}
+
+static int
+endpoint_assign_bridge_static_eid(struct ctx *ctx, sd_bus_error *berr,
+				  const dest_phys *dest, struct peer **ret_peer,
+				  mctp_eid_t static_eid, mctp_eid_t pool_start,
+				  uint8_t pool_size)
+{
+	struct net *n = NULL;
+	struct peer *peer = NULL;
+	uint8_t req_pool_size;
+	uint32_t net;
+	int rc;
+
+	net = mctp_nl_net_byindex(ctx->nl, dest->ifindex);
+	if (!net) {
+		bug_warn("No net known for ifindex %d", dest->ifindex);
+		return -EPROTO;
+	}
+
+	n = lookup_net(ctx, net);
+	if (!n) {
+		bug_warn("Unknown net %d", net);
+		return -EPROTO;
+	}
+
+	rc = check_bridge_eid_alloc(n, static_eid, pool_start, pool_size);
+	if (rc) {
+		warnx("Cannot allocate static EID (+pool %d) on net %d for %s",
+		      pool_size, net, dest_phys_tostr(dest));
+		sd_bus_error_setf(berr, SD_BUS_ERROR_FAILED, "Ran out of EIDs");
+		return -EADDRNOTAVAIL;
+	}
+
+	rc = add_peer(ctx, dest, static_eid, net, &peer, false);
+	if (rc < 0)
+		return rc;
+
+	peer->pool_size = pool_size;
+	if (peer->pool_size)
+		peer->pool_start = pool_start;
+
+	add_peer_route(peer);
+
+	rc = endpoint_send_set_endpoint_id(peer, &static_eid, &req_pool_size);
+	if (rc == -ECONNREFUSED)
+		sd_bus_error_setf(
+			berr, SD_BUS_ERROR_FAILED,
+			"Endpoint returned failure to Set Endpoint ID");
+
+	if (rc < 0) {
+		// we have not yet created the pool route, reset here so that
+		// remove_peer() does not attempt to remove it
+		peer->pool_size = 0;
+		peer->pool_start = 0;
+		remove_peer(peer);
+		return rc;
+	}
+
+	if (req_pool_size > peer->pool_size) {
+		warnx("EID %d: requested pool size (%d) > pool size available (%d), limiting.",
+		      peer->eid, req_pool_size, peer->pool_size);
+	} else {
+		// peer will likely have requested less than the available range
+		peer->pool_size = req_pool_size;
+	}
+
+	if (!peer->pool_size)
+		peer->pool_start = 0;
+
+	if (static_eid != peer->eid) {
+		// avoid allocation for any different EID in response
+		warnx("Mismatch of requested from received EID, resetting the pool");
+		peer->pool_size = 0;
+		peer->pool_start = 0;
+		rc = change_peer_eid(peer, static_eid);
+		if (rc == -EEXIST) {
+			sd_bus_error_setf(
+				berr, SD_BUS_ERROR_FAILED,
+				"Endpoint requested EID %d instead of assigned %d, already used",
+				static_eid, peer->eid);
 		}
 		if (rc < 0) {
 			remove_peer(peer);
@@ -3066,6 +3188,95 @@ static int method_assign_endpoint_static(sd_bus_message *call, void *data,
 
 	return sd_bus_reply_method_return(call, "yisb", peer->eid, peer->net,
 					  peer_path, 1);
+err:
+	set_berr(ctx, rc, berr);
+	return rc;
+}
+
+static int method_assign_bridge_static(sd_bus_message *call, void *data,
+				       sd_bus_error *berr)
+{
+	dest_phys desti, *dest = &desti;
+	const char *peer_path = NULL;
+	struct peer *peer = NULL;
+	struct link *link = data;
+	struct ctx *ctx = link->ctx;
+	uint8_t eid;
+	uint8_t pool_start;
+	uint8_t pool_size;
+	bool new = true;
+	int rc;
+
+	dest->ifindex = link->ifindex;
+	if (dest->ifindex <= 0)
+		return sd_bus_error_setf(berr, SD_BUS_ERROR_INVALID_ARGS,
+					 "Unknown MCTP interface");
+
+	rc = message_read_hwaddr(call, dest);
+	if (rc < 0)
+		goto err;
+
+	rc = sd_bus_message_read(call, "y", &eid);
+	if (rc < 0)
+		goto err;
+
+	rc = sd_bus_message_read(call, "y", &pool_start);
+	if (rc < 0)
+		goto err;
+
+	rc = sd_bus_message_read(call, "y", &pool_size);
+	if (rc < 0)
+		goto err;
+
+	rc = validate_dest_phys(ctx, dest);
+	if (rc < 0)
+		return sd_bus_error_setf(berr, SD_BUS_ERROR_INVALID_ARGS,
+					 "Bad physaddr");
+
+	if (pool_start != (eid + 1)) {
+		return sd_bus_error_setf(berr, SD_BUS_ERROR_INVALID_ARGS,
+					 "Bad pool start EID");
+	}
+
+	peer = find_peer_by_phys(ctx, dest);
+	if (peer) {
+		if (eid && peer->eid == eid && pool_size == peer->pool_size) {
+			new = false;
+			goto out;
+		}
+
+		remove_peer(peer);
+		peer = NULL;
+	} else {
+		uint32_t netid;
+
+		// is the requested EID already in use? if so, reject
+		netid = mctp_nl_net_byindex(ctx->nl, dest->ifindex);
+		peer = find_peer_by_addr(ctx, eid, netid);
+		if (peer) {
+			return sd_bus_error_setf(berr,
+						 SD_BUS_ERROR_INVALID_ARGS,
+						 "Address in use");
+		}
+	}
+
+	rc = endpoint_assign_bridge_static_eid(ctx, berr, dest, &peer, eid,
+					       pool_start, pool_size);
+	if (rc < 0) {
+		goto err;
+	}
+
+	if (peer->pool_size > 0)
+		endpoint_allocate_eids(peer);
+
+out:
+	peer_path = path_from_peer(peer);
+	if (!peer_path)
+		goto err;
+
+	return sd_bus_reply_method_return(call, "yisb", peer->eid, peer->net,
+					  peer_path, new);
+
 err:
 	set_berr(ctx, rc, berr);
 	return rc;
@@ -4054,6 +4265,20 @@ static const sd_bus_vtable bus_link_owner_vtable[] = {
 		SD_BUS_PARAM(path)
 		SD_BUS_PARAM(new),
 		method_assign_endpoint_static,
+		0),
+
+	SD_BUS_METHOD_WITH_NAMES("AssignBridgeStatic",
+		"ayyyy",
+		SD_BUS_PARAM(physaddr)
+		SD_BUS_PARAM(eid)
+		SD_BUS_PARAM(poolstart)
+		SD_BUS_PARAM(poolsize),
+		"yisb",
+		SD_BUS_PARAM(eid)
+		SD_BUS_PARAM(net)
+		SD_BUS_PARAM(path)
+		SD_BUS_PARAM(new),
+		method_assign_bridge_static,
 		0),
 
 	SD_BUS_METHOD_WITH_NAMES("LearnEndpoint",
