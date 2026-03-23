@@ -203,6 +203,37 @@ This call will fail if the endpoint already has an EID, and that EID is
 different from `static-EID`, or if `static-EID` is already assigned to another
 endpoint.
 
+#### `.AssignBridgeStatic`: `ayyyy` → `yyisb`
+
+This method performs a static assignment with bridge EID pool allocation.
+
+Similar to AssignEndpointStatic, but takes an additional pool-start-EID
+and pool-size argument:
+
+```
+AssignBridgeStatic <hwaddr> <static-EID> <pool-start-EID> <pool-size>
+```
+
+`<pool-start-EID>`: The starting EID for the range of EIDs being allocated.
+This EID must be contiguous with the bridge’s own EID, to comply with the
+current MCTP 1.3.x specification. In future releases, this restriction
+may be relaxed.
+If passed as 0, mctpd will automatically choose a pool start EID.
+
+`<pool-size>`: The number of EIDs to be allocated to the bridge's EID pool.
+
+Returns:
+```
+eid        (byte)
+poolstart  (byte)
+net        (integer)
+path       (string)
+new        (bool) - true if a new EID was assigned
+```
+
+Where `eid` is the assigned EID, `poolstart` is the starting EID of the allocated
+bridge EID pool, and the remaining fields are the same as the methods above.
+
 #### `.LearnEndpoint`: `ay` → `yisb`
 
 Like SetupEndpoint but will not assign EIDs, will only query endpoints for a
