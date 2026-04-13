@@ -158,13 +158,82 @@ static const char *rtattr_name(enum attrgroup group, unsigned int type)
 	return attrnames[group].names[type];
 }
 
+static void dump_print_u32(void *val, size_t len, const char *attr_name,
+			   uint32_t attr_type, const char *prefix)
+{
+	printf("%sattr %s (0x%x): ", prefix, attr_name, attr_type);
+
+	uint32_t v;
+	if (len == sizeof(v)) {
+		memcpy(&v, val, sizeof(v));
+		printf("%u\n", v);
+	} else {
+		printf("Bad value\n");
+	}
+}
+
+static void dump_print_u8(void *val, size_t len, const char *attr_name,
+			  uint32_t attr_type, const char *prefix)
+{
+	printf("%sattr %s (0x%x): ", prefix, attr_name, attr_type);
+
+	uint8_t v;
+	if (len == sizeof(v)) {
+		memcpy(&v, val, sizeof(v));
+		printf("%u\n", v);
+	} else {
+		printf("Bad value\n");
+	}
+}
+
+static void dump_ifla_af_mctp(struct rtattr *rta, size_t len)
+{
+	for (; RTA_OK(rta, len); rta = RTA_NEXT(rta, len)) {
+		switch (rta->rta_type) {
+		case IFLA_MCTP_NET:
+			dump_print_u32(RTA_DATA(rta), RTA_PAYLOAD(rta),
+				       "IFLA_MCTP_NET", IFLA_MCTP_NET, "    ");
+			break;
+		case IFLA_MCTP_PHYS_BINDING:
+			dump_print_u8(RTA_DATA(rta), RTA_PAYLOAD(rta),
+				      "IFLA_MCTP_PHYS_BINDING",
+				      IFLA_MCTP_PHYS_BINDING, "    ");
+			break;
+		default:
+			printf("    Unknown MCTP link attribute 0x%x\n",
+			       rta->rta_type);
+			mctp_hexdump(RTA_DATA(rta), RTA_PAYLOAD(rta), "    ");
+		}
+	}
+}
+
+static void dump_ifla_af_spec(struct rtattr *rta, size_t len)
+{
+	for (; RTA_OK(rta, len); rta = RTA_NEXT(rta, len)) {
+		if (rta->rta_type == AF_MCTP) {
+			printf("  family %d AF_MCTP:\n", rta->rta_type);
+			dump_ifla_af_mctp(RTA_DATA(rta), RTA_PAYLOAD(rta));
+		} else {
+			printf("  family %d:\n", rta->rta_type);
+			mctp_hexdump(RTA_DATA(rta), RTA_PAYLOAD(rta), "  ");
+		}
+	}
+}
+
 static void dump_rtnlmsg_attrs(enum attrgroup group, struct rtattr *rta,
 			       size_t len)
 {
 	for (; RTA_OK(rta, len); rta = RTA_NEXT(rta, len)) {
 		printf("attr %s (0x%x)\n", rtattr_name(group, rta->rta_type),
 		       rta->rta_type);
-		mctp_hexdump(RTA_DATA(rta), RTA_PAYLOAD(rta), "  ");
+		switch (rta->rta_type) {
+		case IFLA_AF_SPEC:
+			dump_ifla_af_spec(RTA_DATA(rta), RTA_PAYLOAD(rta));
+			break;
+		default:
+			mctp_hexdump(RTA_DATA(rta), RTA_PAYLOAD(rta), "  ");
+			break;
+		}
 	}
 }
 
