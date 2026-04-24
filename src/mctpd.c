@@ -1233,6 +1233,9 @@ handle_control_endpoint_discovery(struct ctx *ctx, int sd,
 		return 0;
 	}
 
+	req = (void *)buf;
+	mctp_ctrl_msg_hdr_init_resp(&resp->ctrl_hdr, *req);
+
 	if (link_data->discovered == DISCOVERY_UNSUPPORTED) {
 		resp->completion_code = MCTP_CTRL_CC_ERROR_INVALID_DATA;
 		return reply_message(ctx, sd, resp,
@@ -1243,10 +1246,6 @@ handle_control_endpoint_discovery(struct ctx *ctx, int sd,
 		// if we are already discovered (i.e, assigned an EID), then no reply
 		return 0;
 	}
-
-	req = (void *)buf;
-	resp = (void *)resp;
-	mctp_ctrl_msg_hdr_init_resp(&resp->ctrl_hdr, *req);
 
 	// we need to send using physical addressing, no entry in routing table yet
 	return reply_message_phys(ctx, sd, resp, sizeof(*resp), addr);
