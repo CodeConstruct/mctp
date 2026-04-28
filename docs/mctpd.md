@@ -203,6 +203,22 @@ This call will fail if the endpoint already has an EID, and that EID is
 different from `static-EID`, or if `static-EID` is already assigned to another
 endpoint.
 
+#### `.AssignBridgeStatic`: `ayyyy` → `yisb`
+
+Similar to AssignEndpointStatic, but takes an additional pool-size and
+pool-start-EID argument:
+
+```
+AssignBridgeStatic <hwaddr> <static-EID> <pool-start-EID> <pool-size>
+```
+
+`<pool-start-EID>`: The starting EID for the range of EIDs being allocated.
+This EID must be contiguous with the bridge’s own EID.
+
+`<pool-size>`: The number of EIDs to be allocated to the bridge's EID pool.
+
+This method performs a static assignment with bridge EID pool allocation.
+
 #### `.LearnEndpoint`: `ay` → `yisb`
 
 Like SetupEndpoint but will not assign EIDs, will only query endpoints for a
