@@ -1765,6 +1765,54 @@ async def test_query_peer_properties_retry_timeout(nursery, dbus, sysnet):
     assert res == 0
 
 
+async def test_query_peer_properties_same_iid_on_retry(nursery, dbus, sysnet):
+    """Verify that retries for query_peer_properties reuse the same IID.
+
+    Per DSP0237 Table 9, a retry is a retransmission of the same MCTP control
+    message and must use the same instance ID (IID) within MT4.
+    """
+
+    class IIDTrackingEndpoint(Endpoint):
+        """Drop the first Get Message Type Support request, record all IIDs seen."""
+
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.seen_iids = []
+            self.drop_next = True
+
+        async def handle_mctp_control(self, sock, addr, data):
+            rq = data[0] & 0x80
+            opcode = data[1]
+            iid = data[0] & 0x1F
+            if rq and opcode == 0x05:  # Get Message Type Support
+                self.seen_iids.append(iid)
+                if self.drop_next:
+                    self.drop_next = False
+                    return  # simulate timeout
+            return await super().handle_mctp_control(sock, addr, data)
+
+    mctpd = MctpdWrapper(dbus, sysnet)
+    await mctpd.start_mctpd(nursery)
+
+    iface = mctpd.system.interfaces[0]
+    mctp = await mctpd_mctp_iface_obj(dbus, iface)
+
+    ep = IIDTrackingEndpoint(iface, bytes([0x1A]), eid=15, types=[0, 1, 2])
+    mctpd.network.add_endpoint(ep)
+
+    await mctp.call_setup_endpoint(ep.lladdr)
+
+    # Two Get Message Type Support requests: initial + one retry
+    assert len(ep.seen_iids) == 2
+    # Both must carry the same IID
+    assert ep.seen_iids[0] == ep.seen_iids[1], (
+        f"IID changed across retry: {ep.seen_iids[0]:#04x} -> {ep.seen_iids[1]:#04x}"
+    )
+
+    res = await mctpd.stop_mctpd()
+    assert res == 0
+
+
 async def test_bridged_endpoint_poll(dbus, sysnet, nursery, autojump_clock):
     """Test that we use endpoint poll interval from the config and
     that we discover bridged endpoints via polling

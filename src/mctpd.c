@@ -2540,20 +2540,21 @@ static int get_endpoint_peer(struct ctx *ctx, sd_bus_error *berr,
 	return 0;
 }
 
-static int query_get_peer_msgtypes(struct peer *peer)
+static int query_get_peer_msgtypes(struct peer *peer, uint8_t iid)
 {
 	struct sockaddr_mctp_ext addr;
 	struct mctp_ctrl_cmd_get_msg_type_support req;
 	struct mctp_ctrl_resp_get_msg_type_support *resp = NULL;
 	uint8_t *buf = NULL;
 	size_t buf_size, expect_size;
-	uint8_t iid;
 	int rc;
 
 	peer->num_message_types = 0;
 	free(peer->message_types);
 	peer->message_types = NULL;
-	iid = mctp_next_iid(peer->ctx);
+
+	warnx("%s: Sending Get Message Type Support to %s IID 0x%02x", __func__,
+	      peer_tostr(peer), iid);
 
 	mctp_ctrl_msg_hdr_init_req(&req.ctrl_hdr, iid,
 				   MCTP_CTRL_CMD_GET_MESSAGE_TYPE_SUPPORT);
@@ -2744,14 +2745,13 @@ out:
 	return rc;
 }
 
-static int query_get_peer_uuid(struct peer *peer)
+static int query_get_peer_uuid(struct peer *peer, uint8_t iid)
 {
 	struct sockaddr_mctp_ext addr;
 	struct mctp_ctrl_cmd_get_uuid req;
 	struct mctp_ctrl_resp_get_uuid *resp = NULL;
 	uint8_t *buf = NULL;
 	size_t buf_size;
-	uint8_t iid;
 	int rc;
 
 	if (peer->state != REMOTE) {
@@ -2760,7 +2760,8 @@ static int query_get_peer_uuid(struct peer *peer)
 		return -EPROTO;
 	}
 
-	iid = mctp_next_iid(peer->ctx);
+	warnx("%s: Sending Get Endpoint UUID to %s IID 0x%02x", __func__,
+	      peer_tostr(peer), iid);
 
 	mctp_ctrl_msg_hdr_init_req(&req.ctrl_hdr, iid,
 				   MCTP_CTRL_CMD_GET_ENDPOINT_UUID);
@@ -3133,20 +3134,26 @@ static int query_peer_properties(struct peer *peer)
 {
 	const unsigned int max_retries = 4;
 	bool supports_vdm = false;
+	uint8_t iid;
 	int rc;
 
+	iid = mctp_next_iid(peer->ctx);
 	for (unsigned int i = 0; i < max_retries; i++) {
-		rc = query_get_peer_msgtypes(peer);
+		rc = query_get_peer_msgtypes(peer, iid);
 
 		// Success
 		if (rc == 0)
 			break;
 
-		// On timeout, retry
+		// On timeout, retry with same IID
 		if (rc == -ETIMEDOUT) {
 			if (peer->ctx->verbose)
-				warnx("Retrying to get endpoint types for %s. Attempt %u",
-				      peer_tostr(peer), i + 1);
+				warnx("Retrying to get endpoint types for %s. Attempt %u IID 0x%02x",
+				      peer_tostr(peer), i + 1, iid);
+			if (i + 1 == max_retries)
+				warnx("Get Message Type Support timed out for %s, "
+				      "proceeding to Get UUID without response",
+				      peer_tostr(peer));
 			rc = 0;
 			continue;
 		}
@@ -3194,18 +3201,22 @@ static int query_peer_properties(struct peer *peer)
 		}
 	}
 
+	iid = mctp_next_iid(peer->ctx);
 	for (unsigned int i = 0; i < max_retries; i++) {
-		rc = query_get_peer_uuid(peer);
+		rc = query_get_peer_uuid(peer, iid);
 
 		// Success
 		if (rc == 0)
 			break;
 
-		// On timeout, retry
+		// On timeout, retry with same IID
 		if (rc == -ETIMEDOUT) {
 			if (peer->ctx->verbose)
-				warnx("Retrying to get peer UUID for %s. Attempt %u",
-				      peer_tostr(peer), i + 1);
+				warnx("Retrying to get peer UUID for %s. Attempt %u IID 0x%02x",
+				      peer_tostr(peer), i + 1, iid);
+			if (i + 1 == max_retries)
+				warnx("Get Endpoint UUID timed out for %s",
+				      peer_tostr(peer));
 			rc = 0;
 			continue;
 		}
