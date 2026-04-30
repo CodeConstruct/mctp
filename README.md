@@ -110,6 +110,12 @@ where `mctpd` exposes three dbus interfaces for each:
  - `au.com.codeconstruct.MCTP1.Endpoint1`: Additional control methods for the
    endpoint - for example, `Remove`
 
+Contributing
+------------
+
+We have some guidance for contributing in the [`CONTRIBUTING`](CONTRIBUTING.md)
+document.
+
 Testing
 -------
 
