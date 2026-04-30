@@ -326,6 +326,7 @@ struct mctp_ctrl_cmd {
 	/* populated by caller */
 	void *req;
 	size_t req_len;
+	bool disable_retry;
 
 	/* populated on response RX */
 	void *resp;
@@ -1710,7 +1711,9 @@ static int endpoint_query_addr(struct ctx *ctx,
 			       const struct sockaddr_mctp_ext *req_addr,
 			       bool ext_addr, struct mctp_ctrl_cmd *cmd)
 {
+	unsigned int max_retries = 4;
 	size_t req_addr_len;
+	unsigned int retry;
 	int sd = -1, val;
 	ssize_t rc;
 	size_t buf_size;
@@ -1719,6 +1722,8 @@ static int endpoint_query_addr(struct ctx *ctx,
 
 	cmd->resp = NULL;
 	cmd->resp_len = 0;
+	if (cmd->disable_retry)
+		max_retries = 1;
 
 	sd = mctp_ops.mctp.socket();
 	if (sd < 0) {
@@ -1748,37 +1753,47 @@ static int endpoint_query_addr(struct ctx *ctx,
 		rc = -EPROTO;
 		goto out;
 	}
-	rc = mctp_ops.mctp.sendto(sd, cmd->req, cmd->req_len, 0,
-				  (struct sockaddr *)req_addr, req_addr_len);
-	if (rc < 0) {
-		rc = -errno;
-		if (ctx->verbose) {
-			warnx("%s: sendto(%s) %zu bytes failed. %s", __func__,
-			      ext_addr_tostr(req_addr), cmd->req_len,
-			      strerror(-rc));
+
+	for (retry = 0; retry < max_retries; retry++) {
+		rc = mctp_ops.mctp.sendto(sd, cmd->req, cmd->req_len, 0,
+					  (struct sockaddr *)req_addr,
+					  req_addr_len);
+		if (rc < 0) {
+			rc = -errno;
+			if (ctx->verbose) {
+				warnx("%s: sendto(%s) %zu bytes failed. %s",
+				      __func__, ext_addr_tostr(req_addr),
+				      cmd->req_len, strerror(-rc));
+			}
+			break;
 		}
-		goto out;
-	}
-	if ((size_t)rc != cmd->req_len) {
-		bug_warn("incorrect sendto %zd, expected %zu", rc,
-			 cmd->req_len);
-		rc = -EPROTO;
-		goto out;
+		if ((size_t)rc != cmd->req_len) {
+			bug_warn("incorrect sendto %zd, expected %zu", rc,
+				 cmd->req_len);
+			rc = -EPROTO;
+			break;
+		}
+
+		rc = wait_fd_timeout(sd, EPOLLIN, ctx->mctp_timeout);
+		if (rc == 0)
+			break;
+
+		if (rc == -ETIMEDOUT) {
+			warnx("receive timed out from %s, attempt %d/%d",
+			      ext_addr_tostr(req_addr), retry + 1, max_retries);
+		} else {
+			warnx("receive error from %s",
+			      ext_addr_tostr(req_addr));
+			break;
+		}
 	}
 
-	rc = wait_fd_timeout(sd, EPOLLIN, ctx->mctp_timeout);
-	if (rc < 0) {
-		if (rc == -ETIMEDOUT && ctx->verbose) {
-			warnx("%s: receive timed out from %s", __func__,
-			      ext_addr_tostr(req_addr));
-		}
+	if (rc || retry == max_retries)
 		goto out;
-	}
 
 	rc = read_message(ctx, sd, &buf, &buf_size, &cmd->resp_addr);
-	if (rc < 0) {
+	if (rc < 0)
 		goto out;
-	}
 
 	if (cmd->resp_addr.smctp_base.smctp_type !=
 	    req_addr->smctp_base.smctp_type) {
@@ -2482,7 +2497,8 @@ static void set_berr(struct ctx *ctx, int errcode, sd_bus_error *berr)
 
 static int query_get_endpoint_id(struct ctx *ctx, const dest_phys *dest,
 				 mctp_eid_t *ret_eid, uint8_t *ret_ep_type,
-				 uint8_t *ret_media_spec, struct peer *peer)
+				 uint8_t *ret_media_spec, struct peer *peer,
+				 bool retry)
 {
 	struct mctp_ctrl_cmd_get_eid req = { 0 };
 	struct mctp_ctrl_resp_get_eid *resp = NULL;
@@ -2495,6 +2511,7 @@ static int query_get_endpoint_id(struct ctx *ctx, const dest_phys *dest,
 	mctp_ctrl_msg_hdr_init_req(&req.ctrl_hdr, iid,
 				   MCTP_CTRL_CMD_GET_ENDPOINT_ID);
 	mctp_ctrl_cmd_init_from_req_type(&cmd, req);
+	cmd.disable_retry = !retry;
 
 	if (peer)
 		rc = endpoint_query_peer(peer, &cmd);
@@ -2535,7 +2552,7 @@ static int get_endpoint_peer(struct ctx *ctx, sd_bus_error *berr,
 
 	*ret_peer = NULL;
 	rc = query_get_endpoint_id(ctx, dest, &eid, &ep_type, &medium_spec,
-				   /*peer=*/NULL);
+				   /*peer=*/NULL, /*retry=*/true);
 	if (rc)
 		return rc;
 
@@ -2901,7 +2918,7 @@ static int method_setup_endpoint(sd_bus_message *call, void *data,
 
 	/* Get Endpoint ID */
 	rc = query_get_endpoint_id(ctx, dest, &eid, &ep_type, &medium_spec,
-				   /*peer=*/NULL);
+				   /*peer=*/NULL, true);
 	if (rc)
 		goto err;
 
@@ -3170,34 +3187,13 @@ err:
 // and routable.
 static int query_peer_properties(struct peer *peer)
 {
-	const unsigned int max_retries = 4;
 	bool supports_vdm = false;
 	int rc;
 
-	for (unsigned int i = 0; i < max_retries; i++) {
-		rc = query_get_peer_msgtypes(peer);
-
-		// Success
-		if (rc == 0)
-			break;
-
-		// On timeout, retry
-		if (rc == -ETIMEDOUT) {
-			if (peer->ctx->verbose)
-				warnx("Retrying to get endpoint types for %s. Attempt %u",
-				      peer_tostr(peer), i + 1);
-			rc = 0;
-			continue;
-		}
-
-		// On other errors, warn and ignore
-		if (rc < 0) {
-			if (peer->ctx->verbose)
-				warnx("Error getting endpoint types for %s. Ignoring error %d %s",
-				      peer_tostr(peer), -rc, strerror(-rc));
-			rc = 0;
-			break;
-		}
+	rc = query_get_peer_msgtypes(peer);
+	if (rc < 0 && peer->ctx->verbose) {
+		errno = -rc;
+		warn("Error getting endpoint types for %s", peer_tostr(peer));
 	}
 
 	for (unsigned int i = 0; i < peer->num_message_types; i++) {
@@ -3209,54 +3205,18 @@ static int query_peer_properties(struct peer *peer)
 	}
 
 	if (supports_vdm) {
-		for (unsigned int i = 0; i < max_retries; i++) {
-			rc = query_get_peer_vdm_types(peer);
-
-			if (rc == 0)
-				break;
-
-			// On timeout, retry
-			if (rc == -ETIMEDOUT) {
-				if (peer->ctx->verbose)
-					warnx("Retrying to get vendor message types for %s. Attempt %u",
-					      peer_tostr(peer), i + 1);
-				rc = 0;
-				continue;
-			}
-
-			if (rc < 0) {
-				warnx("Error getting vendor message types for %s. Ignoring error %d %s",
-				      peer_tostr(peer), rc, strerror(-rc));
-				rc = 0;
-				break;
-			}
+		rc = query_get_peer_vdm_types(peer);
+		if (rc < 0 && peer->ctx->verbose) {
+			errno = -rc;
+			warn("Error getting vendor message types for %s",
+			     peer_tostr(peer));
 		}
 	}
 
-	for (unsigned int i = 0; i < max_retries; i++) {
-		rc = query_get_peer_uuid(peer);
-
-		// Success
-		if (rc == 0)
-			break;
-
-		// On timeout, retry
-		if (rc == -ETIMEDOUT) {
-			if (peer->ctx->verbose)
-				warnx("Retrying to get peer UUID for %s. Attempt %u",
-				      peer_tostr(peer), i + 1);
-			rc = 0;
-			continue;
-		}
-
-		// On other errors, warn and ignore
-		if (rc < 0) {
-			if (peer->ctx->verbose)
-				warnx("Error getting UUID for %s. Ignoring error %d %s",
-				      peer_tostr(peer), -rc, strerror(-rc));
-			rc = 0;
-			break;
-		}
+	rc = query_get_peer_uuid(peer);
+	if (rc < 0 && peer->ctx->verbose) {
+		errno = -rc;
+		warn("Error getting UUID for %s", peer_tostr(peer));
 	}
 
 	// TODO: emit property changed? Though currently they are all const.
@@ -3556,7 +3516,8 @@ static int peer_endpoint_recover(sd_event_source *s, uint64_t usec,
 	 */
 	rc = query_get_endpoint_id(ctx, &peer->phys, &peer->recovery.eid,
 				   &peer->recovery.endpoint_type,
-				   &peer->recovery.medium_spec, /*peer=*/NULL);
+				   &peer->recovery.medium_spec, /*peer=*/NULL,
+				   /*retry=*/false);
 	if (rc < 0) {
 		goto reschedule;
 	}
@@ -3774,7 +3735,7 @@ static int method_net_learn_endpoint(sd_bus_message *call, void *data,
 	}
 
 	rc = query_get_endpoint_id(peer->ctx, &dest, &ret_eid, &ret_ep_type,
-				   &ret_medium_spec, peer);
+				   &ret_medium_spec, peer, true);
 	if (rc) {
 		warnx("Error getting endpoint id for %s. error %d %s",
 		      peer_tostr(peer), rc, strerror(-rc));
