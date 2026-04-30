@@ -5925,6 +5925,8 @@ static int peer_endpoint_poll(sd_event_source *s, uint64_t usec, void *userdata)
 				   MCTP_CTRL_CMD_GET_ENDPOINT_ID);
 
 	mctp_ctrl_cmd_init_from_req_type(&cmd, req);
+	/* don't retry here, we're just probing */
+	cmd.disable_retry = true;
 
 	rc = endpoint_query_addr(bridge->ctx, &req_addr, false, &cmd);
 	if (rc < 0) {
