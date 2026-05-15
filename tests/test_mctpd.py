@@ -431,6 +431,123 @@ async def test_assign_endpoint_static_varies(dbus, mctpd):
     assert str(ex.value) == "Already assigned a different EID"
 
 
+async def test_assign_bridge_static(dbus, mctpd):
+    """Test that AssignBridgeStatic assigns the requested EID and pool to a
+    bridge endpoint, and marks it as new on first call.
+    """
+    iface = mctpd.system.interfaces[0]
+    dev = mctpd.network.endpoints[0]
+    mctp = await mctpd_mctp_iface_obj(dbus, iface)
+    static_eid = 12
+    pool_size = 3
+    pool_start = static_eid + 1
+
+    for _ in range(pool_size):
+        dev.add_bridged_ep(Endpoint(iface, bytes()))
+
+    (eid, pool_start_out, _, _, new) = await mctp.call_assign_bridge_static(
+        dev.lladdr, static_eid, pool_start, pool_size
+    )
+
+    assert eid == static_eid
+    assert pool_start_out == pool_start
+    assert new
+
+
+async def test_assign_bridge_static_zero_start(dbus, mctpd):
+    """Test that AssignBridgeStatic sets pool start EID to bridge-eid+1
+    when pool_start is passed as zero.
+    """
+    iface = mctpd.system.interfaces[0]
+    dev = mctpd.network.endpoints[0]
+    mctp = await mctpd_mctp_iface_obj(dbus, iface)
+    static_eid = 12
+    pool_size = 3
+    pool_start = 0
+    expected_pool_start = static_eid + 1
+
+    for _ in range(pool_size):
+        dev.add_bridged_ep(Endpoint(iface, bytes()))
+
+    (eid, pool_start_out, _, _, new) = await mctp.call_assign_bridge_static(
+        dev.lladdr, static_eid, pool_start, pool_size
+    )
+
+    assert eid == static_eid
+    assert pool_start_out == expected_pool_start
+    assert new
+
+
+async def test_assign_bridge_static_conflict(dbus, mctpd):
+    """Test that AssignBridgeStatic rejects an EID that is already in use by
+    a different endpoint.
+    """
+    iface = mctpd.system.interfaces[0]
+    dev1 = mctpd.network.endpoints[0]
+    mctp = await mctpd_mctp_iface_obj(dbus, iface)
+
+    dev2 = Endpoint(iface, bytes([0x1E]))
+    mctpd.network.add_endpoint(dev2)
+
+    static_eid = 12
+    pool_size = 3
+    pool_start = static_eid + 1
+
+    for _ in range(pool_size):
+        dev2.add_bridged_ep(Endpoint(iface, bytes()))
+
+    (eid, _, _, new) = await mctp.call_assign_endpoint_static(
+        dev1.lladdr, static_eid
+    )
+    assert eid == static_eid
+    assert new
+
+    # try to assign dev2 the same EID — must fail
+    with pytest.raises(asyncdbus.errors.DBusError) as ex:
+        await mctp.call_assign_bridge_static(
+            dev2.lladdr, static_eid, pool_start, pool_size
+        )
+
+    assert str(ex.value) == "Address in use"
+
+
+async def test_assign_bridge_static_pool_conflict(dbus, mctpd):
+    """Test that AssignBridgeStatic rejects assigning a pool range that
+    conflicts with an existing endpoint's EID, even if the bridge EID itself
+    does not conflict.
+    """
+    iface = mctpd.system.interfaces[0]
+    dev1 = mctpd.network.endpoints[0]
+    mctp = await mctpd_mctp_iface_obj(dbus, iface)
+
+    dev2 = Endpoint(iface, bytes([0x1E]))
+    mctpd.network.add_endpoint(dev2)
+
+    # dev1 is a single endpoint assigned EID 13
+    dev1_eid = 13
+    (eid1, _, _, new1) = await mctp.call_assign_endpoint_static(
+        dev1.lladdr, dev1_eid
+    )
+    assert eid1 == dev1_eid
+    assert new1
+
+    # dev2 is a bridge endpoint with EID 11, pool size 3 (pool start 12, range 12-14)
+    dev2_eid = 11
+    pool_size = 3
+    pool_start = dev2_eid + 1
+
+    for _ in range(pool_size):
+        dev2.add_bridged_ep(Endpoint(iface, bytes()))
+
+    # try to assign dev2 — must fail due to pool conflict at EID 13
+    with pytest.raises(asyncdbus.errors.DBusError) as ex:
+        await mctp.call_assign_bridge_static(
+            dev2.lladdr, dev2_eid, pool_start, pool_size
+        )
+
+    assert str(ex.value) == "Ran out of EIDs"
+
+
 async def test_get_endpoint_id(dbus, mctpd, routed_ep):
     """Test that the mctpd control protocol responder support has support for a
     basic Get Endpoint ID command
