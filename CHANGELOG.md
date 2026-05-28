@@ -34,6 +34,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
    now called `role`. Configuration parsing will still allow the `mode` setting,
    but this will be deprecated in a later release.
 
+2. `mctpd`'s command submission logic has been reworked, allowing us to
+   re-use outgoing control protocol instance IDs (IIDs) when we re-send
+   commands. More instances of commands now have retry logic too.
+
 ## [2.5] - 2026-02-17
 
 ### Added
