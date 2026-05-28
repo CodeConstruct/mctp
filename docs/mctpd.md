@@ -419,10 +419,18 @@ Other content of the interface table is configuration to be applied. The
 only setting currently supported is `role`, to set mctpd's role as
 either bus-owner or endpoint on this interface.
 
+For example, to apply a `bus-owner` role globally, with interface-specific
+`endpoint` roles for all i2c devices, and one particular (USB) device:
+
 ```toml
 role = "bus-owner"
+
 [[interface]]
-match = ...
+match = { phys-type = "i2c" }
+role = "endpoint"
+
+[[interface]]
+match = { path = "/devices/pci0000:00/0000:00:08.3/usb10/10-0:1.0" }
 role = "endpoint"
 ```
 
