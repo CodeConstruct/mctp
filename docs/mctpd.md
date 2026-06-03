@@ -245,6 +245,48 @@ reports as a bridge.
 
 Bridge endpoints should be initialised with `AssignEndpoint` instead.
 
+### Endpoint interface: `au.com.codeconstruct.MCTP.Endpoint1` interface
+
+When the interface `Role` is `Endpoint`, the MCTP interface object also hosts
+the `au.com.codeconstruct.MCTP.Endpoint1` D-Bus interface. This exposes
+endpoint-role functions on the per-interface D-Bus path.
+
+```
+NAME                                  TYPE      SIGNATURE RESULT/VALUE FLAGS
+au.com.codeconstruct.MCTP.Interface1  interface -         -            -
+.NetworkId                            property  u         1            emits-change
+.Role                                 property  s         "Endpoint"   emits-change writable
+au.com.codeconstruct.MCTP.Endpoint1   interface -         -            -
+.BusOwner                             property  ay        -            writable
+```
+
+#### `.BusOwner`: `ay`
+
+Sets the physical address of the bus owner for this interface. For transport
+types that know the bus owner physaddr (or do not need one to address the bus
+owner), this would be populated automatically by the transport binding. For
+other cases, this property allows the address to be supplied by an external
+management application.
+
+On transport types that require a Discovery Notify (PCIe and I3C), setting the
+bus owner address will automatically trigger a Discovery Notify to the bus
+owner if the interface is in Endpoint role and not yet discovered.
+
+`BusOwner <hwaddr>`
+
+ - `<hwaddr>` Physical hardware address of the bus owner. For MCTP-over-I3C
+   this is the 6-byte Provisional ID (PID) of the bus owner.
+
+An example for MCTP-over-I3C, setting the bus owner's 6-byte PID
+`00 6c 90 01 23 45`:
+
+```shell
+busctl set-property au.com.codeconstruct.MCTP1 \
+    /au/com/codeconstruct/mctp1/interfaces/mctpi3c0 \
+    au.com.codeconstruct.MCTP.Endpoint1 \
+    BusOwner ay 6 0x00 0x6c 0x90 0x01 0x23 0x45
+```
+
 ## Network objects: `/au/com/codeconstruct/mctp1/networks/<net>`
 
 These objects represent MCTP networks which have been added use `mctp link`

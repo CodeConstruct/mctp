@@ -2,6 +2,7 @@ import pytest
 import asyncdbus
 from mctp_test_utils import (
     mctpd_mctp_iface_control_obj,
+    mctpd_mctp_iface_endpoint_obj,
     mctpd_mctp_endpoint_control_obj,
 )
 from mctpenv import (
@@ -218,3 +219,34 @@ class TestUnsupportedDiscovery:
             mctpd.network.mctp_socket, MCTPControlCommand(True, 0, 0x0B)
         )
         assert rsp.hex(' ') == '00 0b 05'
+
+
+class TestDiscoveryNotify:
+    """Discovery Notify for I3C endpoints with a 6-byte bus owner PID."""
+
+    # Example 6-byte I3C Provisional ID of the bus owner
+    BO_PID = bytes([0x00, 0x6C, 0x90, 0x01, 0x23, 0x45])
+
+    @pytest.fixture
+    async def iface(self):
+        return System.Interface(
+            "mctp0", 1, 1, bytes([0x1D]), 68, 254, True, PhysicalBinding.I3C
+        )
+
+    @pytest.fixture
+    async def sysnet(self, iface):
+        system = System()
+        await system.add_interface(iface)
+        network = Network()
+        network.add_endpoint(Endpoint(iface, self.BO_PID, eid=8))
+        return Sysnet(system, network)
+
+    async def test_discovery_notify_on_set_bus_owner(self, dbus, mctpd):
+        """Discovery Notify is sent automatically when the 6-byte I3C bus owner PID is set."""
+        iface = mctpd.system.interfaces[0]
+        bo = mctpd.network.endpoints[0]
+
+        ep = await mctpd_mctp_iface_endpoint_obj(dbus, iface)
+        # Set the bus owner's 6-byte I3C PID; this satisfies all conditions
+        # and triggers Discovery Notify to the bus owner immediately.
+        await ep.set_bus_owner(bo.lladdr)
