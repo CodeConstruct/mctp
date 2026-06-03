@@ -2,6 +2,7 @@ import pytest
 import asyncdbus
 from mctp_test_utils import (
     mctpd_mctp_iface_control_obj,
+    mctpd_mctp_iface_endpoint_obj,
     mctpd_mctp_endpoint_control_obj,
 )
 from mctpenv import (
@@ -218,3 +219,13 @@ class TestUnsupportedDiscovery:
             mctpd.network.mctp_socket, MCTPControlCommand(True, 0, 0x0B)
         )
         assert rsp.hex(' ') == '00 0b 05'
+
+
+async def test_attempt_discovery_notify(dbus, mctpd):
+    """AttemptDiscoveryNotify sends Discovery Notify to the bus owner."""
+    iface = mctpd.system.interfaces[0]
+    bo = mctpd.network.endpoints[0]
+
+    ep = await mctpd_mctp_iface_endpoint_obj(dbus, iface)
+    # mock bus owner responds with completion_code = 0x00
+    await ep.call_attempt_discovery_notify(bo.lladdr)

@@ -536,6 +536,11 @@ class Endpoint:
                 )
                 await sock.send(raddr, data)
 
+            elif opcode == 0x0D:
+                # Discovery Notify — respond with completion_code = 0
+                data = bytes(hdr + [0x00])
+                await sock.send(raddr, data)
+
             else:
                 await sock.send(
                     raddr, bytes(hdr + [0x05])
