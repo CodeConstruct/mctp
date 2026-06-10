@@ -899,6 +899,7 @@ static int handle_control_set_endpoint_id(struct ctx *ctx, int sd,
 
 		rc = add_peer_from_addr(ctx, addr, &peer);
 		if (rc == 0) {
+			add_peer_route(peer);
 			rc = setup_added_peer(peer);
 		}
 		if (rc < 0) {
@@ -2713,6 +2714,8 @@ static int get_endpoint_peer(struct ctx *ctx, sd_bus_error *berr,
 		rc = add_peer(ctx, dest, eid, net, &peer, false);
 		if (rc < 0)
 			return rc;
+
+		add_peer_route(peer);
 	}
 
 	peer->endpoint_type = ep_type;
@@ -3092,6 +3095,7 @@ static int method_setup_endpoint(sd_bus_message *call, void *data,
 		} else if (rc < 0) {
 			goto err;
 		} else {
+			add_peer_route(peer);
 			peer->endpoint_type = ep_type;
 			peer->medium_spec = medium_spec;
 			rc = setup_added_peer(peer);
@@ -3509,11 +3513,6 @@ static int setup_added_peer(struct peer *peer)
 	// Set minimum MTU by default for compatibility. Clients can increase
 	// this with .SetMTU as needed
 	peer->mtu = mctp_nl_min_mtu_byindex(peer->ctx->nl, peer->phys.ifindex);
-
-	// add route before querying for non-bridged endpoints.
-	// bridged endpoints will use the bridge's pool range route.
-	if (!is_eid_in_bridge_pool(n, peer->ctx, peer->eid))
-		add_peer_route(peer);
 
 	rc = query_peer_properties(peer);
 	if (rc < 0)

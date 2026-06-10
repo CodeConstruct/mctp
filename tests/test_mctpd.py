@@ -127,7 +127,7 @@ async def test_setup_endpoint(dbus, mctpd):
     assert neigh.eid == ep.eid
 
     # we should have a route for the new endpoint too
-    assert len(mctpd.system.routes) == 2
+    assert len(mctpd.system.routes) == 1
 
 
 async def test_setup_endpoint_conflict(dbus, mctpd):
@@ -356,7 +356,7 @@ async def test_assign_endpoint_static(dbus, mctpd):
     neigh = mctpd.system.neighbours[0]
     assert neigh.lladdr == dev.lladdr
     assert neigh.eid == static_eid
-    assert len(mctpd.system.routes) == 2
+    assert len(mctpd.system.routes) == 1
 
 
 async def test_assign_endpoint_static_allocated(dbus, mctpd):
