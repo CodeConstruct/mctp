@@ -894,28 +894,44 @@ static int handle_control_set_endpoint_id(struct ctx *ctx, int sd,
 		if (rc < 0) {
 			warnx("ERR: cannot add local eid %d to ifindex %d",
 			      req->eid, addr->smctp_ifindex);
+			resp_len = sizeof(struct mctp_ctrl_resp);
 			resp->completion_code = MCTP_CTRL_CC_ERROR_NOT_READY;
+			reply_message(ctx, sd, resp, resp_len, addr);
+			return rc;
 		}
 
 		rc = add_peer_from_addr(ctx, addr, &peer);
-		if (rc == 0) {
-			add_peer_route(peer);
-			rc = setup_added_peer(peer);
-		}
-		if (rc < 0) {
-			warnx("ERR: cannot add bus owner to object lists");
+		if (rc) {
+			errno = -rc;
+			warn("failed setting up bus owner, rejecting Set EID");
+			resp->completion_code = MCTP_CTRL_CC_ERROR;
+			resp_len = sizeof(struct mctp_ctrl_resp);
+			reply_message(ctx, sd, resp, resp_len, addr);
+			return rc;
 		}
 
-		if (link_data->discovered != DISCOVERY_UNSUPPORTED) {
+		add_peer_route(peer);
+
+		if (link_data->discovered != DISCOVERY_UNSUPPORTED)
 			link_data->discovered = DISCOVERY_DISCOVERED;
-		}
+
 		resp->status =
 			SET_MCTP_EID_ASSIGNMENT_STATUS(MCTP_SET_EID_ACCEPTED) |
 			SET_MCTP_EID_ALLOCATION_STATUS(MCTP_SET_EID_POOL_NONE);
 		resp->eid_set = req->eid;
 		resp->eid_pool_size = 0;
-		fprintf(stderr, "Accepted set eid %d\n", req->eid);
-		return reply_message(ctx, sd, resp, resp_len, addr);
+		rc = reply_message(ctx, sd, resp, resp_len, addr);
+		if (rc) {
+			errno = -rc;
+			warn("failed responding to set eid request");
+			return rc;
+		}
+
+		rc = setup_added_peer(peer);
+		if (rc < 0)
+			warnx("ERR: cannot add bus owner to object lists");
+
+		return 0;
 
 	case MCTP_SET_EID_DISCOVERED:
 		if (link_data->discovered == DISCOVERY_UNSUPPORTED) {
