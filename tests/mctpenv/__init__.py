@@ -18,6 +18,7 @@ from pyroute2.netlink import rtnl
 AF_NETLINK = 16
 AF_MCTP = 45
 ARPHRD_MCTP = 290
+ETH_P_MCTP = 0x00FA
 IFLA_MCTP_NET = 1
 
 MAX_SOCKADDR_SIZE = 56
@@ -802,15 +803,44 @@ class MCTPSockAddr:
 class MCTPSocket(BaseSocket):
     base_addr_fmt = "@HHIIBBBB"
     ext_addr_fmt = "@HHIIBBBBIBB32s"
+    pcap_dir_in = 0x00
+    pcap_dir_out = 0x04
+    pcap_ll_fmt = '>HHHQH'
+    pcap_pkt_fmt = '<IIII'
 
-    def __init__(self, sock, system, network):
+    def __init__(self, sock, pcap, system, network):
         super().__init__(sock)
         self.addr_ext = False
         self.system = system
         self.network = network
+        self.pcap = pcap
+
+    def _pcap_write(self, dir, addr, data):
+        if self.pcap is None:
+            return
+        eid = 0
+        if len(self.system.addresses) > 0:
+            eid = self.system.addresses[0].eid
+        if dir == self.pcap_dir_in:
+            (src, dst) = (eid, addr.eid)
+        else:
+            (src, dst) = (addr.eid, eid)
+        ll_hdr = struct.pack(
+            self.pcap_ll_fmt, dir, ARPHRD_MCTP, 0, 0, ETH_P_MCTP
+        )
+        # everything is a whole message, so set SOM | EOM
+        flags_seq_tag = 0xC0 | addr.tag
+        mctp_hdr = bytes([0x01, dst, src, flags_seq_tag])
+        msg_hdr = bytes([addr.type])
+        pkt_data = ll_hdr + mctp_hdr + msg_hdr + data
+        pcap_hdr = struct.pack(
+            self.pcap_pkt_fmt, 0, 0, len(pkt_data), len(pkt_data)
+        )
+        self.pcap.write(pcap_hdr + pkt_data)
 
     async def handle_send(self, addr, data):
         a = MCTPSockAddr.parse(addr, self.addr_ext)
+        self._pcap_write(self.pcap_dir_in, a, data)
         phys = self.system.find_endpoint(a)
         if phys is None:
             return
@@ -830,6 +860,7 @@ class MCTPSocket(BaseSocket):
         self.network.register_mctp_socket(self)
 
     async def send(self, addr, data):
+        self._pcap_write(self.pcap_dir_out, addr, data)
         addrbuf = addr.to_buf()
         addrlen = len(addrbuf)
         assert addrlen <= MAX_SOCKADDR_SIZE
@@ -1309,10 +1340,19 @@ async def send_fd(sock, fd):
 
 
 class MctpProcessWrapper:
-    def __init__(self, sysnet):
+    def __init__(self, sysnet, pcap=None):
         self.system = sysnet.system
         self.network = sysnet.network
         (self.sock_local, self.sock_remote) = self.socketpair()
+        if pcap:
+            hdr = struct.pack(
+                '<IHHIIII', 0xA1B2C3D4, 0x02, 0x04, 0, 0, 4096, 0x71
+            )
+
+            self.pcap = open(pcap, 'wb')
+            self.pcap.write(hdr)
+        else:
+            self.pcap = None
 
     def socketpair(self):
         return trio.socket.socketpair(
@@ -1332,7 +1372,7 @@ class MctpProcessWrapper:
             elif op == 0x01:
                 # MCTP socket()
                 (local, remote) = self.socketpair()
-                sd = MCTPSocket(local, self.system, self.network)
+                sd = MCTPSocket(local, self.pcap, self.system, self.network)
                 await send_fd(self.sock_local, remote.fileno())
                 remote.close()
                 nursery.start_soon(sd.run)
@@ -1369,8 +1409,10 @@ class MctpProcessWrapper:
 
 
 class MctpdWrapper(MctpProcessWrapper):
-    def __init__(self, bus, sysnet, binary=None, args=None, config=None):
-        super().__init__(sysnet)
+    def __init__(
+        self, bus, sysnet, pcap=None, binary=None, args=None, config=None
+    ):
+        super().__init__(sysnet, pcap)
         self.bus = bus
         self.args = args or ['-v']
         self.binary = binary or './test-mctpd'
@@ -1508,6 +1550,9 @@ async def main():
 
     parser = argparse.ArgumentParser(description='wrapper for testing mctpd')
     parser.add_argument('command', type=str, nargs='*', help='mctpd command')
+    parser.add_argument(
+        '--pcap', type=str, help='pcap file to capture MCTP messaging'
+    )
 
     args = parser.parse_args()
 
@@ -1518,7 +1563,9 @@ async def main():
         mctpd_args = args.command[1:]
     async with asyncdbus.MessageBus().connect() as dbus:
         sysnet = await default_sysnet()
-        mctpd = MctpdWrapper(dbus, sysnet, binary=mctpd_binary, args=mctpd_args)
+        mctpd = MctpdWrapper(
+            dbus, sysnet, pcap=args.pcap, binary=mctpd_binary, args=mctpd_args
+        )
         async with trio.open_nursery() as nursery:
             nursery.start_soon(sighandler)
             await mctpd.start_mctpd(nursery)
