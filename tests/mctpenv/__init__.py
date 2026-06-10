@@ -1504,15 +1504,21 @@ async def sighandler():
 
 async def main():
     import asyncdbus
+    import argparse
 
-    binary = None
-    args = None
-    if len(sys.argv) > 1:
-        binary = sys.argv[1]
-        args = sys.argv[2:]
+    parser = argparse.ArgumentParser(description='wrapper for testing mctpd')
+    parser.add_argument('command', type=str, nargs='*', help='mctpd command')
+
+    args = parser.parse_args()
+
+    mctpd_binary = None
+    mctpd_args = None
+    if args.command:
+        mctpd_binary = args.command[0]
+        mctpd_args = args.command[1:]
     async with asyncdbus.MessageBus().connect() as dbus:
         sysnet = await default_sysnet()
-        mctpd = MctpdWrapper(dbus, sysnet, binary=binary, args=args)
+        mctpd = MctpdWrapper(dbus, sysnet, binary=mctpd_binary, args=mctpd_args)
         async with trio.open_nursery() as nursery:
             nursery.start_soon(sighandler)
             await mctpd.start_mctpd(nursery)
