@@ -70,7 +70,7 @@ static int mctp_op_link_sysfs_path(const char *ifname, char **path)
 		goto out;
 	}
 
-	if (!strncmp(dev_path, "/sys", strlen("/sys"))) {
+	if (strncmp(dev_path, "/sys", strlen("/sys"))) {
 		warnx("malformed interface path for %s", ifname);
 		goto out;
 	}
