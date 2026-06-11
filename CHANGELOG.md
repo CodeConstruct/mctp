@@ -41,6 +41,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
    re-use outgoing control protocol instance IDs (IIDs) when we re-send
    commands. More instances of commands now have retry logic too.
 
+3. When running in endpoint mode, `mctpd` will now issue responses to incoming
+   Set Endpoint ID commands before performing enumeration on the (bus-owner)
+   peer.
+
 ## [2.5] - 2026-02-17
 
 ### Added
