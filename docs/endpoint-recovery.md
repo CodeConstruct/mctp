@@ -180,6 +180,8 @@ root@cc-nvme-mi:~# busctl introspect au.com.codeconstruct.MCTP1 /au/com/codecons
 NAME                                TYPE      SIGNATURE  RESULT/VALUE  FLAGS
 au.com.codeconstruct.Interface1     interface -          -             -
 .AssignEndpoint                     method    ay         yisb          -
+.AssignEndpointStatic               method    ayy        yisb          -
+.AssignEndpointPreferred            method    ayy        yisb          -
 .LearnEndpoint                      method    ay         yisb          -
 .SetupEndpoint                      method    ay         yisb          -
 org.freedesktop.DBus.Introspectable interface -          -             -

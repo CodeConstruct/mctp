@@ -138,6 +138,7 @@ au.com.codeconstruct.MCTP.Interface1 interface -         -            -
 au.com.codeconstruct.MCTP.BusOwner1  interface -         -            -
 .AssignEndpoint                      method    ay        yisb         -
 .AssignEndpointStatic                method    ayy       yisb         -
+.AssignEndpointPreferred             method    ayy       yisb         -
 .LearnEndpoint                       method    ay        yisb         -
 .SetupEndpoint                       method    ay        yisb         -
 ```
@@ -202,6 +203,20 @@ to assign `<static-EID>` to the endpoint with hardware address `hwaddr`.
 This call will fail if the endpoint already has an EID, and that EID is
 different from `static-EID`, or if `static-EID` is already assigned to another
 endpoint.
+
+#### `.AssignEndpointPreferred`: `ayy` → `yisb`
+
+Similar to AssignEndpointStatic, but takes the additional EID argument as a
+preferred EID rather than a strict static assignment:
+
+```
+AssignEndpointPreferred <hwaddr> <preferred-EID>
+```
+
+If `<preferred-EID>` is available, it will be assigned to the endpoint. If that
+EID is already assigned to another endpoint, `mctpd` falls back to dynamic EID
+allocation. If the endpoint is already known to `mctpd`, the existing endpoint
+record is returned.
 
 #### `.LearnEndpoint`: `ay` → `yisb`
 

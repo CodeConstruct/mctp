@@ -3126,6 +3126,84 @@ err:
 	return rc;
 }
 
+static int method_assign_endpoint_preferred(sd_bus_message *call, void *data,
+					    sd_bus_error *berr)
+{
+	dest_phys desti, *dest = &desti;
+	const char *peer_path = NULL;
+	struct peer *peer = NULL;
+	struct link *link = data;
+	struct ctx *ctx = link->ctx;
+	uint8_t eid;
+	int rc;
+
+	dest->ifindex = link->ifindex;
+	if (dest->ifindex <= 0)
+		return sd_bus_error_setf(berr, SD_BUS_ERROR_INVALID_ARGS,
+					 "Unknown MCTP interface");
+
+	rc = message_read_hwaddr(call, dest);
+	if (rc < 0)
+		goto err;
+
+	rc = sd_bus_message_read(call, "y", &eid);
+	if (rc < 0)
+		goto err;
+
+	rc = validate_dest_phys(ctx, dest);
+	if (rc < 0)
+		return sd_bus_error_setf(berr, SD_BUS_ERROR_INVALID_ARGS,
+					 "Bad physaddr");
+
+	peer = find_peer_by_phys(ctx, dest);
+	if (peer) {
+		// Return existing record, even if it differs from the preferred EID.
+		peer_path = path_from_peer(peer);
+		if (!peer_path)
+			goto err;
+
+		return sd_bus_reply_method_return(call, "yisb", peer->eid,
+						  peer->net, peer_path, 0);
+	} else {
+		uint32_t netid;
+		struct net *net;
+
+		netid = mctp_nl_net_byindex(ctx->nl, dest->ifindex);
+		net = lookup_net(ctx, netid);
+		peer = find_peer_by_addr(ctx, eid, netid);
+		if (peer || (net && is_eid_in_bridge_pool(net, ctx, eid))) {
+			if (peer) {
+				warnx("Preferred EID %d already in use by %s, using dynamic EID for %s",
+				      eid, peer_tostr(peer),
+				      dest_phys_tostr(dest));
+			} else {
+				warnx("Preferred EID %d is in a bridge pool, using dynamic EID for %s",
+				      eid, dest_phys_tostr(dest));
+			}
+			rc = endpoint_assign_eid(ctx, berr, dest, &peer, 0,
+						 true);
+		} else {
+			rc = endpoint_assign_eid(ctx, berr, dest, &peer, eid,
+						 false);
+		}
+		if (rc < 0)
+			goto err;
+	}
+
+	if (peer->pool_size > 0)
+		endpoint_allocate_eids(peer);
+
+	peer_path = path_from_peer(peer);
+	if (!peer_path)
+		goto err;
+
+	return sd_bus_reply_method_return(call, "yisb", peer->eid, peer->net,
+					  peer_path, 1);
+err:
+	set_berr(ctx, rc, berr);
+	return rc;
+}
+
 static int method_learn_endpoint(sd_bus_message *call, void *data,
 				 sd_bus_error *berr)
 {
@@ -4053,6 +4131,18 @@ static const sd_bus_vtable bus_link_owner_vtable[] = {
 		SD_BUS_PARAM(path)
 		SD_BUS_PARAM(new),
 		method_assign_endpoint_static,
+		0),
+
+	SD_BUS_METHOD_WITH_NAMES("AssignEndpointPreferred",
+		"ayy",
+		SD_BUS_PARAM(physaddr)
+		SD_BUS_PARAM(eid),
+		"yisb",
+		SD_BUS_PARAM(eid)
+		SD_BUS_PARAM(net)
+		SD_BUS_PARAM(path)
+		SD_BUS_PARAM(new),
+		method_assign_endpoint_preferred,
 		0),
 
 	SD_BUS_METHOD_WITH_NAMES("LearnEndpoint",
