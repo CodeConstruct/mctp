@@ -409,6 +409,47 @@ async def test_assign_endpoint_static_conflict(dbus, mctpd):
     assert str(ex.value) == "Address in use"
 
 
+async def test_assign_endpoint_preferred_static(dbus, mctpd):
+    """Test that preferred assignment uses the requested EID when available"""
+    iface = mctpd.system.interfaces[0]
+    mctp = await mctpd_mctp_iface_obj(dbus, iface)
+    dev = mctpd.network.endpoints[0]
+    preferred_eid = 12
+
+    (eid, _, _, new) = await mctp.call_assign_endpoint_preferred(
+        dev.lladdr, preferred_eid
+    )
+
+    assert eid == preferred_eid
+    assert dev.eid == preferred_eid
+    assert new
+
+
+async def test_assign_endpoint_preferred_conflict_falls_back(dbus, mctpd):
+    """Test that preferred assignment falls back to dynamic EID on conflict"""
+    iface = mctpd.system.interfaces[0]
+    mctp = await mctpd_mctp_iface_obj(dbus, iface)
+    dev1 = mctpd.network.endpoints[0]
+    dev2 = Endpoint(iface, bytes([0x1E]))
+    preferred_eid = 12
+
+    mctpd.network.add_endpoint(dev2)
+
+    (eid1, _, _, new1) = await mctp.call_assign_endpoint_static(
+        dev1.lladdr, preferred_eid
+    )
+    assert eid1 == preferred_eid
+    assert new1
+
+    (eid2, _, _, new2) = await mctp.call_assign_endpoint_preferred(
+        dev2.lladdr, preferred_eid
+    )
+
+    assert eid2 != preferred_eid
+    assert dev2.eid == eid2
+    assert new2
+
+
 async def test_assign_endpoint_static_varies(dbus, mctpd):
     """Test that we cannot re-assign a static EID to an endpoint that already
     has a different EID allocated

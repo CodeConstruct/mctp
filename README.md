@@ -85,6 +85,7 @@ configuring remote endpoints on that bus:
     au.com.codeconstruct.MCTP.Interface1 interface -          -             -
     .AssignEndpoint                      method    ay         yisb          -
     .AssignEndpointStatic                method    ayy        yisb          -
+    .AssignEndpointPreferred             method    ayy        yisb          -
     .LearnEndpoint                       method    ay         yisb          -
     .SetupEndpoint                       method    ay         yisb          -
 
