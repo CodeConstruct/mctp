@@ -19,6 +19,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
    binding type, or by sysfs paths, allowing individual interface roles to be
    specified by the configuration file.
 
+4. `mctpd` now allows static bridge peer assignments through the new
+   `AssignBridgeStatic` dbus method.
+
 ### Fixes
 
 1. mctpd's interface objects now expose the BusOwner1 interface when set
