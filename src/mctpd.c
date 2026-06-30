@@ -147,6 +147,7 @@ struct link {
 	char *path;
 	sd_bus_slot *slot_iface;
 	sd_bus_slot *slot_busowner;
+	sd_bus_slot *slot_endpoint;
 	sd_event_source *role_defer;
 
 	struct ctx *ctx;
@@ -385,6 +386,7 @@ static const sd_bus_vtable bus_endpoint_obmc_vtable[];
 static const sd_bus_vtable bus_endpoint_cc_vtable[];
 static const sd_bus_vtable bus_endpoint_bridge[];
 static const sd_bus_vtable bus_endpoint_uuid_vtable[];
+static const sd_bus_vtable bus_link_endpoint_vtable[];
 
 __attribute__((format(printf, 1, 2))) static void bug_warn(const char *fmt, ...)
 {
@@ -1675,7 +1677,7 @@ static int mctp_ctrl_validate_response(struct mctp_ctrl_cmd *cmd,
 {
 	struct mctp_ctrl_resp *rsp;
 
-	if (exp_size <= sizeof(*rsp)) {
+	if (exp_size < sizeof(*rsp)) {
 		warnx("invalid expected response size!");
 		return -EINVAL;
 	}
@@ -4246,6 +4248,67 @@ err:
 	return rc;
 }
 
+static int method_attempt_discovery_notify(sd_bus_message *call, void *data,
+					   sd_bus_error *berr)
+{
+	struct mctp_ctrl_cmd_discovery_notify req = { 0 };
+	struct mctp_ctrl_resp_discovery_notify *resp = NULL;
+	dest_phys desti = { 0 }, *dest = &desti;
+	struct link *link = data;
+	struct ctx *ctx = link->ctx;
+	struct mctp_ctrl_cmd cmd = { 0 };
+	uint8_t iid;
+	int rc;
+
+	dest->ifindex = link->ifindex;
+	if (dest->ifindex <= 0)
+		return sd_bus_error_setf(berr, SD_BUS_ERROR_INVALID_ARGS,
+					 "Unknown MCTP interface");
+
+	rc = message_read_hwaddr(call, dest);
+	if (rc < 0)
+		goto err;
+
+	rc = validate_dest_phys(ctx, dest);
+	if (rc < 0)
+		return sd_bus_error_setf(berr, SD_BUS_ERROR_INVALID_ARGS,
+					 "Bad physaddr");
+
+	iid = mctp_next_iid(ctx);
+	mctp_ctrl_msg_hdr_init_req(&req.ctrl_hdr, iid,
+				   MCTP_CTRL_CMD_DISCOVERY_NOTIFY);
+	mctp_ctrl_cmd_init_from_req_type(&cmd, req);
+
+	rc = endpoint_query_phys(ctx, dest, &cmd);
+	if (rc < 0)
+		goto err;
+
+	rc = mctp_ctrl_validate_response(&cmd, sizeof(*resp),
+					 dest_phys_tostr(dest), iid,
+					 MCTP_CTRL_CMD_DISCOVERY_NOTIFY);
+	if (rc)
+		goto err;
+
+	mctp_ctrl_cmd_free(&cmd);
+	return sd_bus_reply_method_return(call, "");
+err:
+	mctp_ctrl_cmd_free(&cmd);
+	set_berr(ctx, rc, berr);
+	return rc;
+}
+
+// clang-format off
+static const sd_bus_vtable bus_link_endpoint_vtable[] = {
+	SD_BUS_VTABLE_START(0),
+	SD_BUS_METHOD_WITH_ARGS("AttemptDiscoveryNotify",
+		SD_BUS_ARGS("ay", physaddr),
+		SD_BUS_NO_RESULT,
+		method_attempt_discovery_notify,
+		0),
+	SD_BUS_VTABLE_END,
+};
+// clang-format on
+
 // clang-format off
 static const sd_bus_vtable bus_link_owner_vtable[] = {
 	SD_BUS_VTABLE_START(0),
@@ -4458,14 +4521,21 @@ static int link_set_role(sd_event_source *ev, void *userdata)
 	sd_event_source_unref(link->role_defer);
 	link->role_defer = NULL;
 
-	if (link->role != ENDPOINT_ROLE_BUS_OWNER)
-		return 0;
-
-	rc = sd_bus_add_object_vtable(link->ctx->bus, &link->slot_busowner,
-				      link->path, CC_MCTP_DBUS_IFACE_BUSOWNER,
-				      bus_link_owner_vtable, link);
-	if (rc)
-		warnx("adding link owner vtable failed: %d", rc);
+	if (link->role == ENDPOINT_ROLE_BUS_OWNER) {
+		rc = sd_bus_add_object_vtable(link->ctx->bus,
+					      &link->slot_busowner, link->path,
+					      CC_MCTP_DBUS_IFACE_BUSOWNER,
+					      bus_link_owner_vtable, link);
+		if (rc)
+			warnx("adding link owner vtable failed: %d", rc);
+	} else if (link->role == ENDPOINT_ROLE_ENDPOINT) {
+		rc = sd_bus_add_object_vtable(link->ctx->bus,
+					      &link->slot_endpoint, link->path,
+					      CC_MCTP_DBUS_IFACE_ENDPOINT,
+					      bus_link_endpoint_vtable, link);
+		if (rc)
+			warnx("adding link endpoint vtable failed: %d", rc);
+	}
 
 	return 0;
 }
@@ -4956,6 +5026,7 @@ static void free_link(struct link *link)
 	sd_event_source_disable_unref(link->role_defer);
 	sd_bus_slot_unref(link->slot_iface);
 	sd_bus_slot_unref(link->slot_busowner);
+	sd_bus_slot_unref(link->slot_endpoint);
 	free(link->path);
 	free(link->sysfs_path);
 	free(link);
@@ -5025,6 +5096,8 @@ static int rename_interface(struct ctx *ctx, struct link *link, int ifindex)
 	link->slot_iface = NULL;
 	sd_bus_slot_unref(link->slot_busowner);
 	link->slot_busowner = NULL;
+	sd_bus_slot_unref(link->slot_endpoint);
+	link->slot_endpoint = NULL;
 	free(link->path);
 
 	/* set new path and re-add */
@@ -5038,6 +5111,11 @@ static int rename_interface(struct ctx *ctx, struct link *link, int ifindex)
 					 link->path,
 					 CC_MCTP_DBUS_IFACE_BUSOWNER,
 					 bus_link_owner_vtable, link);
+	} else if (link->role == ENDPOINT_ROLE_ENDPOINT) {
+		sd_bus_add_object_vtable(link->ctx->bus, &link->slot_endpoint,
+					 link->path,
+					 CC_MCTP_DBUS_IFACE_ENDPOINT,
+					 bus_link_endpoint_vtable, link);
 	}
 
 	emit_interface_added(link);
@@ -5411,6 +5489,11 @@ static int add_interface(struct ctx *ctx, int ifindex)
 					 link->path,
 					 CC_MCTP_DBUS_IFACE_BUSOWNER,
 					 bus_link_owner_vtable, link);
+	} else if (link->role == ENDPOINT_ROLE_ENDPOINT) {
+		sd_bus_add_object_vtable(link->ctx->bus, &link->slot_endpoint,
+					 link->path,
+					 CC_MCTP_DBUS_IFACE_ENDPOINT,
+					 bus_link_endpoint_vtable, link);
 	}
 
 	if (link->phys_binding == MCTP_PHYS_BINDING_PCIE_VDM) {

@@ -120,7 +120,8 @@ configured value is `Unknown`. Other platform setup infrastructure may use
 this to configure the initial MCTP state of the platform.
 
 When the interface `Role` is `BusOwner`, the MCTP interface object will
-also host the `BusOwner1` dbus interface:
+also host the `BusOwner1` dbus interface. When the `Role` is `Endpoint`,
+the MCTP interface object will also host the `Endpoint1` dbus interface.
 
 The `NetworkId` property represents the network on which this interface is
 present.
@@ -247,6 +248,43 @@ the bridge with its own EID pool. `mctpd` will warn if the device type
 reports as a bridge.
 
 Bridge endpoints should be initialised with `AssignEndpoint` instead.
+
+### Endpoint interface: `au.com.codeconstruct.MCTP.Endpoint1` interface (on interface objects)
+
+When the interface `Role` is `Endpoint`, the MCTP interface object also hosts
+the `au.com.codeconstruct.MCTP.Endpoint1` D-Bus interface. This exposes
+endpoint-role functions on the per-interface D-Bus path.
+
+```
+NAME                                  TYPE      SIGNATURE RESULT/VALUE FLAGS
+au.com.codeconstruct.MCTP.Interface1  interface -         -            -
+.NetworkId                            property  u         1            emits-change
+.Role                                 property  s         "Endpoint"   emits-change writable
+au.com.codeconstruct.MCTP.Endpoint1   interface -         -            -
+.AttemptDiscoveryNotify               method    ay        -            -
+```
+
+#### `.AttemptDiscoveryNotify`: `ay`
+
+Some physical transports (such as MCTP-over-I3C) require the endpoint to
+send a Discovery Notify to announce its presence before the bus owner will
+enumerate it. On those interfaces this method can be called before the
+endpoint will be assigned an EID.
+
+`AttemptDiscoveryNotify <hwaddr>`
+
+ - `<hwaddr>` Physical hardware address of the bus owner. For MCTP-over-I3C
+   this is the 6-byte Provisional ID (PID) of the bus owner.
+
+An example for MCTP-over-I3C, sending a Discovery Notify using the bus owner's
+6-byte PID `00 6c 90 01 23 45`:
+
+```shell
+busctl call au.com.codeconstruct.MCTP1 \
+    /au/com/codeconstruct/mctp1/interfaces/mctpi3c0 \
+    au.com.codeconstruct.MCTP.Endpoint1 \
+    AttemptDiscoveryNotify ay 6 0x00 0x6c 0x90 0x01 0x23 0x45
+```
 
 ## Network objects: `/au/com/codeconstruct/networks/<net>`
 
