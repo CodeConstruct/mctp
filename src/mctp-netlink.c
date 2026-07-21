@@ -952,13 +952,17 @@ static void sort_linkmap(mctp_nl *nl)
 {
 	size_t i;
 
-	qsort(nl->linkmap, nl->linkmap_count, sizeof(*nl->linkmap),
-	      cmp_ifindex);
+	if (nl->linkmap) {
+		qsort(nl->linkmap, nl->linkmap_count, sizeof(*nl->linkmap),
+		      cmp_ifindex);
+	}
 
 	for (i = 0; i < nl->linkmap_count; i++) {
 		struct linkmap_entry *entry = &nl->linkmap[i];
-		qsort(entry->local_eids, entry->num_local, sizeof(mctp_eid_t),
-		      cmp_eid);
+		if (entry->local_eids) {
+			qsort(entry->local_eids, entry->num_local,
+			      sizeof(mctp_eid_t), cmp_eid);
+		}
 	}
 }
 
@@ -1090,11 +1094,12 @@ mctp_eid_t *mctp_nl_addrs_byindex(const mctp_nl *nl, int index, size_t *ret_num)
 	mctp_eid_t *ret;
 
 	*ret_num = 0;
-	if (!entry)
+	if (!entry || entry->num_local == 0)
 		return NULL;
 	ret = malloc(entry->num_local);
 	if (!ret)
 		return NULL;
+	assert(entry->local_eids);
 	memcpy(ret, entry->local_eids, entry->num_local);
 	*ret_num = entry->num_local;
 	return ret;
