@@ -1,3 +1,13 @@
+import trio
+
+
+async def wait_until(predicate, timeout=2.0, interval=0.005):
+    """Poll predicate every `interval` seconds until truthy or `timeout` expires."""
+    with trio.fail_after(timeout):
+        while not predicate():
+            await trio.sleep(interval)
+
+
 async def mctpd_mctp_base_iface_obj(dbus):
     obj = await dbus.get_proxy_object(
         'au.com.codeconstruct.MCTP1', '/au/com/codeconstruct/mctp1'

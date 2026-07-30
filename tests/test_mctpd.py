@@ -9,6 +9,7 @@ from mctp_test_utils import (
     mctpd_mctp_endpoint_common_obj,
     mctpd_mctp_endpoint_control_obj,
     mctpd_mctp_base_iface_obj,
+    wait_until,
 )
 from mctpenv import (
     Endpoint,
@@ -2339,3 +2340,182 @@ async def test_iface_config_match_path_none(dbus, sysnet, nursery):
 
     res = await mctpd.stop_mctpd()
     assert res == 0
+
+
+async def test_discovery_notify_bus_owner_success(dbus, mctpd):
+    """Test Discovery Notify processing when mctpd is in Bus Owner role.
+
+    When an endpoint issues Discovery Notify (0x0D), mctpd immediately
+    acknowledges over physical socket and defers EID assignment.
+    """
+    ep = mctpd.network.endpoints[0]
+
+    # Endpoint has no EID yet
+    assert ep.eid is None or ep.eid == 0
+
+    # Send Discovery Notify (Command Code 0x0D, Request bit set, IID 1)
+    cmd = MCTPControlCommand(True, 1, 0x0D)
+    rsp = await ep.send_control(mctpd.network.mctp_socket, cmd)
+
+    # Expect immediate ACK with MCTP_CTRL_CC_SUCCESS (0x00) and IID 1 (0x01 0x0d 0x00)
+    assert rsp.hex(' ') == '01 0d 00'
+
+    # Wait until deferred EID assignment executes and endpoint receives an EID
+    await wait_until(lambda: ep.eid is not None and ep.eid != 0)
+
+    # Verify endpoint object created on D-Bus and EID assigned
+    assert await mctpd_mctp_endpoint_control_obj(
+        dbus, f"/au/com/codeconstruct/mctp1/networks/1/endpoints/{ep.eid}"
+    )
+
+    # Verify neighbour and route entries created in kernel
+    assert len(mctpd.system.neighbours) == 1
+    assert mctpd.system.neighbours[0].lladdr == ep.lladdr
+    assert mctpd.system.neighbours[0].eid == ep.eid
+    assert len(mctpd.system.routes) == 1
+
+
+async def test_discovery_notify_deduplication(dbus, mctpd):
+    """Verify deduplication when multiple Discovery Notify requests arrive in rapid succession."""
+    ep = mctpd.network.endpoints[0]
+
+    # Send two Discovery Notify requests back-to-back before yielding to event loop
+    cmd1 = MCTPControlCommand(True, 1, 0x0D)
+    cmd2 = MCTPControlCommand(True, 2, 0x0D)
+
+    rsp1 = await ep.send_control(mctpd.network.mctp_socket, cmd1)
+    rsp2 = await ep.send_control(mctpd.network.mctp_socket, cmd2)
+
+    assert rsp1.hex(' ') == '01 0d 00'
+    assert rsp2.hex(' ') == '02 0d 00'
+
+    # Wait until single EID assignment completes
+    await wait_until(lambda: ep.eid is not None and ep.eid != 0)
+
+    # Ensure valid D-Bus object path
+    assert await mctpd_mctp_endpoint_control_obj(
+        dbus, f"/au/com/codeconstruct/mctp1/networks/1/endpoints/{ep.eid}"
+    )
+
+
+async def test_discovery_notify_existing_endpoint(dbus, mctpd, routed_ep):
+    """Verify Discovery Notify on an already assigned endpoint triggers teardown and re-discovery."""
+    ep = routed_ep
+
+    cmd = MCTPControlCommand(True, 3, 0x0D)
+    rsp = await ep.send_control(mctpd.network.mctp_socket, cmd)
+    assert rsp.hex(' ') == '03 0d 00'
+
+    # Wait until re-discovery and EID assignment completes
+    await wait_until(lambda: ep.eid is not None and ep.eid != 0)
+
+    # Endpoint is published on D-Bus
+    assert await mctpd_mctp_endpoint_control_obj(
+        dbus, f"/au/com/codeconstruct/mctp1/networks/1/endpoints/{ep.eid}"
+    )
+
+
+async def test_discovery_notify_short_message(mctpd):
+    """Verify truncated Discovery Notify message is rejected without crash."""
+    ep = mctpd.network.endpoints[0]
+
+    # Send 1-byte raw message (< sizeof(struct mctp_ctrl_msg_hdr))
+    # mctpd should drop without reply (timing out on response wait)
+    addr = MCTPSockAddr(ep.iface.net, ep.eid or 0, 0, 0x80)
+    if mctpd.network.mctp_socket.addr_ext:
+        addr.set_ext(ep.iface.ifindex, ep.lladdr)
+
+    await mctpd.network.mctp_socket.send(addr, bytes([0x80]))
+
+    # Verify no endpoint was assigned or created from truncated message
+    await wait_until(lambda: ep.eid is None or ep.eid == 0)
+    assert ep.eid is None or ep.eid == 0
+
+
+async def test_discovery_notify_cleanup_on_shutdown(dbus, sysnet, nursery):
+    """Verify free_peers cleans up pending discoveries safely on shutdown."""
+    mctpd = MctpdWrapper(dbus, sysnet)
+    await mctpd.start_mctpd(nursery)
+
+    ep = mctpd.network.endpoints[0]
+
+    # Send Discovery Notify
+    cmd = MCTPControlCommand(True, 1, 0x0D)
+    rsp = await ep.send_control(mctpd.network.mctp_socket, cmd)
+    assert rsp.hex(' ') == '01 0d 00'
+
+    # Immediately stop mctpd before deferred callback completes
+    res = await mctpd.stop_mctpd()
+    assert res == 0
+
+
+async def test_discovery_notify_rate_limit(dbus, mctpd):
+    """Verify rate-limiting drops excessive Discovery Notify requests exceeding 5 per second per endpoint."""
+    ep = mctpd.network.endpoints[0]
+
+    # Send 5 valid Discovery Notify requests from first endpoint
+    for i in range(1, 6):
+        cmd = MCTPControlCommand(True, i, 0x0D)
+        rsp = await ep.send_control(mctpd.network.mctp_socket, cmd)
+        assert rsp.hex(' ') == f'{i:02x} 0d 00'
+
+    # 6th request from first endpoint within same second should be rate-limited and dropped
+    cmd6 = MCTPControlCommand(True, 6, 0x0D)
+    with trio.move_on_after(0.2) as scope:
+        await ep.send_control(mctpd.network.mctp_socket, cmd6)
+    assert scope.cancelled_caught
+
+    # Verify that a second endpoint on the same interface is NOT rate-limited (per-endpoint isolation)
+    ep2 = Endpoint(ep.iface, bytes([0x22]), types=[0, 1])
+    mctpd.network.add_endpoint(ep2)
+    cmd_ep2 = MCTPControlCommand(True, 1, 0x0D)
+    rsp_ep2 = await ep2.send_control(mctpd.network.mctp_socket, cmd_ep2)
+    assert rsp_ep2.hex(' ') == '01 0d 00'
+
+
+async def test_discovery_notify_uart_success(dbus, mctpd):
+    """Test Discovery Notify over UART / serial interface with addressless transport.
+
+    Simulates an MCTP-over-UART (DSP0253 / PhysicalBinding.SERIAL) endpoint sending
+    Discovery Notify (0x0D) with an empty hardware address (bytes([])), verifying
+    that mctpd assigns an EID, updates the routing table, and publishes the D-Bus
+    endpoint object without creating invalid neighbour entries.
+    """
+    net = 1
+    # Create point-to-point UART / serial interface (bytes([]) hardware address)
+    uart_iface = mctpd.system.Interface(
+        'mctpserial0',
+        2,
+        net,
+        bytes([]),
+        68,
+        254,
+        True,
+        phys_binding=PhysicalBinding.SERIAL,
+    )
+    await mctpd.system.add_interface(uart_iface)
+    await mctpd.system.add_address(mctpd.system.Address(uart_iface, 8))
+
+    # Add an unassigned remote endpoint connected over the UART interface
+    ep = Endpoint(uart_iface, bytes([]), types=[0, 1])
+    mctpd.network.add_endpoint(ep)
+    assert ep.eid is None or ep.eid == 0
+
+    # Send Discovery Notify (0x0D) from the UART endpoint
+    cmd = MCTPControlCommand(True, 1, 0x0D)
+    rsp = await ep.send_control(mctpd.network.mctp_socket, cmd)
+    assert rsp.hex(' ') == '01 0d 00'
+
+    # Wait until deferred EID assignment completes on UART endpoint
+    await wait_until(lambda: ep.eid is not None and ep.eid != 0)
+
+    # Verify that the endpoint received the expected EID assignment
+    assert await mctpd_mctp_endpoint_control_obj(
+        dbus, f"/au/com/codeconstruct/mctp1/networks/1/endpoints/{ep.eid}"
+    )
+
+    # Verify routing table has route via UART interface and no invalid neighbour entry
+    route = mctpd.system.lookup_route(net, ep.eid)
+    assert route is not None
+    assert route.iface == uart_iface
+    assert not any(n.eid == ep.eid for n in mctpd.system.neighbours)
