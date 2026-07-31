@@ -30,6 +30,7 @@
 #include <fnmatch.h>
 #include <getopt.h>
 #include <signal.h>
+#include <ctype.h>
 
 #include <systemd/sd-event.h>
 #include <systemd/sd-bus.h>
@@ -56,6 +57,13 @@
 #define MCTP_DBUS_NAME "au.com.codeconstruct.MCTP1"
 #define MCTP_DBUS_IFACE_ENDPOINT "xyz.openbmc_project.MCTP.Endpoint"
 #define OPENBMC_IFACE_COMMON_UUID "xyz.openbmc_project.Common.UUID"
+#define OPENBMC_IFACE_DECORATOR_I2C \
+	"xyz.openbmc_project.Inventory.Decorator.I2CDevice"
+#define OPENBMC_IFACE_DECORATOR_I3C \
+	"xyz.openbmc_project.Inventory.Decorator.I3CDevice"
+#define I3C_HUB_DETECTOR_SERVICE "xyz.openbmc_project.I3C.Hub.Detector"
+#define I3C_HUB_DETECTOR_I2C_IFACE "xyz.openbmc_project.I2C.Device"
+#define I3C_HUB_DETECTOR_I3C_IFACE "xyz.openbmc_project.I3C.Device"
 #define CC_MCTP_DBUS_IFACE_INTERFACE "au.com.codeconstruct.MCTP.Interface1"
 #define CC_MCTP_DBUS_NETWORK_INTERFACE "au.com.codeconstruct.MCTP.Network1"
 
@@ -182,6 +190,14 @@ struct peer {
 	sd_bus_slot *slot_cc_endpoint;
 	sd_bus_slot *slot_bridge;
 	sd_bus_slot *slot_uuid;
+
+	// I2C/I3C inventory decorator, populated from i3c-hub-detector
+	sd_bus_slot *slot_dev_decorator;
+	bool dev_decorator_valid;
+	bool dev_is_i3c;
+	uint32_t dev_bus;
+	uint32_t dev_address;
+	char *dev_pid;
 	char *path;
 
 	bool have_neigh;
@@ -2227,6 +2243,8 @@ static void free_peers(struct ctx *ctx)
 		sd_bus_slot_unref(peer->slot_cc_endpoint);
 		sd_bus_slot_unref(peer->slot_bridge);
 		sd_bus_slot_unref(peer->slot_uuid);
+		sd_bus_slot_unref(peer->slot_dev_decorator);
+		free(peer->dev_pid);
 		free(peer);
 	}
 
@@ -3602,6 +3620,461 @@ static void add_peer_route(struct peer *peer)
 	}
 }
 
+/* ---- I2C/I3C inventory decorators, sourced from i3c-hub-detector ---- */
+
+static int bus_endpoint_dev_get_prop(sd_bus *bus, const char *path,
+				     const char *interface, const char *property,
+				     sd_bus_message *reply, void *userdata,
+				     sd_bus_error *berr)
+{
+	struct peer *peer = userdata;
+	int rc;
+
+	(void)bus;
+	(void)berr;
+
+	if (strcmp(property, "Bus") == 0) {
+		rc = sd_bus_message_append(reply, "u", peer->dev_bus);
+	} else if (strcmp(property, "Address") == 0) {
+		char addr_str[16];
+
+		snprintf(addr_str, sizeof(addr_str), "0x%x", peer->dev_address);
+		rc = sd_bus_message_append(reply, "s", addr_str);
+	} else if (strcmp(property, "PID") == 0) {
+		rc = sd_bus_message_append(reply, "s",
+					   peer->dev_pid ? peer->dev_pid : "");
+	} else {
+		warnx("Unknown property '%s' for %s iface %s", property, path,
+		      interface);
+		rc = -ENOENT;
+	}
+
+	return rc;
+}
+
+// clang-format off
+static const sd_bus_vtable bus_endpoint_i2c_dev_vtable[] = {
+	SD_BUS_VTABLE_START(0),
+	SD_BUS_PROPERTY("Bus", "u", bus_endpoint_dev_get_prop, 0,
+			SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
+	SD_BUS_PROPERTY("Address", "s", bus_endpoint_dev_get_prop, 0,
+			SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
+	SD_BUS_VTABLE_END
+};
+
+static const sd_bus_vtable bus_endpoint_i3c_dev_vtable[] = {
+	SD_BUS_VTABLE_START(0),
+	SD_BUS_PROPERTY("Bus", "u", bus_endpoint_dev_get_prop, 0,
+			SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
+	SD_BUS_PROPERTY("PID", "s", bus_endpoint_dev_get_prop, 0,
+			SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
+	SD_BUS_VTABLE_END
+};
+// clang-format on
+
+/* Parse the bus/adapter number from an MCTP interface name, e.g. "mctpi2c3".
+ * prefix is the transport specific part before the number, such as "mctpi2c"
+ * or "mctpi3c".
+ */
+static int dev_bus_from_ifname(const char *ifname, const char *prefix,
+			       uint32_t *bus)
+{
+	const char *p;
+	size_t plen;
+
+	if (!ifname || !prefix)
+		return -EINVAL;
+
+	plen = strlen(prefix);
+	if (strncmp(ifname, prefix, plen) != 0)
+		return -EINVAL;
+
+	p = ifname + plen;
+	while (*p && !isdigit((unsigned char)*p))
+		p++;
+	if (!isdigit((unsigned char)*p))
+		return -EINVAL;
+
+	*bus = (uint32_t)strtoul(p, NULL, 10);
+	return 0;
+}
+
+/* Parse a decimal or hex string such as "0x1D" or "29" into a value. */
+static int dev_parse_number(const char *s, uint64_t *out)
+{
+	unsigned long long v;
+	char *end = NULL;
+
+	if (!s || !*s)
+		return -EINVAL;
+	v = strtoull(s, &end, 0);
+	if (end == s)
+		return -EINVAL;
+	*out = (uint64_t)v;
+	return 0;
+}
+
+/* Read a single D-Bus variant, always consuming it. Numeric variants are
+ * returned via *num; string variants are returned via *str (malloced).
+ */
+static int dev_read_variant(sd_bus_message *m, bool *is_str, uint64_t *num,
+			    char **str)
+{
+	const char *contents = NULL;
+	char type = 0;
+	int rc, rc2;
+
+	*is_str = false;
+	*num = 0;
+	*str = NULL;
+
+	rc = sd_bus_message_peek_type(m, &type, &contents);
+	if (rc < 0)
+		return rc;
+	if (type != 'v' || !contents)
+		return -EINVAL;
+
+	rc = sd_bus_message_enter_container(m, 'v', contents);
+	if (rc < 0)
+		return rc;
+
+	switch (contents[0]) {
+	case 'y': {
+		uint8_t v;
+		rc = sd_bus_message_read_basic(m, 'y', &v);
+		*num = v;
+		break;
+	}
+	case 'b': {
+		int v;
+		rc = sd_bus_message_read_basic(m, 'b', &v);
+		*num = (v != 0);
+		break;
+	}
+	case 'n': {
+		int16_t v;
+		rc = sd_bus_message_read_basic(m, 'n', &v);
+		*num = (uint16_t)v;
+		break;
+	}
+	case 'q': {
+		uint16_t v;
+		rc = sd_bus_message_read_basic(m, 'q', &v);
+		*num = v;
+		break;
+	}
+	case 'i': {
+		int32_t v;
+		rc = sd_bus_message_read_basic(m, 'i', &v);
+		*num = (uint32_t)v;
+		break;
+	}
+	case 'u': {
+		uint32_t v;
+		rc = sd_bus_message_read_basic(m, 'u', &v);
+		*num = v;
+		break;
+	}
+	case 'x': {
+		int64_t v;
+		rc = sd_bus_message_read_basic(m, 'x', &v);
+		*num = (uint64_t)v;
+		break;
+	}
+	case 't': {
+		uint64_t v;
+		rc = sd_bus_message_read_basic(m, 't', &v);
+		*num = v;
+		break;
+	}
+	case 's':
+	case 'o': {
+		const char *s = NULL;
+		rc = sd_bus_message_read_basic(m, contents[0], &s);
+		if (rc >= 0) {
+			*is_str = true;
+			*str = strdup(s ? s : "");
+			if (!*str)
+				rc = -ENOMEM;
+		}
+		break;
+	}
+	default:
+		rc = sd_bus_message_skip(m, contents);
+		break;
+	}
+
+	rc2 = sd_bus_message_exit_container(m);
+	if (rc < 0)
+		return rc;
+	return rc2;
+}
+
+/*
+ * Query i3c-hub-detector for the device matching this endpoint's physical
+ * binding. For SMBus/I2C the match is on (bus, address); for I3C it is on
+ * (bus, PID). On success the resolved values are stored in the peer and true
+ * is returned.
+ */
+static bool lookup_hub_device(struct peer *peer, bool is_i3c,
+			      uint32_t match_bus, uint64_t match_key)
+{
+	const char *want_iface = is_i3c ? I3C_HUB_DETECTOR_I3C_IFACE
+					: I3C_HUB_DETECTOR_I2C_IFACE;
+	sd_bus_error err = SD_BUS_ERROR_NULL;
+	sd_bus_message *reply = NULL;
+	bool found = false;
+	int rc;
+
+	rc = sd_bus_call_method(peer->ctx->bus, I3C_HUB_DETECTOR_SERVICE, "/",
+				"org.freedesktop.DBus.ObjectManager",
+				"GetManagedObjects", &err, &reply, "");
+	if (rc < 0) {
+		if (peer->ctx->verbose)
+			warnx("i3c-hub-detector query failed: %s",
+			      err.message ? err.message : strerror(-rc));
+		goto out;
+	}
+
+	rc = sd_bus_message_enter_container(reply, 'a', "{oa{sa{sv}}}");
+	if (rc < 0)
+		goto out;
+
+	while (!found &&
+	       (rc = sd_bus_message_enter_container(reply, 'e',
+						    "oa{sa{sv}}")) > 0) {
+		const char *objpath = NULL;
+		bool has_iface = false;
+		bool have_bus = false;
+		bool have_key = false;
+		uint64_t obj_bus = 0;
+		uint64_t obj_key = 0;
+		char *obj_pid = NULL;
+
+		rc = sd_bus_message_read(reply, "o", &objpath);
+		if (rc < 0)
+			goto out;
+
+		rc = sd_bus_message_enter_container(reply, 'a', "{sa{sv}}");
+		if (rc < 0)
+			goto out;
+		//Loops over each interface implemented by this object.
+		while ((rc = sd_bus_message_enter_container(reply, 'e',
+							    "sa{sv}")) > 0) {
+			const char *iface = NULL;
+			bool want;
+
+			rc = sd_bus_message_read(reply, "s", &iface);
+			if (rc < 0) {
+				free(obj_pid);
+				goto out;
+			}
+			want = (strcmp(iface, want_iface) == 0);
+			if (want)
+				has_iface = true;
+
+			rc = sd_bus_message_enter_container(reply, 'a', "{sv}");
+			if (rc < 0) {
+				free(obj_pid);
+				goto out;
+			}
+			//Loops through each property on the interface.
+			while ((rc = sd_bus_message_enter_container(
+					reply, 'e', "sv")) > 0) {
+				const char *pname = NULL;
+				bool vis_str = false;
+				uint64_t vnum = 0;
+				char *vstr = NULL;
+
+				rc = sd_bus_message_read(reply, "s", &pname);
+				if (rc < 0) {
+					free(obj_pid);
+					goto out;
+				}
+
+				rc = dev_read_variant(reply, &vis_str, &vnum,
+						      &vstr);
+				if (rc < 0) {
+					free(obj_pid);
+					goto out;
+				}
+
+				if (want && strcmp(pname, "Bus") == 0) {
+					if (vis_str) {
+						uint64_t t;
+						if (dev_parse_number(vstr,
+								     &t) >= 0) {
+							obj_bus = t;
+							have_bus = true;
+						}
+					} else {
+						obj_bus = vnum;
+						have_bus = true;
+					}
+				} else if (want && !is_i3c &&
+					   strcmp(pname, "Address") == 0) {
+					if (vis_str) {
+						have_key =
+							(dev_parse_number(
+								 vstr,
+								 &obj_key) >= 0);
+					} else {
+						obj_key = vnum;
+						have_key = true;
+					}
+				} else if (want && is_i3c &&
+					   strcmp(pname, "PID") == 0) {
+					if (vis_str) {
+						free(obj_pid);
+						obj_pid = vstr;
+						vstr = NULL;
+						have_key =
+							(dev_parse_number(
+								 obj_pid,
+								 &obj_key) >= 0);
+					} else {
+						obj_key = vnum;
+						have_key = true;
+					}
+				}
+
+				free(vstr);
+
+				rc = sd_bus_message_exit_container(reply);
+				if (rc < 0) {
+					free(obj_pid);
+					goto out;
+				}
+			}
+			if (rc < 0) {
+				free(obj_pid);
+				goto out;
+			}
+
+			rc = sd_bus_message_exit_container(reply);
+			if (rc < 0) {
+				free(obj_pid);
+				goto out;
+			}
+			rc = sd_bus_message_exit_container(reply);
+			if (rc < 0) {
+				free(obj_pid);
+				goto out;
+			}
+		}
+		if (rc < 0) {
+			free(obj_pid);
+			goto out;
+		}
+
+		rc = sd_bus_message_exit_container(reply);
+		if (rc < 0) {
+			free(obj_pid);
+			goto out;
+		}
+		rc = sd_bus_message_exit_container(reply);
+		if (rc < 0) {
+			free(obj_pid);
+			goto out;
+		}
+
+		//match case
+		if (has_iface && have_bus && (uint32_t)obj_bus == match_bus &&
+		    have_key && obj_key == match_key) {
+			peer->dev_bus = match_bus;
+			if (is_i3c) {
+				free(peer->dev_pid);
+				peer->dev_pid = obj_pid;
+				obj_pid = NULL;
+			} else {
+				peer->dev_address = (uint32_t)match_key;
+			}
+			found = true;
+		}
+		free(obj_pid);
+	}
+	if (rc < 0)
+		goto out;
+
+	sd_bus_message_exit_container(reply);
+
+out:
+	sd_bus_error_free(&err);
+	sd_bus_message_unref(reply);
+	return found;
+}
+
+/* Add the I2C/I3C inventory decorator interface to a just-published endpoint,
+ * using device information read from i3c-hub-detector. No-op for endpoints
+ * whose physical binding is neither SMBus/I2C nor I3C, or which have no
+ * matching entry in i3c-hub-detector.
+ */
+static void populate_device_decorator(struct peer *peer)
+{
+	struct ctx *ctx = peer->ctx;
+	const sd_bus_vtable *vtable;
+	const char *ifname;
+	const char *iface;
+	uint8_t binding;
+	uint32_t bus = 0;
+	uint64_t match_key = 0;
+	bool is_i3c;
+	int rc;
+
+	if (peer->state != REMOTE || peer->phys.ifindex == 0)
+		return;
+
+	binding = mctp_nl_phys_binding_byindex(ctx->nl, peer->phys.ifindex);
+	if (binding == MCTP_PHYS_BINDING_SMBUS)
+		is_i3c = false;
+	else if (binding == MCTP_PHYS_BINDING_I3C)
+		is_i3c = true;
+	else
+		return;
+
+	ifname = mctp_nl_if_byindex(ctx->nl, peer->phys.ifindex);
+	if (!ifname)
+		return;
+
+	rc = dev_bus_from_ifname(ifname, is_i3c ? "mctpi3c" : "mctpi2c", &bus);
+	if (rc < 0) {
+		if (ctx->verbose)
+			warnx("Can't derive bus number from interface %s",
+			      ifname);
+		return;
+	}
+
+	if (is_i3c) {
+		for (size_t i = 0; i < peer->phys.hwaddr_len; i++)
+			match_key = (match_key << 8) | peer->phys.hwaddr[i];
+	} else {
+		if (peer->phys.hwaddr_len < 1)
+			return;
+		match_key = peer->phys.hwaddr[0];
+	}
+
+	if (!lookup_hub_device(peer, is_i3c, bus, match_key))
+		return;
+
+	iface = is_i3c ? OPENBMC_IFACE_DECORATOR_I3C
+		       : OPENBMC_IFACE_DECORATOR_I2C;
+	vtable = is_i3c ? bus_endpoint_i3c_dev_vtable
+			: bus_endpoint_i2c_dev_vtable;
+
+	rc = sd_bus_add_object_vtable(ctx->bus, &peer->slot_dev_decorator,
+				      peer->path, iface, vtable, peer);
+	if (rc < 0) {
+		warnx("Failed adding %s to %s: %s", iface, peer->path,
+		      strerror(-rc));
+		free(peer->dev_pid);
+		peer->dev_pid = NULL;
+		return;
+	}
+
+	peer->dev_is_i3c = is_i3c;
+	peer->dev_decorator_valid = true;
+}
+
 /* Creates dbus object and emits added signal.
  * Route/neigh should already have been added. */
 static int publish_peer(struct peer *peer)
@@ -3631,6 +4104,8 @@ static int publish_peer(struct peer *peer)
 					 peer->path, OPENBMC_IFACE_COMMON_UUID,
 					 bus_endpoint_uuid_vtable, peer);
 	}
+
+	populate_device_decorator(peer);
 
 	rc = emit_endpoint_added(peer);
 	if (rc > 0)
@@ -3680,6 +4155,11 @@ static int unpublish_peer(struct peer *peer)
 		peer->slot_bridge = NULL;
 		sd_bus_slot_unref(peer->slot_uuid);
 		peer->slot_uuid = NULL;
+		sd_bus_slot_unref(peer->slot_dev_decorator);
+		peer->slot_dev_decorator = NULL;
+		peer->dev_decorator_valid = false;
+		free(peer->dev_pid);
+		peer->dev_pid = NULL;
 		peer->published = false;
 		free(peer->path);
 	}
