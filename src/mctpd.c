@@ -2241,7 +2241,6 @@ static void free_peers(struct ctx *ctx)
 static int change_peer_eid(struct peer *peer, mctp_eid_t new_eid)
 {
 	struct net *n = NULL;
-	int rc;
 
 	if (!mctp_eid_is_valid_unicast(new_eid))
 		return -EINVAL;
@@ -2260,15 +2259,17 @@ static int change_peer_eid(struct peer *peer, mctp_eid_t new_eid)
 	if (n->peers[new_eid])
 		return -EEXIST;
 
-	/* publish & unpublish will update peer->path */
+	/* The object path contains the EID, so the peer is left unpublished
+	 * and the caller is responsible for publishing: publish_peer
+	 * registers the UUID vtable only when peer->uuid is already known,
+	 * so publishing before query_peer_properties has run would
+	 * permanently hide the UUID interface (the assign-mismatch paths
+	 * reach here before the properties are queried). */
 	unpublish_peer(peer);
 	n->peers[new_eid] = n->peers[peer->eid];
 	n->peers[peer->eid] = NULL;
 	peer->eid = new_eid;
 	add_peer_route(peer);
-	rc = publish_peer(peer);
-	if (rc)
-		return rc;
 
 	return 0;
 }
@@ -3813,6 +3814,15 @@ static int peer_endpoint_recover(sd_event_source *s, uint64_t usec,
 			rc = change_peer_eid(peer, new_eid);
 			if (rc < 0) {
 				goto reclaim;
+			}
+			/* change_peer_eid() leaves the peer unpublished; the
+			 * object path moves with the EID. The properties were
+			 * queried when the peer was first set up, so
+			 * publishing here re-registers the full interface
+			 * set. */
+			rc = publish_peer(peer);
+			if (rc < 0) {
+				goto reschedule;
 			}
 		}
 	}
