@@ -67,6 +67,12 @@ static struct type_lookup_t {
 			"secured messages using spdm over mctp per DSP0276",
 	},
 	{
+		.name = "cxl-cci",
+		.type = 8,
+		.description =
+			"CXL type 3 device component command interface over mctp per DSP0281",
+	},
+	{
 		.name = "pci",
 		.type = 0x7e,
 		.description = "vdm using a pci based vendor id per DSP0236",
