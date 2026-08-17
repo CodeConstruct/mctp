@@ -2048,6 +2048,10 @@ static int add_peer(struct ctx *ctx, const dest_phys *dest, mctp_eid_t eid,
 	peer->state = REMOTE;
 	peer->ctx = ctx;
 
+	// Set minimum MTU by default for compatibility. Clients can increase
+	// this with .SetMTU as needed
+	peer->mtu = mctp_nl_min_mtu_byindex(ctx->nl, peer->phys.ifindex);
+
 	// Update network eid map
 	n->peers[eid] = peer;
 
@@ -3531,9 +3535,6 @@ static int setup_added_peer(struct peer *peer)
 		bug_warn("%s Bad net %u", __func__, peer->net);
 		return -EPROTO;
 	}
-	// Set minimum MTU by default for compatibility. Clients can increase
-	// this with .SetMTU as needed
-	peer->mtu = mctp_nl_min_mtu_byindex(peer->ctx->nl, peer->phys.ifindex);
 
 	rc = query_peer_properties(peer);
 	if (rc < 0)

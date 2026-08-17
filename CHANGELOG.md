@@ -10,6 +10,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 1. `mctp-client` binary now handles the `cxl-cci` MCTP message type
 
+### Fixes
+
+1. In v2.6. we lost the peer initial MTU sematics, which gave us a safe minimum
+   MTU on peer routes when peers were added. This is now fixed - peer routes
+   will have an MTU set to the link-reported minimum, as introduced in v2.1.
+
 ## [2.6] - 2026-07-21
 
 ### Added
