@@ -216,6 +216,22 @@ async def test_setup_endpoint_no_get_uuid(dbus, mctpd):
     assert eid == ep.eid
 
 
+async def test_setup_endpoint_mtu(dbus, mctpd):
+    """Newly-added endpoints should start with a minimum MTU"""
+    iface = mctpd.system.interfaces[0]
+    ep = mctpd.network.endpoints[0]
+
+    # ensure we can distinguish a correct min mtu from a no-mtu case
+    assert iface.min_mtu != 0
+
+    mctp = await mctpd_mctp_iface_obj(dbus, iface)
+    (eid, net, path, new) = await mctp.call_setup_endpoint(ep.lladdr)
+
+    assert len(mctpd.system.routes) == 1
+    route = mctpd.system.routes[0]
+    assert route.mtu == iface.min_mtu
+
+
 async def test_remove_endpoint(dbus, mctpd):
     """Test neighbour removal"""
     iface = mctpd.system.interfaces[0]
