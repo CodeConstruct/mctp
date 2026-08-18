@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## Unreleased
+
+### Fixes
+
+1. `mctpd` now better handles a specific quirk with endpoints that return a
+   different EID than the one that had been set; we no longer omit conditional
+   dbus properties that were missed due to the unpublish/publish cycle.
+
+   Support for these endpoints is not always guaranteed; this Set Endpoint
+   ID behaviour is a spec violation.
+
 ## [2.6] - 2026-07-21
 
 ### Added
