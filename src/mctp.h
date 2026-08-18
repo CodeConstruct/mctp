@@ -109,4 +109,28 @@ enum {
 #define RTNLGRP_MCTP_IFADDR 34
 #endif
 
+#ifndef SIOCMCTPALLOCTAG
+#define SIOCMCTPALLOCTAG (SIOCPROTOPRIVATE + 0)
+#define SIOCMCTPDROPTAG (SIOCPROTOPRIVATE + 1)
+
+struct mctp_ioc_tag_ctl {
+	mctp_eid_t peer_addr;
+	__u8 tag;
+	__u16 flags;
+};
+#endif
+
+#ifndef SIOCMCTPALLOCTAG2
+#define SIOCMCTPALLOCTAG2 (SIOCPROTOPRIVATE + 2)
+#define SIOCMCTPDROPTAG2 (SIOCPROTOPRIVATE + 3)
+
+struct mctp_ioc_tag_ctl2 {
+	unsigned int net;
+	mctp_eid_t peer_addr;
+	mctp_eid_t local_addr;
+	__u16 flags;
+	__u8 tag;
+};
+#endif
+
 #endif /* _MCTP_H */

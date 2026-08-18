@@ -20,6 +20,7 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 
+#include <linux/if.h>
 #include <linux/netlink.h>
 
 #include "mctp-ops.h"
