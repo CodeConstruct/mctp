@@ -16,6 +16,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
    MTU on peer routes when peers were added. This is now fixed - peer routes
    will have an MTU set to the link-reported minimum, as introduced in v2.1.
 
+2. `mctpd` now better handles a specific quirk with endpoints that return a
+   different EID than the one that had been set; we no longer omit conditional
+   dbus properties that were missed due to the unpublish/publish cycle.
+
+   Support for these endpoints is not always guaranteed; this Set Endpoint
+   ID behaviour is a spec violation.
+
 ## [2.6] - 2026-07-21
 
 ### Added
