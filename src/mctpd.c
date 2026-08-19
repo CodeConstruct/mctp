@@ -28,6 +28,7 @@
 #include <err.h>
 #include <errno.h>
 #include <fnmatch.h>
+#include <inttypes.h>
 #include <getopt.h>
 #include <signal.h>
 
@@ -5694,7 +5695,8 @@ static int parse_config_bus_owner(struct ctx *ctx, toml_table_t *bus_owner)
 	if (val.ok && val.u.i) {
 		uint64_t i = val.u.i;
 		if ((i > max_poll_interval_ms) || (i < min_poll_interval_ms)) {
-			warnx("endpoint polling interval invalid (%lu - %lu ms)",
+			warnx("endpoint polling interval invalid "
+			      "(%" PRIu64 " - %" PRIu64 " ms)",
 			      min_poll_interval_ms, max_poll_interval_ms);
 			return -1;
 		}
