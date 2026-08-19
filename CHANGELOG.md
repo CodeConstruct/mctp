@@ -23,6 +23,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
    Support for these endpoints is not always guaranteed; this Set Endpoint
    ID behaviour is a spec violation.
 
+3. A couple of compile-time fixes for building against older kernel header
+   versions, and 32-bit arm.
+
 ## [2.6] - 2026-07-21
 
 ### Added
