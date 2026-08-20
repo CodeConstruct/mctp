@@ -1,8 +1,9 @@
-import pytest
 import asyncdbus
+import pytest
+import trio
 from mctp_test_utils import (
-    mctpd_mctp_iface_control_obj,
     mctpd_mctp_endpoint_control_obj,
+    mctpd_mctp_iface_control_obj,
 )
 from mctpenv import (
     Endpoint,
@@ -218,3 +219,13 @@ class TestUnsupportedDiscovery:
             mctpd.network.mctp_socket, MCTPControlCommand(True, 0, 0x0B)
         )
         assert rsp.hex(' ') == '00 0b 05'
+
+    async def test_discovery_notify_ignored(self, dbus, mctpd):
+        """Discovery Notify command on endpoint interface (not bus owner) is ignored."""
+        bo = mctpd.network.endpoints[0]
+
+        # Send Discovery Notify (0x0D) to mctpd running in endpoint role
+        cmd = MCTPControlCommand(True, 1, 0x0D)
+        with trio.move_on_after(0.5) as scope:
+            await bo.send_control(mctpd.network.mctp_socket, cmd)
+        assert scope.cancelled_caught

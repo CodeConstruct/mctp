@@ -141,6 +141,20 @@ enum discovery_state {
 	DISCOVERY_UNDISCOVERED,
 };
 
+struct discovery_notify_ctx {
+	struct ctx *ctx;
+	dest_phys phys;
+	struct discovery_notify_ctx *next;
+};
+
+#define MAX_LINK_RATE_LIMIT_ENTRIES 32
+
+struct phys_rate_limit_entry {
+	dest_phys phys;
+	uint64_t last_discovery_time_us;
+	uint32_t discovery_count;
+};
+
 struct link {
 	enum discovery_state discovered;
 	bool published;
@@ -153,6 +167,9 @@ struct link {
 	sd_bus_slot *slot_iface;
 	sd_bus_slot *slot_busowner;
 	sd_event_source *role_defer;
+
+	struct phys_rate_limit_entry rate_limits[MAX_LINK_RATE_LIMIT_ENTRIES];
+	size_t num_rate_limit_entries;
 
 	struct ctx *ctx;
 };
@@ -315,6 +332,8 @@ struct ctx {
 	// bus owner/bridge polling interval in usecs for
 	// checking endpoint's accessibility.
 	uint64_t endpoint_poll;
+	struct discovery_notify_ctx *pending_discoveries;
+	sd_event_source *discovery_defer;
 
 	// interface configuration (from config file), to be matched and
 	// applied on new interface events
@@ -365,6 +384,10 @@ static int add_peer(struct ctx *ctx, const dest_phys *dest, mctp_eid_t eid,
 static int add_peer_from_addr(struct ctx *ctx,
 			      const struct sockaddr_mctp_ext *addr,
 			      struct peer **ret_peer);
+static int change_peer_eid(struct peer *peer, mctp_eid_t new_eid);
+static int endpoint_assign_eid(struct ctx *ctx, sd_bus_error *berr,
+			       const dest_phys *dest, struct peer **ret_peer,
+			       mctp_eid_t static_eid, bool assign_bridge);
 static int remove_peer(struct peer *peer);
 static int remove_bridged_peers(struct peer *bridge);
 static int query_peer_properties(struct peer *peer);
@@ -751,9 +774,15 @@ static int reply_message(struct ctx *ctx, int sd, const void *resp,
 
 	if (reply_addr.smctp_addr.s_addr == 0 ||
 	    reply_addr.smctp_addr.s_addr == 0xff) {
-		bug_warn("reply_message can't take EID %d",
-			 reply_addr.smctp_addr.s_addr);
-		return -EPROTO;
+		/* Validate physical address metadata before falling back to physical send */
+		if (addr && addr->smctp_ifindex > 0 &&
+		    addr->smctp_halen <= sizeof(addr->smctp_haddr)) {
+			return reply_message_phys(ctx, sd, resp, resp_len,
+						  addr);
+		}
+		warnx("reply_message: EID %d specified without valid physical address info",
+		      reply_addr.smctp_addr.s_addr);
+		return -EINVAL;
 	}
 
 	len = mctp_ops.mctp.sendto(sd, resp, resp_len, 0,
@@ -1330,6 +1359,213 @@ handle_control_endpoint_discovery(struct ctx *ctx, int sd,
 	return reply_message_phys(ctx, sd, resp, sizeof(*resp), addr);
 }
 
+/*
+ * Rate limiting is evaluated per physical endpoint (MAC / I2C address) using a bounded
+ * LRU table on the link to isolate noisy endpoints on shared multi-drop buses (e.g. I2C/SMBus)
+ * without risking unbounded memory allocation.
+ */
+static bool link_check_rate_limit(struct link *link_data, const dest_phys *phys)
+{
+	struct phys_rate_limit_entry *entry = NULL;
+	struct timespec ts;
+	uint64_t now_us;
+	size_t oldest_idx = 0;
+	uint64_t oldest_time = UINT64_MAX;
+
+	if (clock_gettime(CLOCK_MONOTONIC, &ts) < 0)
+		return true;
+
+	now_us = (uint64_t)ts.tv_sec * 1000000ULL + ts.tv_nsec / 1000ULL;
+
+	for (size_t i = 0; i < link_data->num_rate_limit_entries; i++) {
+		if (match_phys(&link_data->rate_limits[i].phys, phys)) {
+			entry = &link_data->rate_limits[i];
+			break;
+		}
+		if (link_data->rate_limits[i].last_discovery_time_us <
+		    oldest_time) {
+			oldest_time =
+				link_data->rate_limits[i].last_discovery_time_us;
+			oldest_idx = i;
+		}
+	}
+
+	if (!entry) {
+		if (link_data->num_rate_limit_entries <
+		    MAX_LINK_RATE_LIMIT_ENTRIES) {
+			entry = &link_data->rate_limits
+					 [link_data->num_rate_limit_entries++];
+		} else {
+			entry = &link_data->rate_limits[oldest_idx];
+		}
+		memset(entry, 0, sizeof(*entry));
+		entry->phys = *phys;
+		entry->last_discovery_time_us = now_us;
+		entry->discovery_count = 0;
+	}
+
+	if (now_us - entry->last_discovery_time_us > 1000000ULL) {
+		entry->last_discovery_time_us = now_us;
+		entry->discovery_count = 0;
+	}
+
+	if (entry->discovery_count >= 5)
+		return false;
+
+	entry->discovery_count++;
+	return true;
+}
+
+static bool is_discovery_pending(struct ctx *ctx, int ifindex,
+				 const dest_phys *phys)
+{
+	struct discovery_notify_ctx *d;
+
+	for (d = ctx->pending_discoveries; d; d = d->next) {
+		if (d->phys.ifindex == ifindex && match_phys(&d->phys, phys))
+			return true;
+	}
+	return false;
+}
+
+static void process_deferred_discovery(struct ctx *ctx,
+				       struct discovery_notify_ctx *dctx)
+{
+	struct peer *peer = NULL;
+	int rc;
+
+	peer = find_peer_by_phys(ctx, &dctx->phys);
+	if (peer) {
+		if (ctx->verbose) {
+			warnx("Discovery Notify received for existing peer %s (EID %d); tearing down for re-discovery",
+			      peer_tostr(peer), peer->eid);
+		}
+		remove_peer(peer);
+		peer = NULL;
+	}
+
+	rc = endpoint_assign_eid(ctx, NULL, &dctx->phys, &peer, 0, true);
+
+	if (rc == 0) {
+		if (peer && peer->pool_size > 0) {
+			endpoint_allocate_eids(peer);
+		}
+	} else if (ctx->verbose) {
+		warnx("Deferred EID assignment failed for %s: %s",
+		      dest_phys_tostr(&dctx->phys), strerror(-rc));
+	}
+}
+
+static int deferred_discoveries_cb(sd_event_source *s, void *userdata)
+{
+	struct ctx *ctx = userdata;
+	struct discovery_notify_ctx *dctx;
+
+	(void)s;
+	sd_event_source_unref(ctx->discovery_defer);
+	ctx->discovery_defer = NULL;
+
+	while (ctx->pending_discoveries) {
+		dctx = ctx->pending_discoveries;
+		ctx->pending_discoveries = dctx->next;
+
+		process_deferred_discovery(ctx, dctx);
+		free(dctx);
+	}
+
+	return 0;
+}
+
+static int handle_control_discovery_notify(struct ctx *ctx, int sd,
+					   const struct sockaddr_mctp_ext *addr,
+					   const uint8_t *buf,
+					   const size_t buf_size)
+{
+	struct mctp_ctrl_resp_discovery_notify respi = { 0 }, *resp = &respi;
+	struct discovery_notify_ctx *dctx = NULL;
+	struct mctp_ctrl_msg_hdr *req = NULL;
+	struct link *link_data;
+	dest_phys phys = { 0 };
+	int rc;
+
+	if (buf_size < sizeof(*req)) {
+		warnx("short Discovery Notify message");
+		return -ENOMSG;
+	}
+	req = (void *)buf;
+
+	link_data = mctp_nl_get_link_userdata(ctx->nl, addr->smctp_ifindex);
+	if (!link_data) {
+		bug_warn("unconfigured interface %d", addr->smctp_ifindex);
+		return -ENOENT;
+	}
+
+	if (link_data->role != ENDPOINT_ROLE_BUS_OWNER) {
+		if (ctx->verbose) {
+			warnx("Ignoring Discovery Notify on interface %d: not a bus owner",
+			      addr->smctp_ifindex);
+		}
+		return 0;
+	}
+
+	phys.ifindex = addr->smctp_ifindex;
+	phys.hwaddr_len = addr->smctp_halen;
+	if (addr->smctp_halen > 0 && addr->smctp_halen <= sizeof(phys.hwaddr)) {
+		memcpy(phys.hwaddr, addr->smctp_haddr, addr->smctp_halen);
+	}
+
+	if (!link_check_rate_limit(link_data, &phys)) {
+		if (ctx->verbose) {
+			warnx("Discovery Notify rate limit exceeded for %s",
+			      dest_phys_tostr(&phys));
+		}
+		return 0;
+	}
+
+	/* Respond immediately over physical socket to acknowledge Discovery Notify */
+	mctp_ctrl_msg_hdr_init_resp(&respi.ctrl_hdr, *req);
+	resp->completion_code = MCTP_CTRL_CC_SUCCESS;
+
+	rc = reply_message_phys(ctx, sd, resp, sizeof(*resp), addr);
+	if (rc < 0) {
+		warnx("Failed to send Discovery Notify response on ifindex %d: %s",
+		      addr->smctp_ifindex, strerror(-rc));
+		return rc;
+	}
+
+	/* Deduplicate incoming Discovery Notify for both existing and new physical endpoints */
+	if (is_discovery_pending(ctx, addr->smctp_ifindex, &phys)) {
+		return 0;
+	}
+
+	dctx = calloc(1, sizeof(*dctx));
+	if (!dctx) {
+		return -ENOMEM;
+	}
+
+	dctx->ctx = ctx;
+	dctx->phys = phys;
+
+	dctx->next = ctx->pending_discoveries;
+	ctx->pending_discoveries = dctx;
+
+	if (!ctx->discovery_defer) {
+		rc = sd_event_add_defer(ctx->event, &ctx->discovery_defer,
+					deferred_discoveries_cb, ctx);
+		if (rc < 0) {
+			if (ctx->verbose) {
+				warnx("Failed to defer EID assignment event for %s",
+				      dest_phys_tostr(&phys));
+			}
+			ctx->pending_discoveries = dctx->next;
+			free(dctx);
+			return rc;
+		}
+	}
+
+	return 0;
+}
+
 static int handle_control_unsupported(struct ctx *ctx, int sd,
 				      const struct sockaddr_mctp_ext *addr,
 				      const uint8_t *buf, const size_t buf_size)
@@ -1423,6 +1659,10 @@ static int cb_listen_control_msg(sd_event_source *s, int sd, uint32_t revents,
 	case MCTP_CTRL_CMD_ENDPOINT_DISCOVERY:
 		rc = handle_control_endpoint_discovery(ctx, sd, &addr, buf,
 						       buf_size);
+		break;
+	case MCTP_CTRL_CMD_DISCOVERY_NOTIFY:
+		rc = handle_control_discovery_notify(ctx, sd, &addr, buf,
+						     buf_size);
 		break;
 	default:
 		if (ctx->verbose) {
@@ -2221,6 +2461,8 @@ static int remove_peer(struct peer *peer)
 
 static void free_peers(struct ctx *ctx)
 {
+	struct discovery_notify_ctx *dctx, *tmp_dctx;
+
 	for (size_t i = 0; i < ctx->num_peers; i++) {
 		struct peer *peer = ctx->peers[i];
 		free(peer->message_types);
@@ -2236,6 +2478,17 @@ static void free_peers(struct ctx *ctx)
 	}
 
 	free(ctx->peers);
+
+	sd_event_source_disable_unref(ctx->discovery_defer);
+	ctx->discovery_defer = NULL;
+
+	dctx = ctx->pending_discoveries;
+	while (dctx) {
+		tmp_dctx = dctx->next;
+		free(dctx);
+		dctx = tmp_dctx;
+	}
+	ctx->pending_discoveries = NULL;
 }
 
 /* Returns -EEXIST if the new_eid is already used */
