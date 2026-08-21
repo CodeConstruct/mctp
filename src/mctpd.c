@@ -2103,15 +2103,15 @@ static int remove_bridged_peers(struct peer *bridge)
 	n = lookup_net(bridge->ctx, bridge->net);
 	pool_start = bridge->pool_start;
 
-	if (!sources)
-		return 0;
+	if (!n)
+		return -EPROTO;
 
 	for (ep = pool_start; ep <= pool_end; ep++) {
 		// stop endpoint polling before removing peer
 		// else next trigger will create peer again.
 		int idx = ep - pool_start;
 
-		if (sources[idx]) {
+		if (sources && sources[idx]) {
 			pctx = sd_event_source_get_userdata(sources[idx]);
 			rc = sd_event_source_set_enabled(sources[idx],
 							 SD_EVENT_OFF);
