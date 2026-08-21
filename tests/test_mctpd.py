@@ -2155,6 +2155,42 @@ async def test_bridged_endpoint_remove(dbus, sysnet, nursery, autojump_clock):
     assert res == 0
 
 
+async def test_bridged_learn_endpoint_remove(dbus, mctpd):
+    """Test that removing a bridge node removes downstream endpoints learned
+    via LearnEndpoint.
+    """
+    iface = mctpd.system.interfaces[0]
+    ep = mctpd.network.endpoints[0]
+    br_ep = Endpoint(iface, bytes(), eid=10, types=[0, 2])
+    ep.add_bridged_ep(br_ep)
+    mctpd.network.add_endpoint(br_ep)
+
+    mctp = await mctpd_mctp_iface_obj(dbus, iface)
+    (bridge_eid, _, bridge_path, new) = await mctp.call_assign_endpoint(
+        ep.lladdr
+    )
+    assert new
+    assert ep.allocated_pool is not None
+
+    await mctpd.system.add_route(mctpd.system.Route(br_ep.eid, 1, iface=iface))
+    await mctpd.system.add_neighbour(
+        mctpd.system.Neighbour(iface, ep.lladdr, br_ep.eid)
+    )
+
+    net = await mctpd_mctp_network_obj(dbus, iface.net)
+    (downstream_path, new_ds) = await net.call_learn_endpoint(br_ep.eid)
+    assert new_ds
+
+    ds_obj = await mctpd_mctp_endpoint_common_obj(dbus, downstream_path)
+    assert ds_obj is not None
+
+    bridge_obj = await mctpd_mctp_endpoint_control_obj(dbus, bridge_path)
+    await bridge_obj.call_remove()
+
+    with pytest.raises(asyncdbus.errors.DBusError):
+        await mctpd_mctp_endpoint_common_obj(dbus, downstream_path)
+
+
 async def test_bridged_endpoint_poll_stop(
     dbus, sysnet, nursery, autojump_clock
 ):
