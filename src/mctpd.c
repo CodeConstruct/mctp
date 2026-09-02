@@ -2947,14 +2947,14 @@ static int query_get_peer_uuid_by_phys(struct ctx *ctx, const dest_phys *dest,
 		goto out;
 
 	resp = cmd.resp;
-	memcpy(uuid, resp->uuid, 16);
+	memcpy(uuid, resp->uuid, sizeof(resp->uuid));
 
 out:
 	mctp_ctrl_cmd_free(&cmd);
 	return rc;
 }
 
-static int query_get_peer_uuid(struct peer *peer)
+static int query_get_peer_uuid(struct peer *peer, uint8_t uuid[16])
 {
 	struct mctp_ctrl_resp_get_uuid *resp = NULL;
 	struct mctp_ctrl_cmd_get_uuid req;
@@ -2985,10 +2985,7 @@ static int query_get_peer_uuid(struct peer *peer)
 		goto out;
 
 	resp = cmd.resp;
-	rc = peer_set_uuid(peer, resp->uuid);
-	if (rc < 0)
-		goto out;
-	rc = 0;
+	memcpy(uuid, resp->uuid, sizeof(resp->uuid));
 
 out:
 	mctp_ctrl_cmd_free(&cmd);
@@ -3458,10 +3455,16 @@ static int query_peer_properties(struct peer *peer)
 		}
 	}
 
-	rc = query_get_peer_uuid(peer);
-	if (rc < 0 && peer->ctx->verbose) {
-		errno = -rc;
-		warn("Error getting UUID for %s", peer_tostr(peer));
+	{
+		uint8_t uuid[16];
+		memset(uuid, 0, sizeof(uuid));
+		rc = query_get_peer_uuid(peer, uuid);
+		if (!rc)
+			rc = peer_set_uuid(peer, uuid);
+		if (rc < 0 && peer->ctx->verbose) {
+			errno = -rc;
+			warn("Error getting UUID for %s", peer_tostr(peer));
+		}
 	}
 
 	// TODO: emit property changed? Though currently they are all const.
