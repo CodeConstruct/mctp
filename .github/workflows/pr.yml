@@ -71,3 +71,32 @@ jobs:
         with:
           name: no-libsystemd-meson-testlog
           path: build/meson-logs/testlog.txt
+
+  musl:
+    runs-on: ubuntu-latest
+    container: alpine:latest
+    steps:
+      - name: Install system build dependencies
+        run: >
+          apk add --no-cache
+          build-base linux-headers meson ninja git py3-pip
+
+      - uses: actions/checkout@v4
+
+      - name: Install python dependencies for mctp tests
+        run: pip install --break-system-packages -r tests/requirements.txt
+
+      - name: Configure mctp build
+        run: meson setup build
+
+      - name: Build mctp
+        run: meson compile -C build
+
+      - name: Test mctp
+        run: meson test -C build --verbose
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: musl-meson-testlog
+          path: build/meson-logs/testlog.txt

@@ -18,6 +18,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
    To support this, the minimum meson version has been bumped to 0.60,
    previously 0.59.
 
+3. CI now includes a musl (Alpine Linux) build, to catch portability issues
+   before they affect the meta-openembedded bump process.
+
 ### Fixes
 
 1. In v2.6. we lost the peer initial MTU sematics, which gave us a safe minimum
