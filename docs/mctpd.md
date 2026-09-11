@@ -434,6 +434,24 @@ Such periodic polling is common for all the briged endpoints among allocated
 pool space [`.PoolStart` - `.PoolEnd`] of the bridge.
 Polling could be provisioned to be disabled via setting the value as ```0```.
 
+#### `auto_discovery`: Autonomous periodic probing on point-to-point links
+
+* type: boolean
+* default: `false`
+
+Enables autonomous background probing (`Get Endpoint ID` 0x02) for addressless
+point-to-point links (e.g. Serial, USB, KCS) running in `bus-owner` mode. When enabled,
+`mctpd` automatically probes the link when brought `IFF_UP` until the endpoint
+responds, assigns an EID, and transitions the link to `DISCOVERY_DISCOVERED`.
+
+#### `probe_interval_ms`: Periodic probing interval for point-to-point links
+
+* type: integer, in milliseconds
+* default: 1000
+
+Specifies the period between probe attempts on point-to-point links. Valid range is
+`100` ms to `60000` ms.
+
 ### `[[interface]]`: per-interface configuration
 
 The `[[interface]]` table allows configuration to be applied to specific
@@ -443,12 +461,34 @@ determines which MCTP interfaces the table applies to.
 Matches are processed in the order they appear in the configuration file;
 the first `[[interface]]` section that matches is applied.
 
-Other content of the interface table is configuration to be applied. The
-only setting currently supported is `role`, to set mctpd's role as
-either bus-owner or endpoint on this interface.
+Supported settings per interface:
+* `role`: sets mctpd's role as either `bus-owner` or `endpoint` on this interface.
+* `auto_discovery`: overrides global `auto_discovery` for this interface (`true`/`false`).
+* `probe_interval_ms`: overrides global probe interval in milliseconds (`100` - `60000`).
+* `static_eid`: assigns a fixed static EID (must be in `[8, dynamic_eid_start)`) upon successful probe response, preventing dynamic EID allocation collisions.
 
-For example, to apply a `bus-owner` role globally, with interface-specific
-`endpoint` roles for all i2c devices, and one particular (USB) device:
+For example, to configure static EIDs and custom probe intervals on point-to-point links:
+
+```toml
+[bus-owner]
+dynamic_eid_range = [16, 64]
+auto_discovery = true
+probe_interval_ms = 1000
+
+[[interface]]
+match = { phys-type = "serial" }
+role = "bus-owner"
+auto_discovery = true
+probe_interval_ms = 500
+static_eid = 8
+
+[[interface]]
+match = { phys-type = "usb" }
+role = "bus-owner"
+auto_discovery = true
+probe_interval_ms = 500
+static_eid = 9
+```
 
 ```toml
 role = "bus-owner"

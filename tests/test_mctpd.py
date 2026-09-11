@@ -2396,3 +2396,316 @@ async def test_iface_config_match_path_none(dbus, sysnet, nursery):
 
     res = await mctpd.stop_mctpd()
     assert res == 0
+
+
+async def test_auto_discovery_serial_probe(dbus, sysnet, nursery):
+    """Test autonomous periodic discovery on a serial interface"""
+    config = """
+    role = "bus-owner"
+    [bus-owner]
+    auto_discovery = true
+    probe_interval_ms = 100
+    """
+
+    mctpd = MctpdWrapper(dbus, sysnet, config=config)
+    iface = mctpd.system.interfaces[0]
+    iface.phys_binding = PhysicalBinding.SERIAL
+    iface.lladdr = b""
+    iface.up = True
+    mctpd.network.endpoints[0].lladdr = b""
+
+    await mctpd.start_mctpd(nursery)
+
+    mctp_root = await dbus.get_proxy_object(MCTPD_C, MCTPD_MCTP_P)
+    objmgr = await mctp_root.get_interface(DBUS_OBJECT_MANAGER_I)
+
+    endpoint_added = trio.Event()
+    discovered_path = None
+
+    def on_ifaces_added(path, interfaces):
+        nonlocal discovered_path
+        if MCTPD_ENDPOINT_I in interfaces and not path.endswith("/8"):
+            discovered_path = path
+            endpoint_added.set()
+
+    await objmgr.on_interfaces_added(on_ifaces_added)
+
+    # Check if already added
+    objects = await objmgr.call_get_managed_objects()
+    for path, ifaces in objects.items():
+        if MCTPD_ENDPOINT_I in ifaces and not path.endswith("/8"):
+            discovered_path = path
+            endpoint_added.set()
+            break
+
+    if not endpoint_added.is_set():
+        with trio.move_on_after(2.0) as cancel_scope:
+            await endpoint_added.wait()
+        assert not cancel_scope.cancelled_caught
+
+    assert discovered_path is not None
+    assert len(mctpd.system.routes) == 1
+    assert mctpd.system.routes[0].start_eid == 9
+
+    iface_obj = await mctpd_mctp_iface_control_obj(dbus, iface)
+    role = await iface_obj.get_role()
+    assert role == "BusOwner"
+
+    res = await mctpd.stop_mctpd()
+    assert res == 0
+
+
+async def test_auto_discovery_point_to_point_usb(dbus, sysnet, nursery):
+    """Test autonomous periodic discovery on USB point-to-point interface"""
+    config = """
+    role = "bus-owner"
+    [bus-owner]
+    auto_discovery = true
+    probe_interval_ms = 100
+    """
+
+    mctpd = MctpdWrapper(dbus, sysnet, config=config)
+    iface = mctpd.system.interfaces[0]
+    iface.phys_binding = PhysicalBinding.USB
+    iface.lladdr = b""
+    iface.up = True
+    mctpd.network.endpoints[0].lladdr = b""
+
+    await mctpd.start_mctpd(nursery)
+
+    mctp_root = await dbus.get_proxy_object(MCTPD_C, MCTPD_MCTP_P)
+    objmgr = await mctp_root.get_interface(DBUS_OBJECT_MANAGER_I)
+
+    endpoint_added = trio.Event()
+    discovered_path = None
+
+    def on_ifaces_added(path, interfaces):
+        nonlocal discovered_path
+        if MCTPD_ENDPOINT_I in interfaces and not path.endswith("/8"):
+            discovered_path = path
+            endpoint_added.set()
+
+    await objmgr.on_interfaces_added(on_ifaces_added)
+
+    # Check if already added
+    objects = await objmgr.call_get_managed_objects()
+    for path, ifaces in objects.items():
+        if MCTPD_ENDPOINT_I in ifaces and not path.endswith("/8"):
+            discovered_path = path
+            endpoint_added.set()
+            break
+
+    if not endpoint_added.is_set():
+        with trio.move_on_after(2.0) as cancel_scope:
+            await endpoint_added.wait()
+        assert not cancel_scope.cancelled_caught
+
+    assert discovered_path is not None
+    assert len(mctpd.system.routes) == 1
+    assert mctpd.system.routes[0].start_eid == 9
+
+    iface_obj = await mctpd_mctp_iface_control_obj(dbus, iface)
+    role = await iface_obj.get_role()
+    assert role == "BusOwner"
+
+    res = await mctpd.stop_mctpd()
+    assert res == 0
+
+
+async def test_auto_discovery_static_eid(dbus, sysnet, nursery):
+    """Test autonomous discovery with static EID configuration and verification"""
+    config = """
+    role = "bus-owner"
+    [bus-owner]
+    dynamic_eid_range = [16, 64]
+    auto_discovery = true
+    probe_interval_ms = 100
+
+    [[interface]]
+    match = { phys-type = "serial" }
+    role = "bus-owner"
+    auto_discovery = true
+    probe_interval_ms = 100
+    static_eid = 9
+    """
+
+    mctpd = MctpdWrapper(dbus, sysnet, config=config)
+    iface = mctpd.system.interfaces[0]
+    iface.phys_binding = PhysicalBinding.SERIAL
+    iface.lladdr = b""
+    iface.up = True
+    mctpd.network.endpoints[0].lladdr = b""
+
+    await mctpd.start_mctpd(nursery)
+
+    mctp_root = await dbus.get_proxy_object(MCTPD_C, MCTPD_MCTP_P)
+    objmgr = await mctp_root.get_interface(DBUS_OBJECT_MANAGER_I)
+
+    endpoint_added = trio.Event()
+    discovered_path = None
+
+    def on_ifaces_added(path, interfaces):
+        nonlocal discovered_path
+        if MCTPD_ENDPOINT_I in interfaces and not path.endswith("/8"):
+            discovered_path = path
+            endpoint_added.set()
+
+    await objmgr.on_interfaces_added(on_ifaces_added)
+
+    # Check if already added
+    objects = await objmgr.call_get_managed_objects()
+    for path, ifaces in objects.items():
+        if MCTPD_ENDPOINT_I in ifaces and not path.endswith("/8"):
+            discovered_path = path
+            endpoint_added.set()
+            break
+
+    if not endpoint_added.is_set():
+        with trio.move_on_after(2.0) as cancel_scope:
+            await endpoint_added.wait()
+        assert not cancel_scope.cancelled_caught
+
+    assert discovered_path is not None
+    assert len(mctpd.system.routes) == 1
+    assert mctpd.system.routes[0].start_eid == 9
+
+    ep_obj = await mctpd_mctp_endpoint_common_obj(dbus, discovered_path)
+    assigned_eid = await ep_obj.get_eid()
+    assert assigned_eid == 9
+
+    res = await mctpd.stop_mctpd()
+    assert res == 0
+
+
+async def test_auto_discovery_disabled(dbus, sysnet, nursery):
+    """Test that auto_discovery can be disabled globally and per-interface"""
+    config = """
+    role = "bus-owner"
+    [bus-owner]
+    auto_discovery = false
+    """
+
+    mctpd = MctpdWrapper(dbus, sysnet, config=config)
+    iface = mctpd.system.interfaces[0]
+    iface.phys_binding = PhysicalBinding.SERIAL
+    iface.lladdr = b""
+    iface.up = True
+    mctpd.network.endpoints[0].lladdr = b""
+
+    await mctpd.start_mctpd(nursery)
+
+    mctp_root = await dbus.get_proxy_object(MCTPD_C, MCTPD_MCTP_P)
+    objmgr = await mctp_root.get_interface(DBUS_OBJECT_MANAGER_I)
+
+    await trio.sleep(0.2)
+
+    objects = await objmgr.call_get_managed_objects()
+    remote_eps = [
+        p
+        for p in objects
+        if p.startswith(f"/au/com/codeconstruct/mctp1/networks/{iface.net}/endpoints/")
+        and not p.endswith("/8")
+    ]
+    assert len(remote_eps) == 0
+    assert len(mctpd.system.routes) == 0
+
+    res = await mctpd.stop_mctpd()
+    assert res == 0
+
+
+async def test_auto_discovery_default_disabled(dbus, sysnet, nursery):
+    """Test that auto_discovery is disabled by default without explicit config"""
+    config = """
+    role = "bus-owner"
+    """
+
+    mctpd = MctpdWrapper(dbus, sysnet, config=config)
+    iface = mctpd.system.interfaces[0]
+    iface.phys_binding = PhysicalBinding.SERIAL
+    iface.lladdr = b""
+    iface.up = True
+    mctpd.network.endpoints[0].lladdr = b""
+
+    await mctpd.start_mctpd(nursery)
+
+    mctp_root = await dbus.get_proxy_object(MCTPD_C, MCTPD_MCTP_P)
+    objmgr = await mctp_root.get_interface(DBUS_OBJECT_MANAGER_I)
+
+    await trio.sleep(0.2)
+
+    objects = await objmgr.call_get_managed_objects()
+    remote_eps = [
+        p
+        for p in objects
+        if p.startswith(f"/au/com/codeconstruct/mctp1/networks/{iface.net}/endpoints/")
+        and not p.endswith("/8")
+    ]
+    assert len(remote_eps) == 0
+    assert len(mctpd.system.routes) == 0
+
+    res = await mctpd.stop_mctpd()
+    assert res == 0
+
+
+async def test_auto_discovery_hotplug_requires_up(dbus, sysnet, nursery):
+    """Test that newly added point-to-point interface remains quiescent while DOWN, and starts probing only when brought UP"""
+    config = """
+    role = "bus-owner"
+    [bus-owner]
+    auto_discovery = true
+    probe_interval_ms = 100
+    """
+
+    mctpd = MctpdWrapper(dbus, sysnet, config=config)
+    iface = mctpd.system.interfaces[0]
+    iface.phys_binding = PhysicalBinding.SERIAL
+    iface.lladdr = b""
+    iface.up = False
+    mctpd.network.endpoints[0].lladdr = b""
+
+    await mctpd.start_mctpd(nursery)
+
+    mctp_root = await dbus.get_proxy_object(MCTPD_C, MCTPD_MCTP_P)
+    objmgr = await mctp_root.get_interface(DBUS_OBJECT_MANAGER_I)
+
+    endpoint_added = trio.Event()
+    discovered_path = None
+
+    def on_ifaces_added(path, interfaces):
+        nonlocal discovered_path
+        if MCTPD_ENDPOINT_I in interfaces and not path.endswith("/8"):
+            discovered_path = path
+            endpoint_added.set()
+
+    await objmgr.on_interfaces_added(on_ifaces_added)
+
+    # While iface.up is False, no remote endpoint should be discovered
+    await trio.sleep(0.2)
+    objects = await objmgr.call_get_managed_objects()
+    remote_eps = [
+        p
+        for p in objects
+        if p.startswith(f"/au/com/codeconstruct/mctp1/networks/{iface.net}/endpoints/")
+        and not p.endswith("/8")
+    ]
+    assert len(remote_eps) == 0
+    assert len(mctpd.system.routes) == 0
+    assert not endpoint_added.is_set()
+
+    # Bring the interface UP at runtime (simulating 'ip link set mctpserial0 up')
+    iface.up = True
+    await mctpd.system.notify_interface(iface)
+
+    # Now probe should trigger and endpoint should be added
+    if not endpoint_added.is_set():
+        with trio.move_on_after(2.0) as cancel_scope:
+            await endpoint_added.wait()
+        assert not cancel_scope.cancelled_caught
+
+    assert endpoint_added.is_set()
+    assert discovered_path is not None
+    assert len(mctpd.system.routes) == 1
+    assert mctpd.system.routes[0].start_eid == 9
+
+    res = await mctpd.stop_mctpd()
+    assert res == 0
