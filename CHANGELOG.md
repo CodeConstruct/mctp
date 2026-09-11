@@ -18,6 +18,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
    To support this, the minimum meson version has been bumped to 0.60,
    previously 0.59.
 
+3. `mctpd` now supports autonomous discovery on addressless point-to-point
+   physical links (Serial and USB, per Issue #174 Point 3) operating in Bus
+   Owner mode. Background periodic probing automatically discovers and assigns
+   EIDs once the interface is brought UP.
+
 ### Fixes
 
 1. In v2.6. we lost the peer initial MTU sematics, which gave us a safe minimum

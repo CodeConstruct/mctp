@@ -434,6 +434,33 @@ Such periodic polling is common for all the briged endpoints among allocated
 pool space [`.PoolStart` - `.PoolEnd`] of the bridge.
 Polling could be provisioned to be disabled via setting the value as ```0```.
 
+#### `auto_discovery`: Autonomous discovery on point-to-point links
+
+* type: boolean
+* default: `false`
+
+Enables autonomous discovery (`Get Endpoint ID` 0x02) for point-to-point links
+without physical addressing requirements (Serial and USB, per Issue #174 Point 3)
+running in `bus-owner` mode.
+
+For addressless point-to-point transports (Serial and USB), `mctpd` periodically probes the link
+once brought `IFF_UP` until the endpoint responds and an EID is assigned. Probing begins
+automatically once the interface is brought administratively `IFF_UP` by system network
+configuration (e.g. via `systemd-networkd` or `udev`).
+
+Similar to bridged endpoint polling, collision prevention with external management
+tools (such as manual D-Bus `SetupEndpoint` calls) is not enforced by the daemon;
+applications must not concurrently configure endpoints on interfaces managed by
+autonomous discovery.
+
+#### `probe_interval_ms`: Periodic probing interval for point-to-point links
+
+* type: integer, in milliseconds
+* default: 1000
+
+Specifies the period between probe attempts on point-to-point links. Valid range is
+`100` ms to `60000` ms.
+
 ### `[[interface]]`: per-interface configuration
 
 The `[[interface]]` table allows configuration to be applied to specific
@@ -444,8 +471,10 @@ Matches are processed in the order they appear in the configuration file;
 the first `[[interface]]` section that matches is applied.
 
 Other content of the interface table is configuration to be applied. The
-only setting currently supported is `role`, to set mctpd's role as
-either bus-owner or endpoint on this interface.
+settings currently supported are:
+* `role`: sets mctpd's role as either `bus-owner` or `endpoint` on this interface.
+* `auto_discovery`: enables or disables autonomous periodic probing (`true` or `false`).
+* `probe_interval_ms`: periodic probing interval in milliseconds (100 - 60000 ms).
 
 For example, to apply a `bus-owner` role globally, with interface-specific
 `endpoint` roles for all i2c devices, and one particular (USB) device:
@@ -460,6 +489,12 @@ role = "endpoint"
 [[interface]]
 match = { path = "/devices/pci0000:00/0000:00:08.3/usb10/10-0:1.0" }
 role = "endpoint"
+
+# Enable auto-discovery on serial links with a faster probe interval:
+[[interface]]
+match = { phys-type = "serial" }
+auto_discovery = true
+probe_interval_ms = 500
 ```
 
 #### Match types

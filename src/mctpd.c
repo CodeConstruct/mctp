@@ -67,6 +67,9 @@ static const char *conf_file_default = MCTPD_CONF_FILE_DEFAULT;
 
 static const uint64_t max_poll_interval_ms = 10000;
 static const uint64_t min_poll_interval_ms = 2500;
+static const uint64_t default_probe_interval_us = 1000 * 1000;
+static const uint64_t max_probe_interval_ms = 60000;
+static const uint64_t min_probe_interval_ms = 100;
 static const mctp_eid_t eid_alloc_min = 0x08;
 static const mctp_eid_t eid_alloc_max = 0xfe;
 static const uint8_t MCTP_TYPE_VENDOR_PCIE = 0x7e;
@@ -153,6 +156,9 @@ struct link {
 	sd_bus_slot *slot_iface;
 	sd_bus_slot *slot_busowner;
 	sd_event_source *role_defer;
+	sd_event_source *probe_timer;
+	bool auto_discovery;
+	uint64_t probe_interval_us;
 
 	struct ctx *ctx;
 };
@@ -266,6 +272,10 @@ struct interface_config {
 
 	bool role_set;
 	enum endpoint_role role;
+
+	bool auto_discovery_set;
+	bool auto_discovery;
+	uint64_t probe_interval_us;
 };
 
 struct ctx {
@@ -315,6 +325,10 @@ struct ctx {
 	// bus owner/bridge polling interval in usecs for
 	// checking endpoint's accessibility.
 	uint64_t endpoint_poll;
+
+	// Global autonomous probing default for addressless links
+	bool auto_discovery;
+	uint64_t probe_interval_us;
 
 	// interface configuration (from config file), to be matched and
 	// applied on new interface events
@@ -378,6 +392,23 @@ static int peer_neigh_update(struct peer *peer, uint16_t type);
 static int add_interface_local(struct ctx *ctx, int ifindex);
 static int del_interface(struct link *link);
 static int rename_interface(struct ctx *ctx, struct link *link, int ifindex);
+static void link_start_probe(struct link *link);
+static void link_stop_probe(struct link *link);
+
+/* Point 3 (Issue #174): Link types (serial, USB) that do not have any
+ * physical addressing requirements and allow discovery with no external trigger.
+ */
+static inline bool binding_requires_periodic_probe(uint8_t binding)
+{
+	switch (binding) {
+	case MCTP_PHYS_BINDING_SERIAL:
+	case MCTP_PHYS_BINDING_USB:
+		return true;
+	default:
+		return false;
+	}
+}
+
 static int change_net_interface(struct ctx *ctx, int ifindex, uint32_t old_net);
 static int add_local_eid(struct ctx *ctx, uint32_t net, int eid);
 static int del_local_eid(struct ctx *ctx, uint32_t net, int eid);
@@ -1569,7 +1600,42 @@ static int cb_listen_monitor(sd_event_source *s, int sd, uint32_t revents,
 		}
 
 		case MCTP_NL_CHANGE_UP: {
-			// 'up' state is currently unused
+			struct link *link = c->link_userdata;
+			if (link) {
+				bool is_up =
+					mctp_nl_up_byindex(ctx->nl, c->ifindex);
+				if (is_up) {
+					if (binding_requires_periodic_probe(
+						    link->phys_binding) &&
+					    link->role ==
+						    ENDPOINT_ROLE_BUS_OWNER &&
+					    link->auto_discovery) {
+						link->discovered =
+							DISCOVERY_UNDISCOVERED;
+						link_start_probe(link);
+					}
+				} else {
+					link_stop_probe(link);
+					if (binding_requires_periodic_probe(
+						    link->phys_binding) &&
+					    link->role ==
+						    ENDPOINT_ROLE_BUS_OWNER &&
+					    link->auto_discovery) {
+						dest_phys dest = {
+							.ifindex =
+								link->ifindex,
+							.hwaddr_len = 0,
+						};
+						struct peer *peer =
+							find_peer_by_phys(
+								ctx, &dest);
+						if (peer)
+							remove_peer(peer);
+						link->discovered =
+							DISCOVERY_UNDISCOVERED;
+					}
+				}
+			}
 			break;
 		}
 		default:
@@ -2754,6 +2820,134 @@ static int get_endpoint_peer(struct ctx *ctx, sd_bus_error *berr,
 	return 0;
 }
 
+static int link_reschedule_probe(sd_event_source *source, uint64_t usec)
+{
+	int rc = 0;
+	rc = mctp_ops.sd_event.source_set_time_relative(source, usec);
+	if (rc >= 0)
+		rc = sd_event_source_set_enabled(source, SD_EVENT_ONESHOT);
+	return rc;
+}
+
+static void link_stop_probe(struct link *link)
+{
+	if (link->probe_timer) {
+		sd_event_source_disable_unref(link->probe_timer);
+		link->probe_timer = NULL;
+	}
+	if (link->ctx->verbose) {
+		fprintf(stderr, "Disarmed probe timer for %s\n",
+			link->path ?: "link");
+	}
+}
+
+static int link_probe_timer_cb(sd_event_source *s, uint64_t usec,
+			       void *userdata);
+
+static void link_start_probe(struct link *link)
+{
+	struct ctx *ctx = link->ctx;
+	int rc;
+
+	/* Probing is only valid on presence-blind point-to-point links */
+	if (!binding_requires_periodic_probe(link->phys_binding))
+		return;
+
+	if (link->role != ENDPOINT_ROLE_BUS_OWNER)
+		return;
+
+	if (!link->auto_discovery)
+		return;
+
+	if (link->discovered != DISCOVERY_UNDISCOVERED)
+		return;
+
+	if (link->probe_timer)
+		return;
+
+	if (!mctp_nl_up_byindex(ctx->nl, link->ifindex))
+		return;
+
+	rc = mctp_ops.sd_event.add_time_relative(ctx->event, &link->probe_timer,
+						 CLOCK_MONOTONIC,
+						 link->probe_interval_us, 0,
+						 link_probe_timer_cb, link);
+	if (rc < 0) {
+		warnx("Failed to arm probe timer for %s: %s",
+		      link->path ?: "link", strerror(-rc));
+		return;
+	}
+
+	if (ctx->verbose) {
+		fprintf(stderr,
+			"Armed probe timer for %s (interval %" PRIu64 " us)\n",
+			link->path ?: "link", link->probe_interval_us);
+	}
+}
+
+/* DSP0236: Periodic probing for addressless point-to-point links.
+ *
+ * Like bridged endpoint polling (peer_endpoint_poll), collision prevention
+ * with external management applications (e.g. concurrent manual SetupEndpoint
+ * D-Bus calls) is not implemented in the daemon and relies on application
+ * behavior.
+ */
+static int link_probe_timer_cb(sd_event_source *s, uint64_t usec,
+			       void *userdata)
+{
+	struct link *link = userdata;
+	struct ctx *ctx = link->ctx;
+	dest_phys dest = {
+		.ifindex = link->ifindex,
+		.hwaddr_len = 0,
+	};
+	struct mctp_ctrl_cmd_get_eid req = { 0 };
+	struct mctp_ctrl_cmd cmd = { 0 };
+	struct peer *peer = NULL;
+	uint8_t iid;
+	int rc;
+
+	if (link->discovered != DISCOVERY_UNDISCOVERED) {
+		link_stop_probe(link);
+		return 0;
+	}
+
+	iid = mctp_next_iid(ctx);
+	mctp_ctrl_msg_hdr_init_req(&req.ctrl_hdr, iid,
+				   MCTP_CTRL_CMD_GET_ENDPOINT_ID);
+	mctp_ctrl_cmd_init_from_req_type(&cmd, req);
+	/* don't retry here, we're just probing */
+	cmd.disable_retry = true;
+
+	rc = endpoint_query_phys(ctx, &dest, &cmd);
+	if (rc < 0) {
+		mctp_ctrl_cmd_free(&cmd);
+		link_reschedule_probe(s, link->probe_interval_us);
+		return 0;
+	}
+
+	mctp_ctrl_cmd_free(&cmd);
+
+	/* Endpoint responded, stop probing and assign EID */
+	link_stop_probe(link);
+	link->discovered = DISCOVERY_DISCOVERED;
+
+	if (ctx->verbose) {
+		fprintf(stderr, "Probe response on %s: assigning EID\n",
+			link->path ?: "link");
+	}
+
+	rc = endpoint_assign_eid(ctx, NULL, &dest, &peer, 0, false);
+	if (rc < 0) {
+		warnx("Failed to assign EID on %s: %s", link->path ?: "link",
+		      strerror(-rc));
+		link->discovered = DISCOVERY_UNDISCOVERED;
+		link_start_probe(link);
+	}
+
+	return 0;
+}
+
 static int query_get_peer_msgtypes(struct peer *peer)
 {
 	struct mctp_ctrl_resp_get_msg_type_support *resp = NULL;
@@ -3863,7 +4057,22 @@ reclaim:
 		/* Recovery unsuccessful, clean up the peer */
 		assert(sd_event_source_get_enabled(peer->recovery.source,
 						   NULL) == 0);
+		int ifindex = peer->phys.ifindex;
 		remove_peer(peer);
+
+		/* Re-arm autonomous discovery only when recovery has failed and link is still UP */
+		if (ifindex > 0 && mctp_nl_up_byindex(ctx->nl, ifindex)) {
+			struct link *link =
+				mctp_nl_get_link_userdata(ctx->nl, ifindex);
+			if (link &&
+			    binding_requires_periodic_probe(
+				    link->phys_binding) &&
+			    link->role == ENDPOINT_ROLE_BUS_OWNER &&
+			    link->auto_discovery) {
+				link->discovered = DISCOVERY_UNDISCOVERED;
+				link_start_probe(link);
+			}
+		}
 	}
 	return rc < 0 ? rc : 0;
 }
@@ -4488,6 +4697,16 @@ static int link_set_role(sd_event_source *ev, void *userdata)
 	if (rc)
 		warnx("adding link owner vtable failed: %d", rc);
 
+	if (binding_requires_periodic_probe(link->phys_binding) &&
+	    link->auto_discovery) {
+		if (link->discovered == DISCOVERY_UNSUPPORTED)
+			link->discovered = DISCOVERY_UNDISCOVERED;
+		if (link->discovered == DISCOVERY_UNDISCOVERED &&
+		    mctp_nl_up_byindex(link->ctx->nl, link->ifindex)) {
+			link_start_probe(link);
+		}
+	}
+
 	return 0;
 }
 
@@ -4974,6 +5193,7 @@ static int prune_old_nets(struct ctx *ctx)
 
 static void free_link(struct link *link)
 {
+	link_stop_probe(link);
 	sd_event_source_disable_unref(link->role_defer);
 	sd_bus_slot_unref(link->slot_iface);
 	sd_bus_slot_unref(link->slot_busowner);
@@ -5368,6 +5588,12 @@ static int link_apply_configuration(struct ctx *ctx, struct link *link)
 	if (config->role_set)
 		link->role = config->role;
 
+	if (config->auto_discovery_set)
+		link->auto_discovery = config->auto_discovery;
+
+	if (config->probe_interval_us)
+		link->probe_interval_us = config->probe_interval_us;
+
 	return 0;
 }
 
@@ -5403,6 +5629,8 @@ static int add_interface(struct ctx *ctx, int ifindex)
 	link->phys_binding = mctp_nl_phys_binding_byindex(ctx->nl, ifindex);
 	/* Use the `role` setting in conf/mctp.conf */
 	link->role = ctx->default_role;
+	link->auto_discovery = ctx->auto_discovery;
+	link->probe_interval_us = ctx->probe_interval_us;
 	link_resolve_sysfs_path(link, ifname);
 	rc = asprintf(&link->path, "%s/%s", MCTP_DBUS_PATH_LINKS, ifname);
 	if (rc < 0) {
@@ -5436,6 +5664,10 @@ static int add_interface(struct ctx *ctx, int ifindex)
 
 	if (link->phys_binding == MCTP_PHYS_BINDING_PCIE_VDM) {
 		link->discovered = DISCOVERY_UNDISCOVERED;
+	} else if (binding_requires_periodic_probe(link->phys_binding) &&
+		   link->role == ENDPOINT_ROLE_BUS_OWNER &&
+		   link->auto_discovery) {
+		link->discovered = DISCOVERY_UNDISCOVERED;
 	}
 
 	link->published = true;
@@ -5443,6 +5675,9 @@ static int add_interface(struct ctx *ctx, int ifindex)
 	if (rc < 0) {
 		link->published = false;
 	}
+
+	if (mctp_nl_up_byindex(ctx->nl, ifindex))
+		link_start_probe(link);
 
 	return rc;
 
@@ -5704,6 +5939,23 @@ static int parse_config_bus_owner(struct ctx *ctx, toml_table_t *bus_owner)
 		ctx->endpoint_poll = i * 1000;
 	}
 
+	val = toml_bool_in(bus_owner, "auto_discovery");
+	if (val.ok)
+		ctx->auto_discovery = val.u.b;
+
+	val = toml_int_in(bus_owner, "probe_interval_ms");
+	if (val.ok && val.u.i) {
+		uint64_t i = val.u.i;
+		if ((i > max_probe_interval_ms) ||
+		    (i < min_probe_interval_ms)) {
+			warnx("probe interval invalid (%" PRIu64 " - %" PRIu64
+			      " ms)",
+			      min_probe_interval_ms, max_probe_interval_ms);
+			return -1;
+		}
+		ctx->probe_interval_us = i * 1000;
+	}
+
 	return 0;
 }
 
@@ -5855,6 +6107,26 @@ static int parse_config_interface(struct ctx *ctx, unsigned int idx,
 		free(s);
 		if (rc)
 			return rc;
+	}
+
+	toml_datum_t val = toml_bool_in(interface, "auto_discovery");
+	if (val.ok) {
+		config->auto_discovery_set = true;
+		config->auto_discovery = val.u.b;
+	}
+
+	val = toml_int_in(interface, "probe_interval_ms");
+	if (val.ok && val.u.i) {
+		uint64_t i = val.u.i;
+		if ((i > max_probe_interval_ms) ||
+		    (i < min_probe_interval_ms)) {
+			warnx("interface %u: probe interval invalid (%" PRIu64
+			      " - %" PRIu64 " ms)",
+			      idx, min_probe_interval_ms,
+			      max_probe_interval_ms);
+			return -1;
+		}
+		config->probe_interval_us = i * 1000;
 	}
 
 	return 0;
@@ -6014,6 +6286,8 @@ static void setup_config_defaults(struct ctx *ctx)
 	ctx->dyn_eid_min = eid_alloc_min;
 	ctx->dyn_eid_max = eid_alloc_max;
 	ctx->endpoint_poll = 0;
+	ctx->auto_discovery = false;
+	ctx->probe_interval_us = default_probe_interval_us;
 }
 
 static void free_config(struct ctx *ctx)
