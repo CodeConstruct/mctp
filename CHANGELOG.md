@@ -34,6 +34,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 3. A couple of compile-time fixes for building against older kernel header
    versions, and 32-bit arm.
 
+4. The mctpd.service definition now includes `CAP_NET_RAW`, required when
+   running mctpd as non-root.
+
 ## [2.6] - 2026-07-21
 
 ### Added
