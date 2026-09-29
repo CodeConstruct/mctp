@@ -30,6 +30,7 @@ MCTPD_MCTP_P = '/au/com/codeconstruct/mctp1'
 MCTPD_MCTP_I = 'au.com.codeconstruct.MCTP.BusOwner1'
 MCTPD_ENDPOINT_I = 'au.com.codeconstruct.MCTP.Endpoint1'
 MCTPD_ENDPOINT_BRIDGE_I = 'au.com.codeconstruct.MCTP.Bridge1'
+OPENBMC_UUID_I = 'xyz.openbmc_project.Common.UUID'
 DBUS_OBJECT_MANAGER_I = 'org.freedesktop.DBus.ObjectManager'
 DBUS_PROPERTIES_I = 'org.freedesktop.DBus.Properties'
 
@@ -2393,6 +2394,280 @@ async def test_iface_config_match_path_none(dbus, sysnet, nursery):
     iface = await mctpd_mctp_iface_control_obj(dbus, mctpd.system.interfaces[0])
     role = await iface.get_role()
     assert role != "BusOwner"
+
+    res = await mctpd.stop_mctpd()
+    assert res == 0
+
+
+async def _setup_bridge_with_downstream(
+    dbus, sysnet, nursery, num_downstream=1
+):
+    """Start mctpd, assign a bridge endpoint, wait for downstream discovery."""
+    _DOWNSTREAM_POLL_MS = 2500
+    config = f"""
+    [bus-owner]
+    endpoint_poll_ms = {_DOWNSTREAM_POLL_MS}
+    """
+    mctpd = MctpdWrapper(dbus, sysnet, config=config)
+    await mctpd.start_mctpd(nursery)
+
+    iface = mctpd.system.interfaces[0]
+    bridge_ep = mctpd.network.endpoints[0]
+    mctp = await mctpd_mctp_iface_obj(dbus, iface)
+
+    downstream_eps = []
+    for _ in range(num_downstream):
+        bep = Endpoint(iface, bytes(), types=[0])
+        mctpd.network.add_endpoint(bep)
+        bridge_ep.add_bridged_ep(bep)
+        downstream_eps.append(bep)
+
+    # Subscribe to InterfacesAdded AFTER assign_endpoint returns so we don't
+    # accidentally match the bridge's own Endpoint1 signal (emitted before its
+    # separate Bridge1 signal, so it would pass the downstream filter).
+    (_, _, _, new) = await mctp.call_assign_endpoint(bridge_ep.lladdr)
+    assert new
+
+    mctp_obj = await dbus.get_proxy_object(MCTPD_C, MCTPD_MCTP_P)
+    mctp_objmgr = await mctp_obj.get_interface(DBUS_OBJECT_MANAGER_I)
+
+    downstream_paths = []
+    discovered = trio.Semaphore(initial_value=0)
+
+    def ep_added(ep_path, content):
+        if (
+            MCTPD_ENDPOINT_I in content
+            and MCTPD_ENDPOINT_BRIDGE_I not in content
+        ):
+            downstream_paths.append(ep_path)
+            discovered.release()
+
+    await mctp_objmgr.on_interfaces_added(ep_added)
+
+    with trio.move_on_after(_DOWNSTREAM_POLL_MS / 1000 * 3) as scope:
+        for _ in range(num_downstream):
+            await discovered.acquire()
+
+    assert not scope.cancelled_caught, (
+        "Timed out waiting for downstream EP discovery"
+    )
+
+    return mctpd, bridge_ep, downstream_eps, downstream_paths
+
+
+async def test_recover_downstream_present(
+    dbus, sysnet, nursery, autojump_clock
+):
+    """Test Downstream peer still alive: recovery transitions Connectivity to Available."""
+    _DOWNSTREAM_TRECLAIM = 5
+    (
+        mctpd,
+        bridge_ep,
+        downstream_eps,
+        downstream_paths,
+    ) = await _setup_bridge_with_downstream(dbus, sysnet, nursery)
+
+    ds_path = downstream_paths[0]
+    ep_obj = await dbus.get_proxy_object(MCTPD_C, ds_path)
+    ep_props = await ep_obj.get_interface(DBUS_PROPERTIES_I)
+    ep_cc = await ep_obj.get_interface(MCTPD_ENDPOINT_I)
+
+    recovered = trio.Semaphore(initial_value=0)
+
+    def on_connectivity_changed(iface, changed, _invalidated):
+        if iface == MCTPD_ENDPOINT_I and 'Connectivity' in changed:
+            if changed['Connectivity'].value == 'Available':
+                recovered.release()
+
+    await ep_props.on_properties_changed(on_connectivity_changed)
+    await ep_cc.call_recover()
+
+    with trio.move_on_after(4 * _DOWNSTREAM_TRECLAIM) as scope:
+        await recovered.acquire()
+
+    assert not scope.cancelled_caught, (
+        "Downstream peer did not recover to Available"
+    )
+
+    res = await mctpd.stop_mctpd()
+    assert res == 0
+
+
+async def test_recover_downstream_removed(
+    dbus, sysnet, nursery, autojump_clock
+):
+    """Test if downstream peer gone while bridge is up: peer is removed after all retries."""
+    _DOWNSTREAM_TRECLAIM = 5
+    (
+        mctpd,
+        bridge_ep,
+        downstream_eps,
+        downstream_paths,
+    ) = await _setup_bridge_with_downstream(dbus, sysnet, nursery)
+
+    ds_path = downstream_paths[0]
+    ep_obj = await dbus.get_proxy_object(MCTPD_C, ds_path)
+    ep_props = await ep_obj.get_interface(DBUS_PROPERTIES_I)
+    ep_cc = await ep_obj.get_interface(MCTPD_ENDPOINT_I)
+
+    degraded = trio.Semaphore(initial_value=0)
+    removed = trio.Semaphore(initial_value=0)
+
+    def on_connectivity_changed(iface, changed, _invalidated):
+        if iface == MCTPD_ENDPOINT_I and 'Connectivity' in changed:
+            if changed['Connectivity'].value == 'Degraded':
+                degraded.release()
+
+    await ep_props.on_properties_changed(on_connectivity_changed)
+
+    mctp_obj = await dbus.get_proxy_object(MCTPD_C, MCTPD_MCTP_P)
+    mctp_objmgr = await mctp_obj.get_interface(DBUS_OBJECT_MANAGER_I)
+
+    def on_ep_removed(ep_path, interfaces):
+        if ep_path == ds_path and MCTPD_ENDPOINT_I in interfaces:
+            removed.release()
+
+    await mctp_objmgr.on_interfaces_removed(on_ep_removed)
+
+    # Disconnect downstream — bridge mock stops routing EID-addressed packets to it.
+    bridge_ep.bridged_eps.remove(downstream_eps[0])
+
+    await ep_cc.call_recover()
+
+    with trio.move_on_after(4 * _DOWNSTREAM_TRECLAIM) as scope:
+        await removed.acquire()
+        await degraded.acquire()
+
+    assert not scope.cancelled_caught, (
+        "Downstream peer was not removed after losing connectivity"
+    )
+
+    res = await mctpd.stop_mctpd()
+    assert res == 0
+
+
+async def test_recover_downstream_bridge_unreachable(
+    dbus, sysnet, nursery, autojump_clock
+):
+    """Test if bridge unreachable: downstream peer is removed when physical probe fails."""
+    _DOWNSTREAM_TRECLAIM = 5
+    (
+        mctpd,
+        bridge_ep,
+        downstream_eps,
+        downstream_paths,
+    ) = await _setup_bridge_with_downstream(dbus, sysnet, nursery)
+
+    ds_path = downstream_paths[0]
+    ep_obj = await dbus.get_proxy_object(MCTPD_C, ds_path)
+    ep_props = await ep_obj.get_interface(DBUS_PROPERTIES_I)
+    ep_cc = await ep_obj.get_interface(MCTPD_ENDPOINT_I)
+
+    degraded = trio.Semaphore(initial_value=0)
+    removed = trio.Semaphore(initial_value=0)
+
+    def on_connectivity_changed(iface, changed, _invalidated):
+        if iface == MCTPD_ENDPOINT_I and 'Connectivity' in changed:
+            if changed['Connectivity'].value == 'Degraded':
+                degraded.release()
+
+    await ep_props.on_properties_changed(on_connectivity_changed)
+
+    mctp_obj = await dbus.get_proxy_object(MCTPD_C, MCTPD_MCTP_P)
+    mctp_objmgr = await mctp_obj.get_interface(DBUS_OBJECT_MANAGER_I)
+
+    def on_ep_removed(ep_path, interfaces):
+        if ep_path == ds_path and MCTPD_ENDPOINT_I in interfaces:
+            removed.release()
+
+    await mctp_objmgr.on_interfaces_removed(on_ep_removed)
+
+    mctpd.network.endpoints.remove(bridge_ep)
+
+    await ep_cc.call_recover()
+
+    with trio.move_on_after(4 * _DOWNSTREAM_TRECLAIM) as scope:
+        await removed.acquire()
+        await degraded.acquire()
+
+    assert not scope.cancelled_caught, (
+        "Downstream peer was not removed after bridge became unreachable"
+    )
+
+    res = await mctpd.stop_mctpd()
+    assert res == 0
+
+
+async def test_recover_downstream_exchange(
+    dbus, sysnet, nursery, autojump_clock
+):
+    """Test if bridge reassigns pool EID to a new device, old peer removed, new peer added."""
+    _DOWNSTREAM_TRECLAIM = 5
+    (
+        mctpd,
+        bridge_ep,
+        downstream_eps,
+        downstream_paths,
+    ) = await _setup_bridge_with_downstream(dbus, sysnet, nursery)
+
+    ds_path = downstream_paths[0]
+    ep_obj = await dbus.get_proxy_object(MCTPD_C, ds_path)
+    ep_props = await ep_obj.get_interface(DBUS_PROPERTIES_I)
+    ep_cc = await ep_obj.get_interface(MCTPD_ENDPOINT_I)
+
+    degraded = trio.Semaphore(initial_value=0)
+    removed = trio.Semaphore(initial_value=0)
+    added = trio.Semaphore(initial_value=0)
+    added_uuid = []
+
+    def on_connectivity_changed(iface, changed, _invalidated):
+        if iface == MCTPD_ENDPOINT_I and 'Connectivity' in changed:
+            if changed['Connectivity'].value == 'Degraded':
+                degraded.release()
+
+    await ep_props.on_properties_changed(on_connectivity_changed)
+
+    mctp_obj = await dbus.get_proxy_object(MCTPD_C, MCTPD_MCTP_P)
+    mctp_objmgr = await mctp_obj.get_interface(DBUS_OBJECT_MANAGER_I)
+
+    def on_ep_removed(ep_path, interfaces):
+        if ep_path == ds_path and MCTPD_ENDPOINT_I in interfaces:
+            removed.release()
+
+    def on_ep_added(ep_path, content):
+        if ep_path == ds_path and MCTPD_ENDPOINT_I in content:
+            if OPENBMC_UUID_I in content and 'UUID' in content[OPENBMC_UUID_I]:
+                added_uuid.append(content[OPENBMC_UUID_I]['UUID'].value)
+            added.release()
+
+    await mctp_objmgr.on_interfaces_removed(on_ep_removed)
+    await mctp_objmgr.on_interfaces_added(on_ep_added)
+
+    old_ds = downstream_eps[0]
+    new_ds = Endpoint(old_ds.iface, bytes(), types=[0])
+    new_ds.eid = old_ds.eid  # same pool EID, fresh UUID
+
+    bridge_ep.bridged_eps.remove(old_ds)
+    bridge_ep.bridged_eps.append(new_ds)
+    mctpd.network.add_endpoint(new_ds)
+
+    await ep_cc.call_recover()
+
+    with trio.move_on_after(4 * _DOWNSTREAM_TRECLAIM) as scope:
+        await removed.acquire()
+        await added.acquire()
+        await degraded.acquire()
+
+    assert not scope.cancelled_caught, (
+        "Downstream peer exchange did not emit Remove + Add"
+    )
+
+    # Verify the re-added peer carries the new device's UUID, not the old one.
+    assert added_uuid, "InterfacesAdded did not include a UUID property"
+    assert added_uuid[0] == str(new_ds.uuid), (
+        f"New peer UUID {added_uuid[0]!r} does not match "
+        f"replacement device UUID {new_ds.uuid!r}"
+    )
 
     res = await mctpd.stop_mctpd()
     assert res == 0
