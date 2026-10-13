@@ -25,6 +25,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 4. The mctpd.service definition now includes `CAP_NET_RAW`, required when
    running mctpd as non-root.
 
+5. When bridge-downstream endpoints, added via LearnEndpoint, are removed,
+   fix an issue where stale dbus objects may remain.
+
 ## [2.6] - 2026-07-21
 
 ### Added
