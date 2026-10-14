@@ -73,6 +73,12 @@ static struct type_lookup_t {
 			"CXL type 3 device component command interface over mctp per DSP0281",
 	},
 	{
+		.name = "pcie-mi",
+		.type = 9,
+		.description =
+			"PCIe management interface over mctp per DSP0291",
+	},
+	{
 		.name = "pci",
 		.type = 0x7e,
 		.description = "vdm using a pci based vendor id per DSP0236",
