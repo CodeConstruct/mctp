@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+
+1. The `mctp-client` utility now has a type definition for PCIe management
+   interface (PCIe-MI, MCTP message type 9).
+
 ### Fixes
 
 1. When bridge-downstream endpoints, added via LearnEndpoint, are removed,
