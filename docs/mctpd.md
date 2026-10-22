@@ -503,7 +503,7 @@ Paths have the `/sys` prefix stripped.
 
 ## Capabilities
 
-`mctpd` requires the `CAP_NET_BIND_SERVICE` and `CAP_NET_ADMIN` capabilites to run.
+`mctpd` requires the `CAP_NET_BIND_SERVICE`, `CAP_NET_ADMIN` and `CAP_NET_RAW` capabilites to run.
 If the service is not running as root these should be added to the `AmbientCapabilities`
 setting in the service's config.
 If the target platform has the `libcap` library available,
