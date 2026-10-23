@@ -16,6 +16,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 1. When bridge-downstream endpoints, added via LearnEndpoint, are removed,
    fix an issue where stale dbus objects may remain.
 
+2. The mctpd.md document now specifies the `CAP_NET_RAW` requirement.
+
 ## [2.7] - 2026-09-18
 
 ### Added
