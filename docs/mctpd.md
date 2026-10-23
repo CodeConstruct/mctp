@@ -74,7 +74,8 @@ If the VDM type is already registered, then dbus call will fail.
  - `<vendor id>` Vendor identifier as a variant type:
    - For PCIe format: 16-bit unsigned integer (`q`)
    - For IANA format: 32-bit unsigned integer (`u`)
- - `<command set type>` Command set type (16-bit unsigned integer) as defined by the vendor
+ - `<command set type>` Command set type (16-bit unsigned integer) as defined by
+   the vendor
 
 Registering a VDM type will cause the corresponding VDM type value (0x7e or
 0x7f) to be returned in mctpd's Get Message Type Support response.
@@ -228,8 +229,9 @@ path       (string)
 new        (bool) - true if a new EID was assigned
 ```
 
-Where `eid` is the assigned EID, `poolstart` is the starting EID of the allocated
-bridge EID pool, and the remaining fields are the same as the methods above.
+Where `eid` is the assigned EID, `poolstart` is the starting EID of the
+allocated bridge EID pool, and the remaining fields are the same as the methods
+above.
 
 #### `.LearnEndpoint`: `ay` → `yisb`
 
@@ -274,8 +276,8 @@ bridge.
 `LearnEndpoint` takes an EID as its only argument, and returns the endpoint's
 path, and a boolean indicating whether the endpoint was newly discovered.
 
-The D-Bus interface includes the `LocalEIDs` property which reports BMC local EIDs
-in the network.
+The D-Bus interface includes the `LocalEIDs` property which reports BMC local
+EIDs in the network.
 
 ## Endpoint objects: `/au/com/codeconstruct/networks/<net>/endpoints/<eid>`
 
@@ -503,11 +505,11 @@ Paths have the `/sys` prefix stripped.
 
 ## Capabilities
 
-`mctpd` requires the `CAP_NET_BIND_SERVICE`, `CAP_NET_ADMIN` and `CAP_NET_RAW` capabilites to run.
-If the service is not running as root these should be added to the `AmbientCapabilities`
-setting in the service's config.
-If the target platform has the `libcap` library available,
-the `mctpd` process will drop `CAP_NET_BIND_SERVICE` when it is no longer needed.
+`mctpd` requires the `CAP_NET_BIND_SERVICE`, `CAP_NET_ADMIN` and `CAP_NET_RAW`
+capabilites to run. If the service is not running as root these should be added
+to the `AmbientCapabilities` setting in the service's config. If the target
+platform has the `libcap` library available, the `mctpd` process will drop
+`CAP_NET_BIND_SERVICE` when it is no longer needed.
 
 Because `mctpd` may be exposed to potentially hostile inputs,
 it shouldn't be given more capabilities than necessary.
