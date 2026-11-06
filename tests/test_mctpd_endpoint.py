@@ -2,6 +2,7 @@ import pytest
 import asyncdbus
 from mctp_test_utils import (
     mctpd_mctp_iface_control_obj,
+    mctpd_mctp_iface_endpoint_obj,
     mctpd_mctp_endpoint_control_obj,
 )
 from mctpenv import (
@@ -218,3 +219,63 @@ class TestUnsupportedDiscovery:
             mctpd.network.mctp_socket, MCTPControlCommand(True, 0, 0x0B)
         )
         assert rsp.hex(' ') == '00 0b 05'
+
+
+class DiscoveryNotifyFixtures:
+    """Set up an endpoint and its bus owner for Discovery Notify tests."""
+
+    # Example 6-byte I3C Provisional ID of the bus owner
+    BO_PID = bytes([0x00, 0x6C, 0x90, 0x01, 0x23, 0x45])
+
+    @pytest.fixture
+    async def iface(self):
+        return System.Interface(
+            "mctp0", 1, 1, bytes([0x1D]), 68, 254, True, PhysicalBinding.I3C
+        )
+
+    @pytest.fixture
+    async def sysnet(self, iface):
+        system = System()
+        await system.add_interface(iface)
+        network = Network()
+        network.add_endpoint(Endpoint(iface, self.BO_PID, eid=8))
+        return Sysnet(system, network)
+
+
+class TestDiscoveryNotifyRoleSet(DiscoveryNotifyFixtures):
+    @pytest.fixture
+    def config(self):
+        return 'role = "unknown"'
+
+    async def test_role_and_bus_owner_discover_endpoint(self, dbus, mctpd):
+        """Setting Endpoint role and BusOwner lets the bus owner discover us."""
+        iface = mctpd.system.interfaces[0]
+        bo = mctpd.network.endpoints[0]
+        interface = await mctpd_mctp_iface_control_obj(dbus, iface)
+
+        await interface.set_role("Endpoint")
+        ep = await mctpd_mctp_iface_endpoint_obj(dbus, iface)
+        await ep.set_bus_owner(bo.lladdr)
+        assert bo.discovered_devices == [iface.lladdr]
+
+
+class TestDiscoveryNotifyUnsupportedBinding(DiscoveryNotifyFixtures):
+    @pytest.fixture
+    async def iface(self):
+        return System.Interface(
+            "mctp0", 1, 1, bytes([0x1D]), 68, 254, True, PhysicalBinding.SMBUS
+        )
+
+    @pytest.fixture
+    def config(self):
+        return 'role = "unknown"'
+
+    async def test_unsupported_binding_does_not_discover_endpoint(
+        self, dbus, mctpd
+    ):
+        iface = mctpd.system.interfaces[0]
+        bo = mctpd.network.endpoints[0]
+        interface = await mctpd_mctp_iface_control_obj(dbus, iface)
+
+        await interface.set_role("Endpoint")
+        assert bo.discovered_devices == []

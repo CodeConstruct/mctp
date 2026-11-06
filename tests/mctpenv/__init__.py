@@ -430,6 +430,7 @@ class Endpoint:
 
         # keyed by (type, type-specific-instance)
         self.commands = {}
+        self.discovered_devices = []
 
     def __str__(self):
         return f"uuid {self.uuid} lladdr {self.lladdr}, eid {self.eid}"
@@ -535,6 +536,12 @@ class Endpoint:
                         self.allocated_pool[0],
                     ]
                 )
+                await sock.send(raddr, data)
+
+            elif opcode == 0x0D:
+                self.discovered_devices.append(self.iface.lladdr)
+                # Discovery Notify - respond with completion_code = 0
+                data = bytes(hdr + [0x00])
                 await sock.send(raddr, data)
 
             else:
