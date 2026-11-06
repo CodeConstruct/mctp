@@ -18,6 +18,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 2. The mctpd.md document now specifies the `CAP_NET_RAW` requirement.
 
+3. The example dbus policy configuration had an error in the allow-rule
+   for the org.freedesktop.DBus.Properties interface, which would have
+   made properties inaccessible. This has been fixed.
+
 ## [2.7] - 2026-09-18
 
 ### Added
