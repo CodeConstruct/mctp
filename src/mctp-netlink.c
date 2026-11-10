@@ -594,7 +594,7 @@ int mctp_nl_send(mctp_nl *nl, struct nlmsghdr *msg)
 	rc = mctp_ops.nl.sendto(nl->sd, msg, msg->nlmsg_len, 0,
 				(struct sockaddr *)&addr, sizeof(addr));
 	if (rc < 0)
-		return rc;
+		return -errno;
 
 	if (rc != (int)msg->nlmsg_len)
 		warnx("sendto: short send (%d, expected %d)", rc,
