@@ -270,6 +270,20 @@ class TestDiscoveryNotifySetBusOwner(DiscoveryNotifyFixtures):
         await ep.set_bus_owner(bo.lladdr)
         assert iface.lladdr in bo.discovered_devices
 
+    async def test_bus_owner_set_discover_endpoint_constant(self, dbus, mctpd):
+        """Setting the same BusOwner does not trigger discovery."""
+        iface = mctpd.system.interfaces[0]
+        bo = mctpd.network.endpoints[0]
+        ep = await mctpd_mctp_iface_endpoint_obj(dbus, iface)
+
+        await ep.set_bus_owner(bo.lladdr)
+        assert iface.lladdr in bo.discovered_devices
+
+        # clear discovered, the set_bus_owner should not cause a discovery
+        bo.discovered_devices.clear()
+        await ep.set_bus_owner(bo.lladdr)
+        assert iface.lladdr not in bo.discovered_devices
+
 
 class TestDiscoveryNotifyRoleSet(DiscoveryNotifyFixtures):
     @pytest.fixture

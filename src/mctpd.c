@@ -4368,6 +4368,10 @@ static int bus_link_endpoint_set_prop(sd_bus *bus, const char *path,
 		goto out;
 	}
 
+	/* are we already set to this same address? */
+	if (match_phys(&link->bus_owner, &dest))
+		goto out;
+
 	link->bus_owner = dest;
 	if (link->ctx->verbose)
 		warnx("BusOwner for %s set to %s", link->path,

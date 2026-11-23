@@ -272,7 +272,8 @@ management application.
 
 On transport types that require a Discovery Notify (PCIe and I3C), setting the
 bus owner address will automatically trigger a Discovery Notify to the bus
-owner if the interface is in Endpoint role and not yet discovered.
+owner if the interface is in Endpoint role and not yet discovered. Setting a
+bus owner address to the same value as currently set has no effect.
 
 For transport types that do not use physical addressing for bus owner
 communication (such as USB and serial), this property has no effect;
