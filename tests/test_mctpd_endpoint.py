@@ -242,6 +242,35 @@ class DiscoveryNotifyFixtures:
         return Sysnet(system, network)
 
 
+class TestDiscoveryNotifySetBusOwner(DiscoveryNotifyFixtures):
+    async def test_bus_owner_set_discover_endpoint(self, dbus, mctpd):
+        """Setting BusOwner lets the bus owner discover us."""
+        iface = mctpd.system.interfaces[0]
+        bo = mctpd.network.endpoints[0]
+
+        ep = await mctpd_mctp_iface_endpoint_obj(dbus, iface)
+        await ep.set_bus_owner(bo.lladdr)
+        assert iface.lladdr in bo.discovered_devices
+
+    async def test_bus_owner_set_discover_endpoint_change(self, dbus, mctpd):
+        """Setting a different bus owner will trigger re-discovery."""
+        iface = mctpd.system.interfaces[0]
+        bo = mctpd.network.endpoints[0]
+        ep = await mctpd_mctp_iface_endpoint_obj(dbus, iface)
+
+        await ep.set_bus_owner(bo.lladdr)
+        assert iface.lladdr in bo.discovered_devices
+
+        bo.discovered_devices.clear()
+        assert iface.lladdr not in bo.discovered_devices
+
+        # set a different bus-owner address
+        bo.lladdr = bytes([self.BO_PID[0] + 1]) + self.BO_PID[1:]
+
+        await ep.set_bus_owner(bo.lladdr)
+        assert iface.lladdr in bo.discovered_devices
+
+
 class TestDiscoveryNotifyRoleSet(DiscoveryNotifyFixtures):
     @pytest.fixture
     def config(self):
