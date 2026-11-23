@@ -309,16 +309,12 @@ class TestDiscoveryNotifyUnsupportedBinding(DiscoveryNotifyFixtures):
             "mctp0", 1, 1, bytes([0x1D]), 68, 254, True, PhysicalBinding.SMBUS
         )
 
-    @pytest.fixture
-    def config(self):
-        return 'role = "unknown"'
-
     async def test_unsupported_binding_does_not_discover_endpoint(
         self, dbus, mctpd
     ):
         iface = mctpd.system.interfaces[0]
         bo = mctpd.network.endpoints[0]
-        interface = await mctpd_mctp_iface_control_obj(dbus, iface)
+        ep = await mctpd_mctp_iface_endpoint_obj(dbus, iface)
 
-        await interface.set_role("Endpoint")
-        assert iface.lladdr not in bo.discovered_devices
+        await ep.set_bus_owner(bo.lladdr)
+        assert bo.discovered_devices == set()
