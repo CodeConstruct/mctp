@@ -71,14 +71,18 @@ static int open_nl_socket(void)
 	int opt, rc, sd = -1;
 
 	rc = mctp_ops.nl.socket();
-	if (rc < 0)
+	if (rc < 0) {
+		rc = -errno;
 		goto err;
+	}
 	sd = rc;
 	memset(&addr, 0, sizeof(addr));
 	addr.nl_family = AF_NETLINK;
 	rc = mctp_ops.nl.bind(sd, (struct sockaddr *)&addr, sizeof(addr));
-	if (rc)
+	if (rc) {
+		rc = -errno;
 		goto err;
+	}
 
 	opt = 1;
 	rc = mctp_ops.nl.setsockopt(sd, SOL_NETLINK, NETLINK_GET_STRICT_CHK,
@@ -548,7 +552,7 @@ static int handle_nlmsg_ack(mctp_nl *nl)
 
 	rc = mctp_ops.nl.recvfrom(nl->sd, resp, sizeof(resp), 0, NULL, NULL);
 	if (rc < 0)
-		return rc;
+		return -errno;
 	len = rc;
 	msg = (void *)resp;
 
@@ -831,6 +835,7 @@ static int fill_linkmap(mctp_nl *nl)
 		rc = mctp_ops.nl.recvfrom(nl->sd, NULL, 0, MSG_TRUNC | MSG_PEEK,
 					  NULL, NULL);
 		if (rc < 0) {
+			rc = -errno;
 			warn("recvfrom(MSG_PEEK)");
 			break;
 		}
@@ -852,6 +857,7 @@ static int fill_linkmap(mctp_nl *nl)
 		rc = mctp_ops.nl.recvfrom(nl->sd, buf, buflen, 0,
 					  (struct sockaddr *)&addr, &addrlen);
 		if (rc < 0) {
+			rc = -errno;
 			warn("recvfrom()");
 			break;
 		}
