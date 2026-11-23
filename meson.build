@@ -93,7 +93,7 @@ executable('mctp-bench',
 )
 
 executable('mctp-client',
-    sources: ['src/mctp-client.c'] + util_sources,
+    sources: ['src/mctp-client.c', 'src/mctp-ops.c'] + netlink_sources + util_sources,
     install: true,
     install_tag: 'utils',
 )

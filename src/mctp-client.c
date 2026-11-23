@@ -17,11 +17,18 @@
 #include <limits.h>
 
 #include "mctp.h"
+#include "mctp-netlink.h"
 #include "mctp-util.h"
 
 struct data_t {
 	uint8_t *data;
 	size_t len;
+};
+
+struct physical_address {
+	int ifindex;
+	uint8_t lladdr[MAX_ADDR_LEN];
+	size_t lladdrlen;
 };
 
 /* Types and values taken from DSP0239 */
@@ -103,9 +110,10 @@ static int do_type_lookup(char *type_str)
 };
 
 static int do_send_recv(unsigned int net, mctp_eid_t eid, uint8_t type,
+			const struct physical_address *physical,
 			struct data_t *data)
 {
-	struct sockaddr_mctp addr;
+	struct sockaddr_mctp_ext addr;
 	ssize_t rc, recvlen, ctr;
 	uint8_t *recv_buffer;
 	socklen_t addrlen;
@@ -116,22 +124,34 @@ static int do_send_recv(unsigned int net, mctp_eid_t eid, uint8_t type,
 		err(EXIT_FAILURE, "socket");
 
 	memset(&addr, 0, sizeof(addr));
-	addr.smctp_tag = MCTP_TAG_OWNER;
-	addr.smctp_family = AF_MCTP;
-	addr.smctp_network = net;
-	addr.smctp_type = type;
-	addr.smctp_addr.s_addr = eid;
+	addr.smctp_base.smctp_tag = MCTP_TAG_OWNER;
+	addr.smctp_base.smctp_family = AF_MCTP;
+	addr.smctp_base.smctp_network = net;
+	addr.smctp_base.smctp_type = type;
+	addr.smctp_base.smctp_addr.s_addr = eid;
+	addrlen = sizeof(struct sockaddr_mctp);
+
+	if (physical) {
+		int val = 1;
+
+		if (setsockopt(sd, SOL_MCTP, MCTP_OPT_ADDR_EXT, &val,
+			       sizeof(val)))
+			err(EXIT_FAILURE, "setsockopt(MCTP_OPT_ADDR_EXT)");
+		addr.smctp_ifindex = physical->ifindex;
+		addr.smctp_halen = physical->lladdrlen;
+		memcpy(addr.smctp_haddr, physical->lladdr, physical->lladdrlen);
+		addrlen = sizeof(addr);
+	}
 
 	rc = sendto(sd, data->data, data->len, 0, (struct sockaddr *)&addr,
-		    sizeof(addr));
+		    addrlen);
 	if (rc < 0)
 		err(EXIT_FAILURE, "sendto(%zd) failed", data->len);
 	if (rc != (ssize_t)data->len)
 		err(EXIT_FAILURE, "sendto(%zd) partial send (%zd)", data->len,
 		    rc);
 
-	recvlen = recvfrom(sd, NULL, 0, MSG_TRUNC | MSG_PEEK,
-			   (struct sockaddr *)&addr, &addrlen);
+	recvlen = recvfrom(sd, NULL, 0, MSG_TRUNC | MSG_PEEK, NULL, NULL);
 	if (recvlen < 0)
 		err(EXIT_FAILURE, "receive failed %zd", recvlen);
 
@@ -139,8 +159,7 @@ static int do_send_recv(unsigned int net, mctp_eid_t eid, uint8_t type,
 	if (!recv_buffer)
 		errx(EXIT_FAILURE, "malloc failed for recv");
 
-	rc = recvfrom(sd, recv_buffer, recvlen, MSG_TRUNC,
-		      (struct sockaddr *)&addr, &addrlen);
+	rc = recvfrom(sd, recv_buffer, recvlen, MSG_TRUNC, NULL, NULL);
 
 	if (rc < 0)
 		err(EXIT_FAILURE, "receive failed %zd", recvlen);
@@ -164,9 +183,10 @@ static void print_usage()
 {
 	size_t ctr;
 
-	printf("usage:\n\tmctp-client [net <net>] eid <eid> type <type> data <data>\n");
-	printf("net defaults to MCTP_NET_ANY, data is space delimited hexadecimal. ");
-	printf("data must be the last parameter\n");
+	printf("usage:\n\tmctp-client [net <net>] [eid <eid>] [iface <iface> [lladdr <lladdr>]] type <type> data <data>\n");
+	printf("at least one of eid or iface is required. iface selects physical addressing.\n");
+	printf("net defaults to MCTP_NET_ANY, eid defaults to 0 with iface.\n");
+	printf("data is space delimited hexadecimal and must be the last parameter.\n");
 	printf("possible types:\n");
 	for (ctr = 0; ctr < ARRAY_SIZE(type_lookup); ++ctr) {
 		printf("\t%s: %s\n", type_lookup[ctr].name,
@@ -219,13 +239,48 @@ static int find_data(int argc, char **argv)
 	return -ENOENT;
 }
 
+static void check_lladdr_len(const mctp_nl *nl, const char *iface,
+			     const struct physical_address *physical)
+{
+	size_t hwaddr_len;
+
+	if (mctp_nl_hwaddr_len_byindex(nl, physical->ifindex, &hwaddr_len))
+		errx(EXIT_FAILURE, "failed to query lladdr length for %s",
+		     iface);
+
+	if (physical->lladdrlen != hwaddr_len)
+		errx(EXIT_FAILURE,
+		     "invalid lladdr length for %s: expected %zu bytes, got %zu",
+		     iface, hwaddr_len, physical->lladdrlen);
+}
+
+static void resolve_physical_address(const char *iface,
+				     struct physical_address *physical)
+{
+	mctp_nl *nl;
+
+	nl = mctp_nl_new(false);
+	if (!nl)
+		errx(EXIT_FAILURE, "failed to query MCTP interfaces");
+
+	physical->ifindex = mctp_nl_ifindex_byname(nl, iface);
+	if (!physical->ifindex)
+		errx(EXIT_FAILURE, "invalid interface: %s", iface);
+
+	check_lladdr_len(nl, iface, physical);
+
+	mctp_nl_close(nl);
+}
+
 int main(int argc, char **argv)
 {
+	struct physical_address physical = { 0 };
+	bool valid_eid, valid_type, valid_lladdr;
 	unsigned int net = MCTP_NET_ANY;
-	bool valid_eid, valid_type;
+	const char *iface = NULL;
 	struct data_t send_data;
 	int type, ctr, data_idx;
-	mctp_eid_t eid;
+	mctp_eid_t eid = 0;
 
 	data_idx = find_data(argc, argv);
 	if (data_idx < 0) {
@@ -243,6 +298,7 @@ int main(int argc, char **argv)
 	argc = data_idx;
 	valid_eid = false;
 	valid_type = false;
+	valid_lladdr = false;
 
 	for (ctr = 1; ctr < argc; ctr += 2) {
 		char *tag, *val;
@@ -265,15 +321,26 @@ int main(int argc, char **argv)
 			if (type < 0 || type > 0xff)
 				errx(EXIT_FAILURE, "invalid type: %s", val);
 			valid_type = true;
-
+		} else if (!strcmp(tag, "iface")) {
+			iface = val;
+		} else if (!strcmp(tag, "lladdr")) {
+			physical.lladdrlen = sizeof(physical.lladdr);
+			if (parse_hex_addr(val, physical.lladdr,
+					   &physical.lladdrlen))
+				errx(EXIT_FAILURE, "invalid lladdr: %s", val);
+			valid_lladdr = true;
 		} else
 			errx(EXIT_FAILURE, "invalid argument: %s", tag);
 	}
 
-	if (!valid_eid || !valid_type) {
+	if (!valid_type || (!valid_eid && !iface) || (valid_lladdr && !iface)) {
 		print_usage();
 		return EXIT_FAILURE;
 	}
 
-	return do_send_recv(net, eid, type, &send_data);
+	if (iface)
+		resolve_physical_address(iface, &physical);
+
+	return do_send_recv(net, eid, type, iface ? &physical : NULL,
+			    &send_data);
 }
