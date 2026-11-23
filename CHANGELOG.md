@@ -11,6 +11,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 1. The `mctp-client` utility now has a type definition for PCIe management
    interface (PCIe-MI, MCTP message type 9).
 
+2. When in endpoint mode, `mctpd` will send Discovery Notify messages to the
+   bus owner, when required by the link type. In some cases this requires
+   `mctpd` to be informed of the bus owner's physical address, so a new
+   dbus interface for the endpoint role has been added (`Endpoint1`),
+   containing a writable `BusOwner` property.
+
 ### Fixes
 
 1. When bridge-downstream endpoints, added via LearnEndpoint, are removed,
