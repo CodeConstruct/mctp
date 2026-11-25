@@ -228,6 +228,9 @@ struct peer {
 	uint8_t pool_size;
 	uint8_t pool_start;
 
+	// Next hop toward the bus owner for downstream peer
+	struct peer *gateway;
+
 	struct {
 		sd_event_source **sources;
 	} bridge_ep_poll;
@@ -2952,14 +2955,14 @@ static int query_get_peer_uuid_by_phys(struct ctx *ctx, const dest_phys *dest,
 		goto out;
 
 	resp = cmd.resp;
-	memcpy(uuid, resp->uuid, 16);
+	memcpy(uuid, resp->uuid, sizeof(resp->uuid));
 
 out:
 	mctp_ctrl_cmd_free(&cmd);
 	return rc;
 }
 
-static int query_get_peer_uuid(struct peer *peer)
+static int query_get_peer_uuid(struct peer *peer, uint8_t uuid[16])
 {
 	struct mctp_ctrl_resp_get_uuid *resp = NULL;
 	struct mctp_ctrl_cmd_get_uuid req;
@@ -2990,10 +2993,7 @@ static int query_get_peer_uuid(struct peer *peer)
 		goto out;
 
 	resp = cmd.resp;
-	rc = peer_set_uuid(peer, resp->uuid);
-	if (rc < 0)
-		goto out;
-	rc = 0;
+	memcpy(uuid, resp->uuid, sizeof(resp->uuid));
 
 out:
 	mctp_ctrl_cmd_free(&cmd);
@@ -3463,10 +3463,16 @@ static int query_peer_properties(struct peer *peer)
 		}
 	}
 
-	rc = query_get_peer_uuid(peer);
-	if (rc < 0 && peer->ctx->verbose) {
-		errno = -rc;
-		warn("Error getting UUID for %s", peer_tostr(peer));
+	{
+		uint8_t uuid[16];
+		memset(uuid, 0, sizeof(uuid));
+		rc = query_get_peer_uuid(peer, uuid);
+		if (!rc)
+			rc = peer_set_uuid(peer, uuid);
+		if (rc < 0 && peer->ctx->verbose) {
+			errno = -rc;
+			warn("Error getting UUID for %s", peer_tostr(peer));
+		}
 	}
 
 	// TODO: emit property changed? Though currently they are all const.
@@ -3731,6 +3737,88 @@ out:
 	(MCTP_I2C_TSYM_MT1_MAX_US + 2 * MCTP_I2C_TSYM_MT3_MAX_US)
 #define MCTP_I2C_TSYM_MT2_MAX_MS MCTP_I2C_TSYM_MT4_MIN_US
 
+/*
+ * Decide whether the UUID reported by an endpoint under recovery identifies
+ * the device we originally registered for this peer. A nil UUID is only
+ * accepted as a match where MCTPD_RECOVER_NIL_UUID permits it.
+ */
+static bool peer_recovery_uuid_matches(const struct peer *peer,
+				       const uint8_t uuid[16])
+{
+	static const uint8_t nil_uuid[16] = { 0 };
+
+	if (!peer->uuid)
+		return false;
+
+	if (memcmp(uuid, peer->uuid, sizeof(nil_uuid)) != 0)
+		return false;
+
+	if (!MCTPD_RECOVER_NIL_UUID &&
+	    memcmp(uuid, nil_uuid, sizeof(nil_uuid)) == 0)
+		return false;
+
+	return true;
+}
+
+static void peer_recovery_walk_gateways(struct peer *peer)
+{
+	struct ctx *ctx = peer->ctx;
+	struct peer *gw = peer->gateway;
+	size_t hops = 0;
+
+	/*
+	 * A simple chain cannot be longer than the number of peers, so
+	 * exceeding that means the gateway pointers are cyclic. Bound the
+	 * walk so that it terminates regardless.
+	 */
+	while (gw && hops++ <= ctx->num_peers) {
+		int gw_rc = query_get_endpoint_id(ctx, &gw->phys,
+						  &peer->recovery.eid,
+						  &peer->recovery.endpoint_type,
+						  &peer->recovery.medium_spec,
+						  gw->gateway ? gw : NULL,
+						  /*retry=*/false);
+		if (gw_rc < 0)
+			warnx("Recovery: EID %d unreachable; bridge EID %d failed to respond",
+			      peer->eid, gw->eid);
+		gw = gw->gateway;
+	}
+	if (gw)
+		bug_warn("Cyclic gateway chain for net %u eid %d", peer->net,
+			 peer->eid);
+}
+
+static int peer_recover_exchanged(struct peer *peer)
+{
+	struct ctx *ctx = peer->ctx;
+	struct peer *gateway = peer->gateway;
+	dest_phys phys = peer->phys;
+	mctp_eid_t eid = peer->eid;
+	uint32_t net = peer->net;
+	struct peer *new_peer;
+	int rc;
+
+	assert(sd_event_source_get_enabled(peer->recovery.source, NULL) == 0);
+	remove_peer(peer);
+
+	if (!gateway) {
+		/* Directly connected: allocate a new EID for the new device. */
+		return endpoint_assign_eid(ctx, NULL, &phys, &new_peer, 0,
+					   false);
+	}
+
+	/*
+	 * The bridge owns this EID and has already assigned it to the new
+	 * device, so re-add under the same EID with the gateway carried over.
+	 */
+	rc = add_peer(ctx, &phys, eid, net, &new_peer, /*allow_bridged=*/true);
+	if (rc < 0)
+		return rc;
+
+	new_peer->gateway = gateway;
+	return setup_added_peer(new_peer);
+}
+
 static int peer_endpoint_recover(sd_event_source *s, uint64_t usec,
 				 void *userdata)
 {
@@ -3755,80 +3843,89 @@ static int peer_endpoint_recover(sd_event_source *s, uint64_t usec,
 	 * Test if we still have connectivity to the endpoint. If we do, we will get a
 	 * response reporting the current EID. This is the test recommended by 8.17.6
 	 * of DSP0236 v1.3.1.
+	 *
+	 * A bridged endpoint has no physical address of its own, so the
+	 * request is routed by EID through its gateway. If that probe fails,
+	 * walk the gateway chain to attribute the loss of connectivity to a
+	 * hop; the walk only informs the log.
 	 */
 	rc = query_get_endpoint_id(ctx, &peer->phys, &peer->recovery.eid,
 				   &peer->recovery.endpoint_type,
-				   &peer->recovery.medium_spec, /*peer=*/NULL,
+				   &peer->recovery.medium_spec,
+				   peer->gateway ? peer : NULL,
 				   /*retry=*/false);
 	if (rc < 0) {
+		if (peer->gateway)
+			peer_recovery_walk_gateways(peer);
 		goto reschedule;
 	}
 
-	/*
-	 * If we've got a response there are two scenarios:
-	 *
-	 * 1. The device responds with the EID that we expect it to have
-	 * 2. The device responds with an unexpected EID, e.g. 0
-	 *
-	 * For scenario 1 we're done as the device is responsive and has the expected
-	 * address. For scenario 2, we may not yet consider the EID assignment as
-	 * expired, so check the UUID for a match. If the UUID matches we reassign the
-	 * expected EID to the device. If the UUID does not match we allocate a new
-	 * EID for the exchanged device, given it is responsive.
-	 */
-	if (peer->recovery.eid != peer->eid) {
-		static const uint8_t nil_uuid[16] = { 0 };
-		bool uuid_matches_peer = false;
-		bool uuid_matches_nil = false;
+	if (peer->gateway) {
+		/*
+		 * The bridge may hand the same pool EID to a replacement
+		 * device, so the EID alone cannot reveal an exchange. Compare
+		 * the UUID, routed by EID as above, where we hold one for the
+		 * peer; without a stored UUID an exchange cannot be detected
+		 * and the successful probe is taken as recovery. On a mismatch
+		 * the new device is published under the same EID.
+		 */
 		uint8_t uuid[16] = { 0 };
-		mctp_eid_t new_eid;
 
-		rc = query_get_peer_uuid_by_phys(ctx, &peer->phys, uuid);
-		if (!rc && peer->uuid) {
-			static_assert(sizeof(uuid) == sizeof(nil_uuid),
-				      "Unsynchronized UUID sizes");
-			uuid_matches_peer =
-				memcmp(uuid, peer->uuid, sizeof(uuid)) == 0;
-			uuid_matches_nil =
-				memcmp(uuid, nil_uuid, sizeof(uuid)) == 0;
+		if (peer->uuid) {
+			rc = query_get_peer_uuid(peer, uuid);
+			if (rc < 0)
+				goto reschedule;
+
+			if (!peer_recovery_uuid_matches(peer, uuid))
+				return peer_recover_exchanged(peer);
 		}
 
-		if (rc || !uuid_matches_peer ||
-		    (uuid_matches_nil && !MCTPD_RECOVER_NIL_UUID)) {
-			/* It's not known to be the same device, allocate a new EID */
-			dest_phys phys = peer->phys;
+	} else {
+		// Directly-connected endpoint.
 
-			assert(sd_event_source_get_enabled(
-				       peer->recovery.source, NULL) == 0);
-			remove_peer(peer);
-			/*
-			 * The representation of the old peer is now gone. Set up the new peer,
-			 * after which we immediately return as there's no old peer state left to
-			 * maintain.
-			 */
-			return endpoint_assign_eid(ctx, NULL, &phys, &peer, 0,
-						   false);
-		}
+		/*
+		* If we've got a response there are two scenarios:
+		*
+		* 1. The device responds with the EID that we expect it to have
+		* 2. The device responds with an unexpected EID, e.g. 0
+		*
+		* For scenario 1 we're done as the device is responsive and has the expected
+		* address. For scenario 2, we may not yet consider the EID assignment as
+		* expired, so check the UUID for a match. If the UUID matches we reassign the
+		* expected EID to the device. If the UUID does not match we allocate a new
+		* EID for the exchanged device, given it is responsive.
+		*/
 
-		/* Confirmation of the same device, apply its already allocated EID */
-		rc = endpoint_send_set_endpoint_id(peer, &new_eid, NULL);
-		if (rc < 0) {
-			goto reschedule;
-		}
+		if (peer->recovery.eid != peer->eid) {
+			uint8_t uuid[16] = { 0 };
+			mctp_eid_t new_eid;
 
-		if (new_eid != peer->eid) {
-			rc = change_peer_eid(peer, new_eid);
-			if (rc < 0) {
-				goto reclaim;
-			}
-			/* change_peer_eid() leaves the peer unpublished; the
-			 * object path moves with the EID. The properties were
-			 * queried when the peer was first set up, so
-			 * publishing here re-registers the full interface
-			 * set. */
-			rc = publish_peer(peer);
+			rc = query_get_peer_uuid_by_phys(ctx, &peer->phys,
+							 uuid);
+			if (rc || !peer_recovery_uuid_matches(peer, uuid))
+				return peer_recover_exchanged(peer);
+
+			/* Confirmation of the same device, apply its already allocated EID */
+			rc = endpoint_send_set_endpoint_id(peer, &new_eid,
+							   NULL);
 			if (rc < 0) {
 				goto reschedule;
+			}
+
+			if (new_eid != peer->eid) {
+				rc = change_peer_eid(peer, new_eid);
+				if (rc < 0) {
+					goto reclaim;
+				}
+				/* change_peer_eid() leaves the peer unpublished; the
+				 * object path moves with the EID. The properties were
+				 * queried when the peer was first set up, so
+				 * publishing here re-registers the full interface
+				 * set. */
+				rc = publish_peer(peer);
+				if (rc < 0) {
+					goto reschedule;
+				}
 			}
 		}
 	}
@@ -6377,6 +6474,11 @@ static int peer_endpoint_poll(sd_event_source *s, uint64_t usec, void *userdata)
 			      &peer, true);
 		if (rc < 0)
 			goto exit;
+		/*
+		 * TODO: use Query Hop to set the gateway to the immediate
+		 * bridge rather than the top-level one.
+		 */
+		peer->gateway = bridge;
 	}
 
 	rc = setup_added_peer(peer);
